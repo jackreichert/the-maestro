@@ -11,6 +11,9 @@ export interface Refusal { rule: string; message: string; line?: number }
 export interface Preview { source: string; target: string; title: string; command: string; sha256: string; readOnly: boolean | null; tier: string | null; runnable: boolean; refusals: Refusal[] }
 export interface Chunk { seq: number; stream: 'out' | 'err'; text: string }
 export interface Progress { status: 'running' | 'done' | 'failed' | 'killed' | 'timeout'; exitCode: number | null; durationMs: number | null; chunks: Chunk[]; next: number; truncated: boolean }
+export interface ArgSpec { name: string; type: 'string' | 'integer' | 'enum' | 'boolean'; flag?: string; required?: boolean; default?: string | number | boolean; values?: string[]; min?: number; max?: number; description?: string }
+export interface ScriptInfo { id: string; name: string; description: string; group: string; args: ArgSpec[]; readOnly: boolean; tier: string; timeoutSeconds: number }
+export interface CatalogView { scripts: ScriptInfo[]; problems: string[] }
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: string; message: string; preview?: Preview };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -36,6 +39,7 @@ export function createRunApi(fetchFn: Fetch = (url, init) => fetch(url, init)) {
   const asProgress = (b: Record<string, unknown>): Progress | null => (typeof b.status === 'string' && Array.isArray(b.chunks) && typeof b.next === 'number' ? (b as unknown as Progress) : null);
 
   return {
+    catalog: (): Promise<Outcome<CatalogView>> => call('/api/run/catalog', {}, (b) => (Array.isArray(b.scripts) && Array.isArray(b.problems) ? (b as unknown as CatalogView) : null)),
     preview: (src: RunSource): Promise<Outcome<Preview>> => call('/api/run/preview', src, asPreview),
     start: (src: RunSource, sha256: string, confirm = false): Promise<Outcome<string>> => call('/api/run/start', { ...src, sha256, ...(confirm ? { confirm: true } : {}) }, (b) => (typeof b.runId === 'string' ? b.runId : null)),
     poll: (runId: string, since: number): Promise<Outcome<Progress>> => call('/api/run/poll', { runId, since }, asProgress),

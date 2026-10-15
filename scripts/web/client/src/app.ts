@@ -4,6 +4,7 @@ import { keepRegionScroll } from './priority-list.ts';
 import './local-review.ts';
 import './open-prs.ts';
 import './draft-queue.ts';
+import './scripts-view.ts';
 import { h, s, shadow } from './dom.ts';
 import { BOARD_CSS, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadCost, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadSeries, loadOpenPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
@@ -14,7 +15,7 @@ import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
-import { DASHBOARD, OPEN_PRS, OTHERS_PRS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, parseStreamFilter, tabIds } from './tabs.ts';
+import { DASHBOARD, OPEN_PRS, OTHERS_PRS, SCRIPTS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, parseStreamFilter, tabIds } from './tabs.ts';
 import { OpenPrsStore } from './open-prs-store.ts';
 import { DraftsStore } from './drafts-store.ts';
 import { waiting } from './drafts-model.ts';
@@ -480,7 +481,7 @@ export class PodiumApp extends HTMLElement {
       const stream = tabStream(id);
       const n = isAllStreams(id) ? 0 : count(st.asks, id);
       const prs = id === OPEN_PRS ? st.prs.length : 0;
-      const label = id === DASHBOARD ? 'Home' : id === OPEN_PRS ? 'Open PRs' : id === OTHERS_PRS ? 'Others\' PRs' : stream ?? id;
+      const label = id === DASHBOARD ? 'Home' : id === OPEN_PRS ? 'Open PRs' : id === OTHERS_PRS ? 'Others\' PRs' : id === SCRIPTS ? 'Scripts' : stream ?? id;
       const tab = h('button', {
         type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
         tabindex: on ? '0' : '-1',
@@ -499,13 +500,13 @@ export class PodiumApp extends HTMLElement {
         e.preventDefault();
         this.#select(next, true);
       });
-      const sep = i === 2 ? h('span', { class: 'nav-sep', 'aria-hidden': 'true' }) : null;
+      const sep = i === 3 ? h('span', { class: 'nav-sep', 'aria-hidden': 'true' }) : null;
       return [tab, sep];
     });
     const stream = tabStream(this.#active);
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap page' },
-      this.#active === OPEN_PRS || this.#active === OTHERS_PRS ? null : this.#pageHead(st, stream),
-      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OPEN_PRS ? this.#openPrs(st) : this.#active === OTHERS_PRS ? this.#othersPrs() : this.#board(st, stream ?? ''),
+      this.#active === OPEN_PRS || this.#active === OTHERS_PRS || this.#active === SCRIPTS ? null : this.#pageHead(st, stream),
+      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OPEN_PRS ? this.#openPrs(st) : this.#active === OTHERS_PRS ? this.#othersPrs() : this.#active === SCRIPTS ? this.#scripts() : this.#board(st, stream ?? ''),
       fine());
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Podium' }, ...tabs);
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Podium' }, tablist);
@@ -739,6 +740,12 @@ export class PodiumApp extends HTMLElement {
     return h('div', {}, h('h2', { class: 'tab-title' }, 'Others\' PRs'),
       h('p', { class: 'section-hint' }, 'Review comments drafted on teammates\' PRs. Nothing is posted until you press Approve; Edit changes the wording first, Reject records why and posts nothing.'),
       this.#draftQueue(['review'], 'No review comments are waiting for your approval.'));
+  }
+
+  /** The Scripts tab: the catalog of scripts the server can run. Sample data has no server to run them. */
+  #scripts(): Node {
+    return h('div', {}, h('h2', { class: 'tab-title' }, 'Scripts'),
+      this.#sources.state === 'server' ? h('scripts-view') : h('p', { class: 'section-hint' }, 'Scripts run on the server, which this page is not connected to.'));
   }
 
   /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */
