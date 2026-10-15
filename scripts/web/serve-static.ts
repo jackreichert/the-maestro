@@ -4,7 +4,7 @@
  *
  *   node scripts/web/serve-static.ts [--port 8787]
  *
- * Binds 127.0.0.1 only. Serves a whitelist taken from directory listings at start (index.html, theme.css, the two favicons,
+ * Binds 127.0.0.1 only. Serves a whitelist taken from directory listings (read at start and again on a miss, so files a later build adds are served) (index.html, theme.css, the two favicons,
  * dist/*, fixtures/*.json, fonts/*.woff2), so no request path is ever joined onto a filesystem path. Everything under /api answers 404, which
  * is what makes the client fall back to its bundled fixtures. Run `npm run build:web` first (`npm run web:static` does both).
  */
@@ -38,15 +38,35 @@ export function buildRoutes(clientDir: string): Map<string, string> {
   return routes;
 }
 
+/** The least time between two directory re-scans, so a flood of requests for names that do not exist does not become a flood of readdirs. */
+export const RESCAN_GAP_MS = 1000;
+
+/**
+ * The lookup a server uses: the whitelist from `buildRoutes`, rebuilt on a miss. A server that lives for days sees a build add files
+ * (a new module under dist/) after it started; a list taken once at start would 404 them and the page would fail to load. A request path is
+ * still only ever looked up in the map, never joined onto a filesystem path, so a rescan widens nothing beyond what the directories hold.
+ */
+export function fileLookup(clientDir: string, gapMs = RESCAN_GAP_MS, now: () => number = Date.now): (pathname: string) => string | undefined {
+  let routes = buildRoutes(clientDir);
+  let scanned = now();
+  return (pathname) => {
+    const hit = routes.get(pathname);
+    if (hit !== undefined || now() - scanned < gapMs) return hit;
+    scanned = now();
+    try { routes = buildRoutes(clientDir); } catch { /* the client directory is briefly absent during a rebuild: keep the last list */ }
+    return routes.get(pathname);
+  };
+}
+
 /** Create the server (not yet listening). Only Host values naming the loopback address and the bound port are answered. */
-export function createStaticServer(clientDir: string): Server {
-  const routes = buildRoutes(clientDir);
+export function createStaticServer(clientDir: string, gapMs = RESCAN_GAP_MS): Server {
+  const lookup = fileLookup(clientDir, gapMs);
   return createServer((req, res) => {
     const headers = SECURITY_HEADERS;
     if (!hostAllowed(req.headers.host, req.socket.localPort ?? 0)) { res.writeHead(403, headers).end('forbidden'); return; }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { ...headers, allow: 'GET, HEAD' }).end('method not allowed'); return; }
     const pathname = (req.url ?? '/').split('?')[0];
-    const file = routes.get(pathname);
+    const file = lookup(pathname);
     if (!file) { res.writeHead(404, headers).end('not found'); return; }
     let body: Buffer;
     try { body = readFileSync(file); } catch { res.writeHead(404, headers).end('not found'); return; }

@@ -35,7 +35,7 @@ const ledgerBefore = readFileSync(join(vault, 'Projects', 'p', 'Journal', 'ledge
 const logged: string[] = [];
 const options: WebServerOptions = {
   web: { vault, project: 'p', statusDir, page: { streams: ['widgets'], repoStreams: {}, vaultName: '', trackerUrlBase: '', ticketNotePath: '', trackerKeyPattern: 'FAKE-\\d+', tz: 'UTC' } },
-  clientDir: client, now: () => NOW, log: (m) => logged.push(m),
+  clientDir: client, rescanGapMs: 0, now: () => NOW, log: (m) => logged.push(m),
 };
 const server = createWebServer(options);
 let port = 0;
@@ -181,6 +181,16 @@ test('a cross-origin request is refused and the server never sends CORS headers'
   const r = await hit('/api/state', { headers: { origin: 'https://attacker.example' } });
   assert.equal(r.status, 403);
   for (const path of ['/api/state', '/', '/nope']) assert.ok(!Object.keys((await hit(path)).headers).some((h) => h.startsWith('access-control-')), path);
+});
+
+test('a client file the build adds after the server started is served, and a path outside the whitelist still is not', async () => {
+  assert.equal((await hit('/dist/late.js')).status, 404);
+  writeFileSync(join(client, 'dist', 'late.js'), 'export const late = 1;');
+  const got = await hit('/dist/late.js');
+  assert.equal(got.status, 200);
+  assert.match(got.body, /late/);
+  assert.equal((await hit('/dist/../secret.json')).status, 404);
+  assert.equal((await hit('/dist/late.txt')).status, 404);
 });
 
 test('static files: whitelist only, with content types and nosniff', async () => {
