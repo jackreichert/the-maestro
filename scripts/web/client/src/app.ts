@@ -26,11 +26,13 @@ import { streamScore, todayPanel } from './home-sections.ts';
 import { seriesClass } from './series.ts';
 import type { ProjectsLoad } from './home-tab.ts';
 import { chipId, filteredView } from './filter-view.ts';
+import { needsItems, needsSig } from './needs-items.ts';
+import type { NeedsItem } from './needs-items.ts';
 import type { CueKey } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { AskBusyDetail, ChartsData, CostData, EpicsData, LocalReview, PodiumState, StreamHome } from './types.ts';
 
-interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; cost: CostData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number }
+interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; cost: CostData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number; needsSig: string }
 
 const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .wrap { max-width: var(--grid-max); margin: 0 auto; padding-inline: var(--page-pad); }
@@ -256,6 +258,9 @@ export class PodiumApp extends HTMLElement {
   });
   // The draft queue's data and what is being typed live here too (see drafts-store.ts); every decision goes to the server, which alone posts.
   readonly #drafts = new DraftsStore({ load: () => loadDrafts(), send: (op, payload, comments) => createDraftActions().send(op, payload, comments) });
+  // The fingerprint of the needs-you rows on screen, and the store subscriptions that watch for a change in them.
+  #shownSig = '';
+  readonly #unfollow: (() => void)[] = [];
   #liveUpdates: LiveUpdates<Fresh> | null = null;
   #liveStatus: LiveStatus | null = null;
   // Newer data is held while a press is in flight or an answer is being typed, and shown when that ends. Drafts and settled
@@ -293,8 +298,11 @@ export class PodiumApp extends HTMLElement {
     window.addEventListener('pointerup', this.#onRelease);
     window.addEventListener('pointercancel', this.#onRelease);
     this.#root.replaceChildren(skeleton());
-    Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), loadLinkHosts(), loadSeries(), loadCost()]).then(([s, c, e, lr, , , co]) => {
+    Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), loadLinkHosts(), loadSeries(), loadCost()]).then(async ([s, c, e, lr, , , co]) => {
       if (!this.isConnected) return;   // removed while loading: start nothing that disconnectedCallback has already missed
+      // The tab's count and Home's needs-you list read these two stores; the queue's own file is watched, so later changes come through the live load below.
+      if (s.source === 'server') await Promise.all([this.#drafts.load(), this.#prs.load()]);
+      if (!this.isConnected) return;
       this.#state = s.data;
       this.#charts = c.data;
       this.#epics = s.source === 'server' ? e : null;
@@ -302,14 +310,17 @@ export class PodiumApp extends HTMLElement {
       this.#local = s.source === 'server' ? lr : null;
       this.#sources = { state: s.source, charts: c.source };
       this.#dropped = s.dropped + c.dropped;
-      if (s.source === 'server') void this.#drafts.load();   // the tab's count; the queue's own file is watched, so later changes come through the live load below
       this.#active = parseFragment(location.hash, this.#ids());
       this.#filter = parseFilter(location.hash);
       this.#stream = this.#filter === 'asks' ? parseStreamFilter(location.hash) : null;
       this.#safeRender();
       // The data is loaded once; re-say its age every minute so a page left open shows when it has gone stale.
       this.#tick = window.setInterval(() => this.#updateFreshness(), 60_000);
-      if (this.#live) this.#startLive(s.data.seq);   // sample data has no server to follow
+      if (this.#live) {   // sample data has no server to follow
+        this.#shownSig = this.#needsSig(s.data);
+        this.#startLive(`${s.data.seq}|${this.#shownSig}`);
+        this.#followNeeds();
+      }
       void projectsLoad(this.#live).then((p) => {
         if (!this.isConnected || this.#projects.state === 'ok') return;   // a live update got there first
         this.#projects = p;
@@ -336,6 +347,7 @@ export class PodiumApp extends HTMLElement {
     window.removeEventListener('pointercancel', this.#onRelease);
     window.clearInterval(this.#tick);
     this.#liveUpdates?.stop();
+    for (const off of this.#unfollow.splice(0)) off();
     this.#liveUpdates = null;
     this.#tabsObserver?.disconnect();
   }
@@ -345,11 +357,12 @@ export class PodiumApp extends HTMLElement {
     this.#liveUpdates = new LiveUpdates<Fresh>({
       open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
       load: async () => {
-        void this.#drafts.load();   // a decision or a new draft changes drafts.jsonl, not the board, so the board's own seq may not move
+        // A decision or a new draft changes drafts.jsonl, and a PR refresh the PR cache, not the board, so the board's own seq may not move: `needsSig` stands in for them.
+        await Promise.all([this.#drafts.load(), this.#prs.load()]);
         const [s, c, e, lr, p, co] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), projectsLoad(true), loadCost()]);
-        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, cost: co, local: lr, projects: p, dropped: s.dropped + c.dropped } : null;
+        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, cost: co, local: lr, projects: p, dropped: s.dropped + c.dropped, needsSig: this.#needsSig(s.data) } : null;
       },
-      seqOf: (f) => f.state.seq,
+      seqOf: (f) => `${f.state.seq}|${f.needsSig}`,
       apply: (f) => this.#adopt(f),
       onStatus: (st) => { this.#liveStatus = st; this.#updateLink(); },
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
@@ -366,6 +379,7 @@ export class PodiumApp extends HTMLElement {
   }
 
   #show(f: Fresh): void {
+    this.#shownSig = f.needsSig;
     this.#state = f.state;
     this.#charts = f.charts;
     this.#epics = f.epics;
@@ -578,7 +592,7 @@ export class PodiumApp extends HTMLElement {
     const scope = stream === null ? 'All streams' : stream;
     const buckets = scoped(st, stream);
     const { tempo, rule } = this.#tempo({ asks: buckets.asks.length, blocked: buckets.blocked.length, working: buckets.working.length }, stream === null ? scope : null);
-    const parts = cueParts(buckets);
+    const parts = cueParts(buckets, this.#needsFor(st, stream).length);
     const cue = parts.map((p) => {
       const tile = h('button', { type: 'button', class: 'tile', id: tileId(p.key), 'data-key': p.key, 'aria-pressed': String(p.key === this.#filter) },
         h('span', { class: 'n' }, String(p.n)), ' ', p.label);
@@ -685,16 +699,47 @@ export class PodiumApp extends HTMLElement {
     if (board.isConnected) board.home = got.data;
   }
 
+  /**
+   * PRs ready to merge and reviews waiting for an OK, for the needs-you list. Read from the Open PRs and draft stores (the PR cache and
+   * `drafts.jsonl`, so no GitHub call), only on a real server: sample data never lists a PR or a draft.
+   */
+  #needs(st: PodiumState): NeedsItem[] {
+    return this.#sources.state === 'server' ? needsItems(this.#prs.model.data, this.#drafts.model.data, st.prs, st.streams, st.generatedAt) : [];
+  }
+
+  /**
+   * The needs-you rows read the Open PRs and draft stores, which change on their own (the Refresh press on the Open PRs tab, a decision on
+   * a draft) without a board event. When what the rows say has changed, show it through the same gate as a live update, so a press or a
+   * half-typed answer is never redrawn under the person.
+   */
+  #followNeeds(): void {
+    const changed = (): void => {
+      const st = this.#state;
+      if (!st || !this.isConnected || !this.#charts) return;
+      const sig = this.#needsSig(st);
+      if (sig === this.#shownSig) return;
+      this.#adopt({ state: st, charts: this.#charts, epics: this.#epics, cost: this.#cost, local: this.#local, projects: this.#projects, dropped: this.#dropped, needsSig: sig });
+    };
+    this.#unfollow.push(this.#prs.subscribe(changed), this.#drafts.subscribe(changed));
+  }
+
+  /** What the needs-you rows say, as one string, so a live load notices a changed draft or PR cache that left the board's own seq alone. */
+  #needsSig(st: PodiumState): string { return needsSig(needsItems(this.#prs.model.data, this.#drafts.model.data, st.prs, st.streams, st.generatedAt)); }
+
+  /** Home's needs-you list carries them; a stream tab keeps its own board, so its count and filter leave them out. */
+  #needsFor(st: PodiumState, stream: string | null): NeedsItem[] { return stream === null ? this.#needs(st) : []; }
+
   /** The pressed tile's bucket for the open tab, from the same scoped buckets the tile counts. */
   #filtered(st: PodiumState, key: CueKey): Node {
     const stream = tabStream(this.#active);
-    const label = cueParts(scoped(st, stream)).find((p) => p.key === key)?.label ?? key;
+    const label = cueParts(scoped(st, stream), this.#needsFor(st, stream).length).find((p) => p.key === key)?.label ?? key;
     return filteredView(scoped(st, stream), key, label, {
       live: this.#sources.state === 'server',
       ctx: { now: st.generatedAt, tz: st.tz, showStream: stream === null, prs: st.prs },
       clear: () => this.#setFilter(null, key),
       stream: this.#stream,
       setStream: (s) => this.#setStream(s),
+      extra: this.#needsFor(st, stream),
     });
   }
 
@@ -753,7 +798,7 @@ export class PodiumApp extends HTMLElement {
     const localList = h('local-review');
     localList.review = this.#local;
     return h('div', { class: 'home-plus' },
-      homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects, epics: this.#epics, cost: this.#cost, redraw: () => this.#redrawKeepingFocus() }),
+      homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects, epics: this.#epics, cost: this.#cost, needs: this.#needs(st), redraw: () => this.#redrawKeepingFocus() }),
       section({ title: 'Waiting for local review', n: this.#local ? this.#local.units.length + this.#local.more : 0, tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
   }
 }

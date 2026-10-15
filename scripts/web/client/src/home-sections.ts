@@ -1,6 +1,9 @@
 /** The pieces of the Home tab, each drawn from what home-model works out: score table, needs-you board, deck, epics and notes. */
 import { h, refLink, streamTag } from './dom.ts';
 import { askCards, itemRows } from './stream-board.ts';
+import { needsRows } from './needs-view.ts';
+import { scopedItems } from './needs-items.ts';
+import type { NeedsItem } from './needs-items.ts';
 import type { AskList, RowContext } from './stream-board.ts';
 import { byPriority, clockTime, splitStream, todaysPriorities } from './glance.ts';
 import { linkAttrs } from './link-policy.ts';
@@ -219,10 +222,15 @@ function scoreRow(r: ScoreRow, score: Score): HTMLElement {
 
 // ---- Needs you, with Blocked and In flight beside it ----
 
-/** The board: the asks (sortable, filterable by stream, capped) and the two side panels. `redraw` rebuilds Home after a control changes. */
-export function boardSection(st: PodiumState, live: boolean, redraw: () => void): HTMLElement {
-  const picked = homeUi.stream && st.asks.some((a) => a.stream === homeUi.stream) ? homeUi.stream : null;
+/**
+ * The board: the asks (sortable, filterable by stream, capped), then the PRs ready to merge and the reviews waiting for an OK (`extra`),
+ * and the two side panels. The stream chips count and filter both. `redraw` rebuilds Home after a control changes.
+ */
+export function boardSection(st: PodiumState, live: boolean, redraw: () => void, extra: NeedsItem[] = []): HTMLElement {
+  const total = st.asks.length + extra.length;
+  const picked = homeUi.stream && [...st.asks, ...extra].some((a) => a.stream === homeUi.stream) ? homeUi.stream : null;
   const shown = picked ? st.asks.filter((a) => a.stream === picked) : st.asks;
+  const shownExtra = picked ? scopedItems(extra, picked) : extra;
   const cap = homeUi.allAsks ? Number.POSITIVE_INFINITY : ASK_CAP;
   const list: AskList | null = askCards(shown, live, true, cap, (xs) => {
     const ranked = byPriority(orderAsks(xs, homeUi.order === 'stream' ? 'oldest' : homeUi.order), todaysPriorities(st));
@@ -241,7 +249,7 @@ export function boardSection(st: PodiumState, live: boolean, redraw: () => void)
     b.addEventListener('click', () => set({ stream, allAsks: false }));
     return h('li', {}, b);
   };
-  const byStream = st.streams.map((s) => ({ s, n: st.asks.filter((a) => a.stream === s).length })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
+  const byStream = st.streams.map((s) => ({ s, n: st.asks.filter((a) => a.stream === s).length + extra.filter((x) => x.stream === s).length })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
   const more = list && shown.length > ASK_CAP
     ? (() => {
       const b = h('button', { type: 'button', class: 'more', 'data-ctl': 'more-asks', 'aria-expanded': String(homeUi.allAsks) }, homeUi.allAsks ? 'Show fewer' : `Show all ${shown.length}`, h('span', { class: 'vh' }, ' asks'), h('span', { class: 'chev', 'aria-hidden': 'true' }));
@@ -249,10 +257,10 @@ export function boardSection(st: PodiumState, live: boolean, redraw: () => void)
       return h('div', { class: 'more-row' }, b);
     })()
     : null;
-  const needs = part('needs', secHead('Needs you', st.asks.length, null, seg),
-    h('p', { class: 'needs-how' }, live ? 'Open an ask to see its context and the orchestrator\'s recommendation. Send an answer, take the recommendation, or skip a two-way door; it is saved to the ledger and leaves the board on the next update. Asks tied to the first priority of the day come first.' : 'Sample data: asks open read-only. Answering needs the Podium server.'),
-    byStream.length > 1 ? h('ul', { class: 'chips-row', role: 'list', 'aria-label': 'Filter asks by stream' }, chip(null, st.asks.length), ...byStream.map((x) => chip(x.s, x.n))) : null,
-    list ? list.list : empty('Nothing needs you right now.', 'tacet'), more);
+  const needs = part('needs', secHead('Needs you', total, null, seg),
+    h('p', { class: 'needs-how' }, live ? 'Open an ask to see its context and the orchestrator\'s recommendation. Send an answer, take the recommendation, or skip a two-way door; it is saved to the ledger and leaves the board on the next update. Asks tied to the first priority of the day come first; PRs ready to merge and reviews waiting for your OK follow them.' : 'Sample data: asks open read-only. Answering needs the Podium server.'),
+    byStream.length > 1 ? h('ul', { class: 'chips-row', role: 'list', 'aria-label': 'Filter what needs you by stream' }, chip(null, total), ...byStream.map((x) => chip(x.s, x.n))) : null,
+    list ? list.list : shownExtra.length ? null : empty('Nothing needs you right now.', 'tacet'), more, needsRows(shownExtra, true));
   return h('div', { class: 'board' }, h('div', { class: 'col' }, needs), h('div', { class: 'col' }, sidePanels(st)));
 }
 

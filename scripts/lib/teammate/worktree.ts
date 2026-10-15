@@ -13,7 +13,7 @@ export interface Cmd { status: number | null; stdout: string; stderr: string }
 export type Runner = (cmd: 'gh' | 'git', args: string[], cwd?: string) => Cmd;
 
 export interface PrepareOptions { repo: string; pr: number; self: string; selfRepos: readonly string[]; containerRoot: string; worktreesDir: string; run: Runner }
-export interface Prepared { path: string; head: string; base: string; repo: string; pr: number; diff: string }
+export interface Prepared { path: string; head: string; base: string; repo: string; pr: number; diff: string; author: string }
 
 const REPO = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/;
 const first = (s: string): string => s.split('\n')[0]?.slice(0, 200) ?? '';
@@ -67,7 +67,7 @@ export function prepare(o: PrepareOptions): Prepared {
     if (added.status !== 0) throw new Error(`git worktree add failed: ${first(added.stderr)}`);
     lock(path);
   }
-  return { path, head, base, repo: o.repo, pr: o.pr, diff: `git -C ${path} diff origin/${base}...${head}` };
+  return { path, head, base, repo: o.repo, pr: o.pr, author: info.author?.login ?? '', diff: `git -C ${path} diff origin/${base}...${head}` };
 }
 
 /** Removes a prepared worktree. Only a path directly under `worktreesDir` named `review-*` is ever removed. */

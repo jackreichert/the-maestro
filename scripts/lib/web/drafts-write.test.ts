@@ -62,6 +62,16 @@ test('GET /api/drafts lists the queue and writes nothing', async () => {
   assert.equal(r.calls.length, 0);
 });
 
+test('GET /api/drafts carries a review draft\'s PR author, the proposed verdict and the one-line context the needs-you list shows', async () => {
+  const r = await rig('author');
+  const id = addDraft(r.file, { key: 'k-review', source: 'review', repo: 'acme/widgets', pr: 9, severity: 'review', text: 'Nice tidy diff.', target: { kind: 'review', commitId: 'abcdef1' }, author: 'robin-r', context: 'Approves: 0 blocking, 1 suggestion(s); 1a2b3c', review: { compliment: 'Nice tidy diff.', comments: [] } }, { now: () => NOW }).id;
+  const out = await call(r, '/api/drafts', { method: 'GET' });
+  const d = out.json.drafts.find((x: Record<string, unknown>) => x.id === id);
+  assert.equal(d.author, 'robin-r');
+  assert.equal(d.review.event, 'APPROVE');
+  assert.equal(d.context, 'Approves: 0 blocking, 1 suggestion(s); 1a2b3c');
+});
+
 test('approve over HTTP posts once through the stub gh; a second approve is refused and posts nothing', async () => {
   const r = await rig('approve'); const id = seed(r);
   const text = 'Could this guard an empty list?';

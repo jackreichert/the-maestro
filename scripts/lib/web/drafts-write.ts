@@ -28,13 +28,13 @@ const RECENT_DONE = 30;
 export interface DraftsWriteOptions extends WriteOptions { ghRun?: GhRun }
 
 /** The wire shape of one draft. */
-export interface DraftView { rev: string; review?: { event: 'APPROVE' | 'REQUEST_CHANGES'; compliment: string; comments: { path: string; line: number; text: string; severity: 'blocking' | 'suggestion' }[] }; id: string; source: Draft['source']; repo: string; pr: number; prUrl: string; severity: Draft['severity']; text: string; where?: string; context?: string; replyTo?: string; state: Draft['state']; error?: string; postedUrl?: string; rejectReason?: string; createdAt: string }
+export interface DraftView { rev: string; review?: { event: 'APPROVE' | 'REQUEST_CHANGES'; compliment: string; comments: { path: string; line: number; text: string; severity: 'blocking' | 'suggestion' }[] }; id: string; source: Draft['source']; repo: string; pr: number; prUrl: string; severity: Draft['severity']; text: string; where?: string; context?: string; replyTo?: string; author?: string; state: Draft['state']; error?: string; postedUrl?: string; rejectReason?: string; createdAt: string }
 
 const view = (d: Draft): DraftView => ({
   rev: revOf(d), ...(d.review ? { review: { event: eventOf(d.review), compliment: d.review.compliment, comments: d.review.comments } } : {}),
   id: d.id, source: d.source, repo: d.repo, pr: d.pr, prUrl: `https://github.com/${d.repo}/pull/${d.pr}`, severity: d.severity, text: d.text,
   ...(d.target.kind === 'inline' ? { where: `${d.target.path}:${d.target.line}` } : {}),
-  ...(d.context ? { context: d.context } : {}), ...(d.replyTo ? { replyTo: d.replyTo } : {}),
+  ...(d.context ? { context: d.context } : {}), ...(d.replyTo ? { replyTo: d.replyTo } : {}), ...(d.author ? { author: d.author } : {}),
   state: d.state, ...(d.error ? { error: d.error } : {}), ...(d.postedUrl ? { postedUrl: d.postedUrl } : {}), ...(d.rejectReason ? { rejectReason: d.rejectReason } : {}), createdAt: d.createdAt,
 });
 

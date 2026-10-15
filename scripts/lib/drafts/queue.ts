@@ -19,6 +19,9 @@ import { isBotLogin } from '../github-bots.ts';
 export const MAX_TEXT = 4000;
 export const MAX_REASON = 500;
 export const MAX_REPLY_TO = 100;
+/** A GitHub login as the queue accepts it for `author`. */
+export const isLogin = (v: string): boolean => LOGIN.test(v);
+const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$/;
 export const MAX_PATH = 300;
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -55,6 +58,8 @@ export interface NewDraft {
   context?: string;
   /** Who wrote the comment a reply answers. */
   replyTo?: string;
+  /** The login of the PR's author, on a review draft, so the approval list can say whose PR it is. Shown, never posted. */
+  author?: string;
   /** Present exactly on a review draft (severity `review`, target kind `review`). */
   review?: ReviewBundle;
 }
@@ -177,6 +182,7 @@ function targetProblem(t: unknown): string | null {
 export function draftProblem(d: NewDraft): string | null {
   if (typeof d.key !== 'string' || !d.key || d.key.length > 300) return 'Bad key.';
   if (d.replyTo !== undefined && (typeof d.replyTo !== 'string' || d.replyTo.length > MAX_REPLY_TO)) return 'Bad reply-to.';
+  if (d.author !== undefined && (typeof d.author !== 'string' || !LOGIN.test(d.author))) return 'Bad author.';
   if (!REPO.test(d.repo) || !Number.isSafeInteger(d.pr) || d.pr <= 0) return 'Bad repo or PR number.';
   if (!['blocking', 'suggestion', 'reply', 'review'].includes(d.severity)) return 'Bad severity.';
   if ((d.severity === 'review') !== (d.target.kind === 'review') || (d.severity === 'review') !== (d.review !== undefined)) return 'A review draft has severity review, a review target and a review body, and only it does.';
@@ -202,7 +208,7 @@ export function addDraft(file: string, d: NewDraft, o: { now?: () => Date } = {}
   const existing = readRows(file).find((r): r is Extract<Row, { op: 'add' }> => r.op === 'add' && r.key === d.key);
   if (existing) return { id: existing.id, created: false };
   const id = `dr-${randomBytes(4).toString('hex')}`;
-  append(file, { op: 'add', id, ts: stamp(o), key: d.key, source: d.source, repo: d.repo, pr: d.pr, severity: d.severity, text: d.text, target: d.target, ...(d.context ? { context: d.context.slice(0, 500) } : {}), ...(d.replyTo ? { replyTo: d.replyTo } : {}), ...(d.review ? { review: d.review } : {}) });
+  append(file, { op: 'add', id, ts: stamp(o), key: d.key, source: d.source, repo: d.repo, pr: d.pr, severity: d.severity, text: d.text, target: d.target, ...(d.context ? { context: d.context.slice(0, 500) } : {}), ...(d.replyTo ? { replyTo: d.replyTo } : {}), ...(d.author ? { author: d.author } : {}), ...(d.review ? { review: d.review } : {}) });
   return { id, created: true };
 }
 

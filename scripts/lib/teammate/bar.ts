@@ -15,6 +15,7 @@
  * think best. A text is in the person's first person and may not mention an assistant or a tool: such a text is refused.
  */
 import { createHash } from 'node:crypto';
+import { isLogin } from '../drafts/queue.ts';
 import type { NewDraft, ReviewComment } from '../drafts/queue.ts';
 
 export const MAX_SUGGESTIONS = 3;
@@ -26,7 +27,7 @@ const MIN_COMPLIMENT_WORDS = 8;
 /** One finding as an agent reports it. Every field is untrusted. */
 export interface Finding { category?: string; kind?: string; input?: string; failure?: string; path?: string; line?: number; text?: string }
 
-export interface PrContext { repo: string; pr: number; head: string }
+export interface PrContext { repo: string; pr: number; head: string; /** The PR author's login, recorded on the draft for the approval list. */ author?: string }
 export interface Dropped { index: number; reason: string }
 /** The lines of each file that are on the RIGHT side of the diff (added or context), by path. */
 export type DiffLines = ReadonlyMap<string, ReadonlySet<number>>;
@@ -174,7 +175,7 @@ export function planReview(ctx: PrContext, compliment: string | undefined, findi
   return {
     draft: {
       key: `${ctx.repo}#${ctx.pr}@${ctx.head.slice(0, 12)}:review`, source: 'review', repo: ctx.repo, pr: ctx.pr, severity: 'review', text: body,
-      target: { kind: 'review', commitId: ctx.head }, review: { compliment: opening, comments },
+      target: { kind: 'review', commitId: ctx.head }, ...(ctx.author && isLogin(ctx.author) ? { author: ctx.author } : {}), review: { compliment: opening, comments },
       context: `${blocking ? 'Requests changes' : 'Approves'}: ${comments.filter((c) => c.severity === 'blocking').length} blocking, ${comments.filter((c) => c.severity === 'suggestion').length} suggestion(s); ${createHash('sha1').update(body).digest('hex').slice(0, 6)}`,
     },
     dropped, downgraded,

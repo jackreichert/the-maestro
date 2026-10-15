@@ -42,7 +42,7 @@ function self(): string {
 }
 
 /** What `submit` reads: the PR and head the review was of, the worktree it was read in, and the agent's compliment and findings. */
-export interface Submission { repo: string; pr: number; head: string; base: string; path: string; compliment: string; findings: Finding[] }
+export interface Submission { repo: string; pr: number; head: string; base: string; path: string; compliment: string; findings: Finding[]; /** The PR author's login (from `prepare`), kept on the draft so the Podium's needs-you list can name them. */ author?: string }
 
 const reviewPath = (path: string): string => {
   const root = resolve(worktreesDir());
@@ -54,7 +54,7 @@ const reviewPath = (path: string): string => {
 /** Queues the one review draft for this head, or says why not. `diff` is the head's unified diff (what GitHub will accept inline comments on). */
 export function submit(file: string, s: Submission, diff: string): { queued: { id: string } | null; problem?: string; dropped: { index: number; reason: string }[]; downgraded: number } {
   if (!/^[0-9a-f]{7,40}$/.test(s.head) || !Array.isArray(s.findings)) throw new Error('submission needs repo, pr, a hex head and findings[]');
-  const plan = planReview({ repo: s.repo, pr: s.pr, head: s.head }, s.compliment, s.findings, parseDiffLines(diff));
+  const plan = planReview({ repo: s.repo, pr: s.pr, head: s.head, ...(s.author ? { author: s.author } : {}) }, s.compliment, s.findings, parseDiffLines(diff));
   if (!plan.draft) return { queued: null, problem: plan.problem, dropped: plan.dropped, downgraded: plan.downgraded };
   const out = addDraft(file, plan.draft);
   // A push makes an earlier review of this PR stale: approving it would approve an old commit. Retire the ones still waiting, with the reason on record.
