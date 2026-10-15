@@ -351,7 +351,7 @@ export function streamScore(st: PodiumState, charts: ChartsData | null, stream: 
 
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
 
-/** The right-hand panel of a stream tab: where today's priorities put this stream (or that none does), and its notes. */
+/** The right-hand panel of a stream tab: where today's priorities put this stream (or that none does), and its notes. Home shows only the stream; the priority's text is here, and the stream's epics are in Where it stands below. */
 export function todayPanel(priorities: { text: string; stream?: string }[], projects: ProjectsData | null, stream: string): HTMLElement {
   const ranked = priorities.flatMap((p, i) => { const s = splitStream(p); return s.stream === stream ? [{ rank: i + 1, text: s.text }] : []; });
   const li = (l: HomeLink): HTMLElement[] => { const a = linkAttrs(l.url); return a ? [h('li', {}, h('a', { ...a, title: LINK_KIND[l.kind] }, l.label))] : []; };

@@ -143,8 +143,8 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .stream-title .projects-line { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
   .stream-page { display: grid; gap: var(--space-7); }
   .stream-title .mark { width: 12px; height: 12px; border-radius: 3px; }
-  /* Side by side, the headline column sets the row's height: the priorities panel contributes no height of its own (size containment), is stretched to the row, never shorter than a floor, and scrolls inside. */
-  @media (min-width: 901px) { .cue-grid > priority-list { align-self: stretch; contain: size; min-height: 22rem; } }
+  /* Side by side, the priorities panel is one compact line per priority and takes the height it needs, top-aligned beside the headline. */
+  @media (min-width: 901px) { .cue-grid > priority-list { align-self: start; } }
   @media (max-width: 900px) { .cue-grid { grid-template-columns: minmax(0, 1fr); } header.topbar .bar { gap: var(--space-3); } }
 
   @media (forced-colors: active) {
@@ -591,7 +591,7 @@ export class PodiumApp extends HTMLElement {
       ? `Priorities are from ${longDate(pri.date) || pri.date}. ${editable ? 'Add one to start today\'s list.' : 'Set today\'s with journal.ts priorities set.'}`
       : 'No priorities set for today.';
     const priorities = h('priority-list');
-    priorities.data = { items: pri.state === 'ok' ? pri.items : [], max: st.prioritiesMax, streams: st.streams, editable, note, epics: this.#epics ? Object.fromEntries(this.#epics.streams.map((g) => [g.stream, g.epics])) : {} };
+    priorities.data = { items: pri.state === 'ok' ? pri.items : [], max: st.prioritiesMax, streams: st.streams, editable, note };
     return priorities;
   }
 

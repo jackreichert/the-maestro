@@ -2,7 +2,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sanitizeEpics, sanitizeHome } from '../src/contract.ts';
-import { rollupFacts } from '../src/home-text.ts';
 import { epicLine, epics, home } from './home-fixture.ts';
 
 test('a well-formed epics body passes through whole', () => {
@@ -24,11 +23,6 @@ test('a line whose counts do not add up to its total, or that is malformed, is d
   assert.equal(got?.data.streams[0]?.epics.length, 1);
   assert.equal(got?.data.unfiled.length, 1);
   assert.equal(got?.dropped, 3);
-});
-
-test('the rollup facts state the denominator, the open counts and what waits on the user', () => {
-  assert.deepEqual(rollupFacts(epicLine('a-1', { quietDays: 20 }) as never), ['9 of 14 closed (64%)', '2 in progress · 1 blocked · 2 not started', '1 awaits you', 'quiet 20 days']);
-  assert.deepEqual(rollupFacts(epicLine('a-2', { total: 0, closed: 0, inProgress: 0, blocked: 0, notStarted: 0, awaiting: 0 }) as never), ['0 of 0 closed']);
 });
 
 test('a home epic may carry the PRs that name it, and a server that omits them is still accepted', () => {

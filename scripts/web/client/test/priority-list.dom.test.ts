@@ -11,14 +11,29 @@ const data = (over: Partial<PriorityData> = {}): PriorityData => ({
   max: 5, streams: ['Avonlea', 'Tilling'], editable: true, note: '', ...over,
 });
 
-test('the list is titled, counts against its cap, and shows each stream as a tag rather than bracketed text', async () => {
+test('the list is titled, counts against its cap, and shows only each stream as a link to its tab', async () => {
   const { root, cleanup } = await mount<List>('../src/priority-list.ts', 'priority-list', { data: data() });
   assert.equal(root.querySelector('h2')?.textContent, "Today's priorities");
   const rows = [...root.querySelectorAll('ol.priorities li')];
   assert.equal(rows.length, 2);
-  assert.equal(rows[0]?.querySelector('.text')?.firstChild?.textContent, 'Ship the thing');
   assert.equal(rows[0]?.querySelector('a.tag')?.textContent, 'Avonlea');
   assert.equal(rows[1]?.querySelector('a.tag')?.textContent, 'Tilling');
+  assert.match(rows[0]?.querySelector('a.tag')?.getAttribute('href') ?? '', /Avonlea/);
+  cleanup();
+});
+
+test('a compact row hides the priority text from the eye but keeps it for assistive tech, and a stream-less priority shows its text', async () => {
+  const { root, cleanup } = await mount<List>('../src/priority-list.ts', 'priority-list', { data: data({ items: [{ text: 'Ship the thing [Avonlea]' }, { text: 'Loose chore' }] }) });
+  const [a, b] = [...root.querySelectorAll('ol.priorities li .text')];
+  assert.equal(a?.querySelector('.vh')?.textContent, ': Ship the thing');
+  assert.equal(a?.getAttribute('title'), 'Ship the thing');
+  assert.equal(b?.querySelector('a.tag'), null);
+  assert.equal(b?.textContent, 'Loose chore');
+  const unk = await mount<List>('../src/priority-list.ts', 'priority-list', { data: data({ items: [{ text: 'Typed by hand', stream: 'Nowhere' }] }) });
+  const t = unk.root.querySelector('ol.priorities li .text');
+  assert.equal(t?.querySelector('a.tag'), null, 'a stream with no tab is not a link back to Home');
+  assert.equal(t?.textContent, 'Typed by hand');
+  unk.cleanup();
   cleanup();
 });
 

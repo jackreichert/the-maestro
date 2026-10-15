@@ -144,8 +144,3 @@ export function railCount(groups: RailGroup[]): number {
 export function kindWord(kind: RailLink['kind']): string {
   return kind === 'note' ? 'note' : kind === 'tracker' ? 'tracker' : kind === 'pr' ? 'pull request' : 'web';
 }
-
-/** The plain facts in an epic's rollup line, in order: progress with its denominator, the open counts, what waits on the user, quiet. */
-export function rollupFacts(e: Pick<EpicLine, 'closed' | 'total' | 'inProgress' | 'blocked' | 'notStarted' | 'awaiting' | 'quietDays'>): string[] {
-  return [progressSentence(e), openCounts(e), awaitingLabel(e.awaiting), quietNote(e.quietDays)].filter((x): x is string => !!x);
-}
