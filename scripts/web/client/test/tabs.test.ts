@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/tabs.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CUE_KEYS, DASHBOARD, OPEN_PRS, OVERVIEW, formatFragment, isAllStreams, nextTab, parseFilter, parseFragment, streamTabId, tabIds, tabStream } from '../src/tabs.ts';
+import { CUE_KEYS, DASHBOARD, OPEN_PRS, OVERVIEW, formatFragment, isAllStreams, nextTab, parseFilter, parseFragment, parseStreamFilter, streamTabId, tabIds, tabStream } from '../src/tabs.ts';
 
 const ids = tabIds(['acme-widgets', 'ops', 'other']);
 
@@ -75,4 +75,15 @@ test('a tile filter rides on the tab fragment without disturbing the tab', () =>
   const odd = tabIds(['x&y']);
   assert.equal(parseFragment(formatFragment('x&y', 'asks'), odd), 'x&y');
   assert.equal(parseFilter(formatFragment('x&y', 'asks')), 'asks');
+});
+
+test('a stream chip rides on the asks view only, round-trips awkward names, and ignores anything undecodable', () => {
+  assert.equal(formatFragment('dashboard', 'asks', 'ops'), '#tab=dashboard&show=asks&stream=ops');
+  assert.equal(formatFragment('dashboard', 'blocked', 'ops'), '#tab=dashboard&show=blocked', 'only the asks view carries a stream');
+  assert.equal(formatFragment('dashboard', null, 'ops'), '#tab=dashboard');
+  assert.equal(parseStreamFilter(formatFragment('dashboard', 'asks', 'a b&c=d')), 'a b&c=d');
+  assert.equal(parseFilter(formatFragment('dashboard', 'asks', 'a b&c=d')), 'asks');
+  for (const h of ['', '#tab=dashboard&show=asks', '#tab=dashboard&show=asks&stream=', '#tab=dashboard&show=asks&stream=%E0%A4%A']) {
+    assert.equal(parseStreamFilter(h), null, h);
+  }
 });
