@@ -23,6 +23,7 @@ export type DocKind = (typeof DOC_KINDS)[number];
 const FOLDER_KIND: Record<DocFolder, DocKind> = { CONTEXT: 'other', DECISIONS: 'decision', Plans: 'plan', Research: 'research', Reviews: 'review', Runbooks: 'runbook', Knowledge: 'other' };
 const TICKET_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const MAX_TICKETS_PER_DOC = 10;
+const MAX_TAGS = 10;
 
 export interface Doc {
   path: string; folder: DocFolder; title: string; status?: string; updated?: string;
@@ -36,6 +37,8 @@ export interface Doc {
   projectLevel: boolean;
   /** The stream the note names in frontmatter (`stream: Alpha`), or `none` when it is deliberately off every stream tab. */
   stream?: string;
+  /** The frontmatter `tags` (`tags: [setup, run]` or a `- item` list), lower-cased, at most ten; absent when the note has none. */
+  tags?: string[];
 }
 export interface Docs { docs: Doc[]; notes: string[] }
 
@@ -50,7 +53,7 @@ function ticketIds(raw: string | undefined): string[] {
 }
 
 /** A document's header: title (frontmatter `title`, else its first `# ` heading, else the file name), status, the first date of `updated`, `last-updated`, `date`, `created`, the tickets it names and its kind. */
-export function docHeader(rawHead: string, fileName: string, folder: DocFolder = 'Plans'): { title: string; status?: string; updated?: string; kind: DocKind; tickets: string[]; projectLevel: boolean; stream?: string } {
+export function docHeader(rawHead: string, fileName: string, folder: DocFolder = 'Plans'): { title: string; status?: string; updated?: string; kind: DocKind; tickets: string[]; projectLevel: boolean; stream?: string; tags?: string[] } {
   const head = rawHead.replace(/\r\n?/g, '\n');
   const fm = head.match(/^---\n([\s\S]*?)\n---\n?/);
   /** The value of a key; a key with no value on its line takes the `- item` lines right under it as a list. */
@@ -69,10 +72,11 @@ export function docHeader(rawHead: string, fileName: string, folder: DocFolder =
   const title = get('title') || clean(body.match(/^#\s+(.+)$/m)?.[1] ?? '') || fileName.replace(/\.md$/, '');
   const date = DATE_KEYS.map(get).find((d) => d !== undefined);
   const named = [...new Set([...ticketIds(raw('ticket')), ...ticketIds(raw('tickets')), ...ticketIds(raw('epic'))])].filter((t) => t.toLowerCase() !== 'none').slice(0, MAX_TICKETS_PER_DOC);
+  const tags = (raw('tags') ?? '').replace(/^\[|\]$/g, '').split(',').map((x) => clean(x.trim().replace(/^["']|["']$/g, '')).toLowerCase()).filter(Boolean).slice(0, MAX_TAGS);
   const pick = (v: string | undefined): DocKind | undefined => DOC_KINDS.find((k) => k === v?.toLowerCase());
   return {
     title, ...(get('status') ? { status: get('status') } : {}), ...(date ? { updated: date } : {}),
-    kind: pick(get('kind')) ?? pick(get('type')) ?? FOLDER_KIND[folder], tickets: named, ...(get('stream') ? { stream: get('stream') } : {}),
+    kind: pick(get('kind')) ?? pick(get('type')) ?? FOLDER_KIND[folder], tickets: named, ...(get('stream') ? { stream: get('stream') } : {}), ...(tags.length ? { tags } : {}),
     projectLevel: !named.length && [raw('ticket'), raw('tickets')].some((v) => v?.trim().replace(/^["'\[]|["'\]]$/g, '').toLowerCase() === 'none'),
   };
 }

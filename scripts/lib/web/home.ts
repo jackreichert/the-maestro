@@ -9,6 +9,7 @@ import { readHomes } from '../home/config.ts';
 import { buildStreamHome, unfiledEpics } from '../home/build.ts';
 import { epicsData } from '../home/epics.ts';
 import type { EpicsData } from '../home/epics.ts';
+import { NOTE_FILE_SCOPES, NOTE_MAX_BYTES } from '../home/handover.ts';
 import { BRIEF_DIR_SCOPES, BRIEF_FILE_SCOPES, readBriefNote } from '../home/brief.ts';
 import type { LedgerFact } from '../home/build.ts';
 import type { BriefRead } from '../home/brief.ts';
@@ -47,13 +48,14 @@ function homeInputs(cfg: WebConfig, now: Date, docs: boolean) {
   const { inputs, g } = readBoard(cfg, now);
   const streams = reduceState(inputs).streams.filter((s) => s !== 'other');
   const root = cfg.vaultRoot;
-  const reader = root ? createReader({ root, dirScopes: [...TICKET_DIR_SCOPES, ...DOC_DIR_SCOPES, ...BRIEF_DIR_SCOPES], fileScopes: [...TICKET_FILE_SCOPES, ...DOC_FILE_SCOPES, ...BRIEF_FILE_SCOPES] }) : null;
+  const reader = root ? createReader({ root, dirScopes: [...TICKET_DIR_SCOPES, ...DOC_DIR_SCOPES, ...BRIEF_DIR_SCOPES], fileScopes: [...TICKET_FILE_SCOPES, ...DOC_FILE_SCOPES, ...BRIEF_FILE_SCOPES, ...NOTE_FILE_SCOPES] }) : null;
   const vault = root && reader ? loadTickets(reader, root) : null;
   const base = {
     streams, now, vault, homes: readHomes(cfg.statusDir, streams), ledger: factsOf(g.items, inputs.ticketMap),
     prs: inputs.prs, prData: { fetchedAt: inputs.prData.fetchedAt }, page: cfg.page,
     readDocs: (project: string) => (docs && reader ? loadDocs(reader, project) : { docs: [], notes: [] }),
     readBrief: (epic: Ticket): BriefRead => (docs && reader ? readBriefNote(reader, epic.project, epic.id) : { ok: false, reason: 'missing' }),
+    readNote: (path: string): string | null => { const r = docs && reader ? reader.read(path, NOTE_MAX_BYTES) : null; return r?.ok ? r.text : null; },
   };
   return base;
 }

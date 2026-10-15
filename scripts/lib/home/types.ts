@@ -1,4 +1,5 @@
 import type { DocKind } from './docs.ts';
+import type { ProjectHandover } from './handover.ts';
 /** The shapes `GET /api/streams/:name/home` returns, as the stream home base brief documents them. Data only: no HTML, and no absolute path anywhere. */
 export interface Ref { label: string; url?: string }
 export type UnknownKind = 'ambiguous-epic' | 'missing-parent' | 'unreadable-note' | 'parent-cycle' | 'sparse-points' | 'big-points' | 'closed-not-verified' | 'ledger-ticket' | 'tracker-unread' | 'no-done-means' | 'config-invalid' | 'no-vault' | 'missing-context' | 'unreadable-doc' | 'brief-missing' | 'brief-stale';
@@ -53,6 +54,8 @@ export interface StreamHome {
   left: { inProgress: TicketRow[]; blocked: TicketRow[]; notStarted: TicketRow[]; truncated: number };
   doneMeans: { epic: string; text: string }[];
   links: LinkGroup[];
+  /** One handover per project the stream covers, sorted by project; each section is filled or says what is missing. */
+  projects: ProjectHandover[];
   history: null;
   unknowns: Unknown[];
   freshness: { tickets: string; prs: { fetchedAt: string | null; stale: boolean }; tracker: string | null };

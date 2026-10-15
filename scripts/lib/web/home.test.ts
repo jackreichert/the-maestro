@@ -4,7 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openStore } from '../journal/store.ts';
@@ -110,4 +110,33 @@ test('GET /api/projects answers with a row per stream and no secret or absolute 
   assert.deepEqual(data.rows.map((x: { stream: string }) => x.stream), ['Avonlea', 'Green Gables']);
   assertNoCanary(r.body);
   assert.ok(!r.body.includes(fx.root) && !r.body.includes(ledgerRoot), 'no absolute path in the response');
+});
+
+test('the home base carries one handover per mapped project: missing sections are named, then filled, and a symlinked INDEX is never read', async () => {
+  const handover = async (): Promise<{ overview: { state: string }; run: { kind: string; state: string }[]; library: { state: string; groups?: { kind: string; lines: { title: string }[] }[] }; docs: { decisions: { state?: string } } }> => {
+    const r = await hit('/api/streams/Avonlea/home');
+    assertNoCanary(r.body);
+    assert.ok(!r.body.includes(fx.root) && !r.body.includes(fx.outside), 'no absolute path in the response');
+    const projects = JSON.parse(r.body).projects as { project: string }[];
+    assert.deepEqual(projects.map((p) => p.project), ['avonlea-api']);
+    return projects[0] as never;
+  };
+  const bare = await handover();
+  assert.equal(bare.overview.state, 'missing', 'the fixture CONTEXT has a title and no paragraph');
+  assert.deepEqual(bare.run.map((r) => r.state), ['missing', 'missing', 'missing', 'missing']);
+  assert.equal(bare.library.state, 'missing');
+  assert.equal(bare.docs.decisions.state, undefined, 'DECISIONS.md exists, so it is listed');
+
+  writeFileSync(join(fx.outside, 'index.md'), '<!-- library-index:start -->\n- [[CANARY-ENV-7f3a]]: runbook, outside (verified 2026-10-01)\n<!-- library-index:end -->\n');
+  symlinkSync(join(fx.outside, 'index.md'), join(fx.root, 'Projects/avonlea-api/INDEX.md'));
+  assert.equal((await handover()).library.state, 'missing', 'a symlinked INDEX.md is refused by the reader');
+  rmSync(join(fx.root, 'Projects/avonlea-api/INDEX.md'));
+
+  fx.write('Projects/avonlea-api/CONTEXT.md', '# Avonlea API\n\nThe sync service for the orchard dashboards.\n\n## Now\n\n- Cutover\n');
+  fx.write('Projects/avonlea-api/INDEX.md', '<!-- library-index:start -->\n- [[cutover]]: runbook, you cut over (verified 2026-10-01)\n<!-- library-index:end -->\n');
+  fx.write('Projects/avonlea-api/Runbooks/cutover.md', '---\ntags: [deploy]\n---\n# Cutover runbook\n');
+  const full = await handover();
+  assert.equal(full.overview.state, 'ok');
+  assert.deepEqual(full.run.map((r) => [r.kind, r.state]), [['setup', 'missing'], ['run', 'missing'], ['test', 'missing'], ['deploy', 'ok']]);
+  assert.deepEqual(full.library.groups?.map((g) => [g.kind, g.lines.map((l) => l.title)]), [['runbook', ['cutover']]]);
 });
