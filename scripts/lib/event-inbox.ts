@@ -20,7 +20,7 @@ import type { DigestEvent } from './types.ts';
 import { cleanWindowId } from './window-id.ts';
 
 /** The extracted facts an alert or hook line may use. */
-export interface EventFields { repo?: string; number?: number; who?: 'bot' | 'human'; count?: number; tag?: string }
+export interface EventFields { repo?: string; number?: number; who?: 'bot' | 'human'; count?: number; tag?: string; stamp?: string; reason?: string }
 
 /** An event row as stored. */
 export interface InboxEvent {
@@ -44,7 +44,11 @@ export const inboxPath = (eventDir: string): string => join(eventDir, 'events.js
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const KIND = /^[a-z][a-z0-9-]{0,39}$/;
 /** A tag-watch tag: a short plain token, so a name that is free text or a path never passes. */
-const TAG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const TAG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+/** The UTC stamp in a pulled file's name (`<note>.new-<stamp>.md`, `<note>.diff-<stamp>.md`), enough to rebuild the path from the registry. */
+const STAMP = /^\d{8}T\d{6}Z$/;
+/** Why a tagged conversation or page is no longer readable: a closed set, never free text. */
+const UNSHARED_REASONS = new Set(['channel_not_found', 'not_in_channel', 'is_archived', '404', '403', 'archived']);
 const REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 /** A time as canonical ISO text, or null. Re-serialised, never passed through: the date parser accepts trailing free text such as "(note)", so a check alone would let it into the file. */
 const isoTime = (v: unknown): string | null => { const t = typeof v === 'string' ? Date.parse(v) : NaN; return Number.isFinite(t) ? new Date(t).toISOString() : null; };
@@ -57,6 +61,8 @@ const FIELD_RULES: Record<keyof EventFields, (v: unknown) => boolean> = {
   who: (v) => v === 'bot' || v === 'human',
   count: isCount,
   tag: (v) => typeof v === 'string' && TAG.test(v),
+  stamp: (v) => typeof v === 'string' && STAMP.test(v),
+  reason: (v) => typeof v === 'string' && UNSHARED_REASONS.has(v),
 };
 
 /** The allowlisted subset of `raw`; anything not in FIELD_RULES, or failing its rule, is dropped. */
@@ -99,6 +105,8 @@ const FIELD_EXTRACTORS: ((summary: string) => Record<string, unknown>)[] = [
   (s) => { const m = s.match(/ by (\S+?)[ :(]/); return m ? { who: /\[bot\]$|-bot$|^copilot/i.test(m[1]) ? 'bot' : 'human' } : {}; },
   (s) => { const m = s.match(/^(\d+) new message/); return m ? { count: Number(m[1]) } : {}; },
   (s) => { const m = s.match(/^[A-Z]+-(?:NEW|UNSHARED|CHECK-FAILING|CHANGED) tag=(\S+)/); return m ? { tag: m[1] } : {}; },
+  (s) => { const m = s.match(/^[A-Z]+-(?:NEW|CHANGED) .*?(?:file|diff)=\S*\.(?:new|diff)-(\d{8}T\d{6}Z)\.md\b/); return m ? { stamp: m[1] } : {}; },
+  (s) => { const m = s.match(/^[A-Z]+-UNSHARED tag=\S+ reason=(\S+)/); return m ? { reason: m[1] } : {}; },
   (s) => { const m = s.match(/^[A-Z]+-NEW .*? new=(\d+)/); return m ? { count: Number(m[1]) } : {}; },
 ];
 

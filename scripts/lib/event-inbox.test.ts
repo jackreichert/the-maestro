@@ -219,7 +219,7 @@ test('tag-watch lines (slack, notion) get a kind and keep their tag and count; n
   assert.equal(added?.kind, 'tag-new');
   assert.deepEqual(added?.fields, { tag: 'ops-room', count: 4 });
   assert.equal(e('SLACK-UNSHARED tag=ops-room reason=not_in_channel')?.kind, 'tag-unshared');
-  assert.deepEqual(e('SLACK-UNSHARED tag=ops-room reason=not_in_channel')?.fields, { tag: 'ops-room' });
+  assert.deepEqual(e('SLACK-UNSHARED tag=ops-room reason=not_in_channel')?.fields, { tag: 'ops-room', reason: 'not_in_channel' });
   assert.equal(e(`SLACK-CHECK-FAILING tag=ops-room ${SENTINEL}`)?.kind, 'check-failing');
   assert.equal(e('NOTION-NEW tag=spec note=/n new=2 file=/f')?.kind, 'tag-new');
   assert.equal(e('NOTION-UNSHARED tag=spec reason=404')?.kind, 'tag-unshared');
@@ -227,4 +227,16 @@ test('tag-watch lines (slack, notion) get a kind and keep their tag and count; n
   // A tag that is not a plain token is dropped, never stored.
   assert.deepEqual(e('SLACK-NEW tag=a/b;rm note=/n new=1 file=/f')?.fields, { count: 1 });
   assert.doesNotMatch(JSON.stringify(added), /\/tmp\/notes/);
+});
+
+test('tag-watch events keep the file stamp, dotted tags and a closed set of unshared reasons', () => {
+  const e = (s: string) => toInboxEvent(ev(s, { type: 'slack-watch', watch: 'slack' }));
+  assert.equal(e('SLACK-NEW tag=ops note=/n/ops.md new=2 file=/n/ops.new-20261013T091500Z.md')?.fields.stamp, '20261013T091500Z');
+  assert.equal(e('NOTION-CHANGED tag=spec note=/n/s.md diff=/n/s.diff-20261005T101500Z.md summary=+1/-0 lines')?.fields.stamp, '20261005T101500Z');
+  assert.equal(e('SLACK-NEW tag=ops note=/n new=2 file=/n/ops.new-notatime.md')?.fields.stamp, undefined);
+  assert.equal(e('SLACK-NEW tag=ops.room note=/n new=1 file=/f')?.fields.tag, 'ops.room');
+  assert.equal(e('SLACK-NEW tag=a/b note=/n new=1 file=/f')?.fields.tag, undefined);
+  assert.equal(e('SLACK-UNSHARED tag=ops reason=not_in_channel')?.fields.reason, 'not_in_channel');
+  assert.equal(e('NOTION-UNSHARED tag=spec reason=404')?.fields.reason, '404');
+  assert.equal(e(`SLACK-UNSHARED tag=ops reason=${SENTINEL}`)?.fields.reason, undefined);
 });
