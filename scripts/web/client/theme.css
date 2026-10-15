@@ -201,6 +201,7 @@
 html {
   background: var(--surface-page);
   scroll-padding-top: 4.5rem; /* keyboard focus never lands under the sticky tab bar */
+  scroll-padding-bottom: 3.5rem; /* ...or under the fixed walkers toggle in the bottom-right corner */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
@@ -208,7 +209,7 @@ html {
 body {
   margin: 0;
   min-height: 100dvh;
-  background: var(--surface-page);
+  /* No background of its own: html paints the page colour, and a body background would hide the walkers (podium-walkers) that sit just behind the content. */
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: var(--text-md);
