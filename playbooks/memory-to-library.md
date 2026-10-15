@@ -5,7 +5,7 @@ You are the runner. Memory is for how to work with the user; project facts belon
 ## 1. Sort
 
 ```bash
-node scripts/memory-sort.ts --memory-dir <memory dir>
+node scripts/memory-sort.ts --memory-dir <memory dir> [--hints <file.json>]
 ```
 
 Read-only; one row per file with a verdict (`project-fact`, `behaviour-rule`, `decision-or-status`, `unsure`), a target page and the reason. It prints no file body. Exit 2 means a usage error: fix the path once, else stop and report.
@@ -13,7 +13,7 @@ Read-only; one row per file with a verdict (`project-fact`, `behaviour-rule`, `d
 ## 2. Check the dry run
 
 ```bash
-node scripts/memory-migrate.ts --memory-dir <memory dir> --vault <vault root> [--approved <file>]
+node scripts/memory-migrate.ts --memory-dir <memory dir> --vault <vault root> [--approved <file>] [--hints <file.json>]
 ```
 
 Dry run. Each project fact shows `wait-for-page`, `wait-for-approval` or `point`. Never pass `--apply` unless the user has given you the approved list in this session; with it, only `point` files change, to a one-line pointer.
@@ -26,3 +26,5 @@ At most 12 lines: the counts, the `unsure` and `decision-or-status` names (the u
 
 - No edit to a memory file without `--apply` and the user's approved list.
 - No library page written by you; no secrets or PHI in the report.
+
+`--hints` names a JSON file of `["regex", "project"]` pairs that map a memory file's name or description to the library project that should hold it, tried before the built-in the-maestro, mithril and dev-env hints. Keep that file in your private config; a file whose name matches no hint is reported as `unsure`, never guessed.
