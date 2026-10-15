@@ -112,7 +112,7 @@ test('orderNeedsYou: one-way doors first overall, today priorities inside each d
   const ids = (o: 'oldest' | 'oneway' | 'stream') => orderNeedsYou(asks as never, o, pri).map((x) => x.id);
   assert.deepEqual(ids('oneway'), ['f', 'c', 'b', 'e', 'd', 'a']);
   assert.deepEqual(ids('oldest'), ['d', 'f', 'c', 'a', 'b', 'e']);
-  assert.deepEqual(ids('stream'), ['d', 'f', 'c', 'a', 'b', 'e']);
+  assert.deepEqual(orderNeedsYou(asks as never, 'stream', [...pri].reverse()).map((x) => x.id), ['d', 'f', 'c', 'a', 'b', 'e']);
 });
 
 test('askAgeBars: four buckets, the last two flagged stale', () => {
