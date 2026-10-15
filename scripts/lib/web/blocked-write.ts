@@ -30,7 +30,8 @@ export const MAX_COMMENT = 400;
 export const BY = 'Jack';
 export const SOURCE = 'podium';
 const ID = /^[a-z0-9]{4,6}$/;
-const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+/** C0 and C1 controls and the bidi overrides: none belong in a one-line comment that later lands in briefs and terminal output. */
+const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 
 export type UnblockBody = { id: string; mode: 'unblock' | 'comment'; comment: string };
 

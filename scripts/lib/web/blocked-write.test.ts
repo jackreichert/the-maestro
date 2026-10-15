@@ -130,7 +130,7 @@ test('Comment only records the comment and leaves the item blocked', async () =>
 test('an empty, over-long, control-character or secret-shaped comment is refused and writes nothing', async () => {
   const r = await rig('refuse-text');
   const secret = ['AKIA', 'IOSFODNN7EXAMPLE'].join('');
-  for (const comment of ['', ' \n\t ', 'x'.repeat(MAX_COMMENT + 1), 'bell\u0007', `key ${secret}`]) {
+  for (const comment of ['', ' \n\t ', 'x'.repeat(MAX_COMMENT + 1), 'bell\u0007', 'csi\u009b', 'flip\u202e', `key ${secret}`]) {
     for (const mode of ['unblock', 'comment']) {
       const res = await post(r, { id: 'bl11', mode, comment });
       assert.equal(res.status, 422, `${mode} ${comment.slice(0, 12)}`);
