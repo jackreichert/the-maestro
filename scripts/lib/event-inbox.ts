@@ -48,7 +48,7 @@ const TAG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 /** The UTC stamp in a pulled file's name (`<note>.new-<stamp>.md`, `<note>.diff-<stamp>.md`), enough to rebuild the path from the registry. */
 const STAMP = /^\d{8}T\d{6}Z$/;
 /** Why a tagged conversation or page is no longer readable: a closed set, never free text. */
-const UNSHARED_REASONS = new Set(['channel_not_found', 'not_in_channel', 'is_archived', '404', '403', 'archived']);
+const UNSHARED_REASONS = new Set(['channel_not_found', 'not_in_channel', 'is_archived', 'missing_scope', '404', '403', 'archived']);
 const REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 /** A time as canonical ISO text, or null. Re-serialised, never passed through: the date parser accepts trailing free text such as "(note)", so a check alone would let it into the file. */
 const isoTime = (v: unknown): string | null => { const t = typeof v === 'string' ? Date.parse(v) : NaN; return Number.isFinite(t) ? new Date(t).toISOString() : null; };

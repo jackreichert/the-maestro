@@ -237,6 +237,7 @@ test('tag-watch events keep the file stamp, dotted tags and a closed set of unsh
   assert.equal(e('SLACK-NEW tag=ops.room note=/n new=1 file=/f')?.fields.tag, 'ops.room');
   assert.equal(e('SLACK-NEW tag=a/b note=/n new=1 file=/f')?.fields.tag, undefined);
   assert.equal(e('SLACK-UNSHARED tag=ops reason=not_in_channel')?.fields.reason, 'not_in_channel');
+  assert.equal(e('SLACK-UNSHARED tag=ops reason=missing_scope')?.fields.reason, 'missing_scope');
   assert.equal(e('NOTION-UNSHARED tag=spec reason=404')?.fields.reason, '404');
   assert.equal(e(`SLACK-UNSHARED tag=ops reason=${SENTINEL}`)?.fields.reason, undefined);
 });
