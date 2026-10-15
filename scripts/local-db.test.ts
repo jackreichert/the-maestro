@@ -43,7 +43,7 @@ function fakePsql(): string {
 }
 const PSQL = fakePsql();
 const ok = (args: string[], extra: { db?: string; write?: boolean; varName?: string } = {}, vars = [`LOCAL_DB_URL=${URL_OK}`]) =>
-  run({ args, ...extra }, { envFile: envFile(vars), psqlPath: PSQL, stdin: () => '' });
+  run({ args, ...extra }, { envFile: envFile(vars), psqlPath: PSQL });
 const withUrl = (url: string, name = 'LOCAL_DB_URL') => [`${name}=${url}`];
 const refusedMessage = (args: string[], extra = {}, vars = [`LOCAL_DB_URL=${URL_OK}`]): string => {
   const r = ok(args, extra, vars);
@@ -163,15 +163,22 @@ test('catalog and display commands, and backslashes inside quotes, are allowed',
   assert.equal(ok(['-c', '\\dt']).status, 3);
 });
 
-test('-f and -v are refused (a file or ECHO variable could print other secrets); stdin scripts are scanned', () => {
+test('-f, -v and stdin scripts are refused: SQL comes from -c only', () => {
   const f = join(root, 's.sql'); writeFileSync(f, 'select 1;\n');
   for (const args of [['-f', f], ['--file', f], ['-f', '-'], ['-v', 'ECHO=all', '-c', 'select 1'], ['--set=ECHO=all'], ['--variable', 'X=1']]) {
     assert.match(refusedMessage(args), /not allowed/, args.join(' '));
   }
-  const good = run({ args: [] }, { envFile: envFile([`LOCAL_DB_URL=${URL_OK}`]), psqlPath: PSQL, stdin: () => 'select 1;\n' });
-  assert.match(good.stdout, /ARGV:.*-f -[\s\S]*STDIN:select 1;/);
-  const bad = run({ args: [] }, { envFile: envFile([`LOCAL_DB_URL=${URL_OK}`]), psqlPath: PSQL, stdin: () => '\\! id\n' });
-  assert.equal(bad.status, 2);
+  assert.match(refusedMessage([]), /pass the SQL with -c/);
+  assert.match(refusedMessage(['-A', '-t']), /pass the SQL with -c/);
+  assert.match(refusedMessage(['-c', '\\dt $$ \\! id $$']), /not allowed/);
+  assert.match(refusedMessage(['-c', '\\dt /* \\! id */']), /not allowed/);
+});
+
+test('server-side file, program and cross-database access is refused in both modes', () => {
+  for (const sql of ["select pg_read_file('/x')", "select pg_ls_dir('.')", "select lo_import('/x')", "copy t to program 'sh'", 'COPY t FROM stdin', "select dblink('a','b')", 'select pg_stat_file(1)']) {
+    for (const write of [false, true]) assert.match(refusedMessage(['-c', sql], { write }), /server-side file/, sql);
+  }
+  assert.equal(ok(['-c', 'select copy_id from t']).status, 3);
 });
 
 test('env file parsing: export, quotes and comments; nothing is sourced', () => {

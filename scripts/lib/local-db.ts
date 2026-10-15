@@ -29,6 +29,8 @@ const DB_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$/;
 const VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PSQL_CANDIDATES = ['/opt/homebrew/opt/postgresql@17/bin/psql', '/opt/homebrew/bin/psql', '/usr/local/bin/psql', '/usr/bin/psql'];
 const READ_ONLY_BYPASS = /transaction_read_only|set_config|standard_conforming_strings|read\s+write|reset\s+all|session\s+authorization|set\s+role/i;
+/** Server-side file, program and cross-database access: with a superuser local role these would read the host's files. A guardrail; a non-superuser role is the boundary. */
+const SERVER_FILE_ACCESS = /pg_read_file|pg_read_binary_file|pg_ls_|pg_stat_file|pg_file_|lo_import|lo_export|lo_get|lo_put|\bcopy\b|\bprogram\b|dblink|postgres_fdw|adminpack|pg_execute_server/i;
 /** Meta commands that only read catalog metadata or change display: \d family, \l, \x, \timing, and the \\ separator. */
 const SAFE_META = /^(d[A-Za-z]{0,3}[+S]*|l[+]?|x|timing|\\)$/;
 
@@ -130,7 +132,12 @@ export function unsafeMeta(text: string): string | undefined {
     if (c === '\\') {
       const name = /^\\(\\|[A-Za-z]+[+S]*|[^A-Za-z\s])/.exec(text.slice(i))?.[1] ?? '';
       if (!SAFE_META.test(name)) return `\\${name}`;
-      i += 1 + name.length; continue;
+      // psql reads a meta command's arguments to the end of the line and does not honour SQL quotes or comments there, so a later
+      // backslash or backtick on the same line is a second command (`\dt $$ \! id $$`): refuse it whatever it is wrapped in.
+      const eol = text.indexOf('\n', i);
+      const rest = text.slice(i + 1 + name.length, eol === -1 ? n : eol);
+      if (/[\\`]/.test(rest)) return '\\ or a backtick after a backslash command';
+      i = eol === -1 ? n : eol + 1; continue;
     }
     i++;
   }
@@ -139,7 +146,7 @@ export function unsafeMeta(text: string): string | undefined {
 
 export interface Request { args: string[]; db?: string; write?: boolean; varName?: string }
 export interface Planned { argv: string[]; input?: string; target: LocalTarget }
-export interface Deps { envFile?: string; psqlPath?: string; stdin?: () => string }
+export interface Deps { envFile?: string; psqlPath?: string }
 
 /** Flags psql may be given: output shape and the SQL itself. Anything else (-h, -p, -U, -d, -P, -o, -L, -W, URIs) is refused. */
 const FLAG_ONLY = new Set(['-A', '-t', '-x', '-q', '-H', '-1', '--csv', '--no-align', '--tuples-only', '--expanded', '--quiet', '--html', '--single-transaction', '-X', '--no-psqlrc']);
@@ -161,15 +168,13 @@ export function plan(req: Request, deps: Deps = {}): Planned {
     if (FLAG_ONLY.has(flag) && !eq) argv.push(flag);
     else if (FLAG_VALUE.has(flag)) argv.push(flag, take());
     else if (flag === '-c' || flag === '--command') { const v = take(); texts.push(v); argv.push('-c', v); }
-    else throw new LocalDbRefused(`refused: argument ${flag.startsWith('-') ? flag : '(positional)'} is not allowed; pass -c SQL (or SQL on stdin) and output flags, and use --db to pick the database`);
+    else throw new LocalDbRefused(`refused: argument ${flag.startsWith('-') ? flag : '(positional)'} is not allowed; pass -c SQL and output flags, and use --db to pick the database`);
   }
-  if (!texts.length && input === undefined) {
-    input = (deps.stdin ?? (() => readFileSync(0, 'utf8')))();
-    texts.push(input); argv.push('-f', '-');
-  }
+  if (!texts.length) throw new LocalDbRefused('refused: pass the SQL with -c (stdin scripts and -f are not accepted)');
   for (const t of texts) {
     const bad = unsafeMeta(t);
     if (bad) throw new LocalDbRefused(`refused: ${bad === '`' ? 'a backtick' : `the backslash command ${bad}`} is not allowed (allowed: \\d family, \\l, \\x, \\timing)`);
+    if (SERVER_FILE_ACCESS.test(t)) throw new LocalDbRefused('refused: server-side file, program and cross-database access (pg_read_file, COPY, lo_import, dblink, ...) is not allowed');
     if (!req.write && READ_ONLY_BYPASS.test(t)) throw new LocalDbRefused('refused: that statement could switch the session out of read-only; pass --write for a local write');
   }
   return { argv, input, target };

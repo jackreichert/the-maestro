@@ -3,7 +3,6 @@
  * LOCAL DB: run psql against Jack's LOCAL Postgres without seeing its URL.
  *
  *   local-db [--var NAME] [--db NAME] [--write] [--info] -c "SQL" [-A -t -x -q -H --csv -F SEP ...]
- *   local-db --db NAME < script.sql           (SQL on stdin when there is no -c)
  *
  * Reads LOCAL_DB_URL (or --var NAME) from ~/dev-env/.env inside this process. Refuses unless the host is localhost or 127.0.0.1, the
  * port is not a prod or staging proxy port (5438, 5439), and the variable is not a prod, staging or shared one. `--db` replaces the URL's
