@@ -157,7 +157,7 @@ import { importTracker, writeTracker } from './lib/whats-next/tracker.ts';
 import { gatherRankInput } from './lib/whats-next/gather.ts';
 import { nextLines, rankNext, whyOf } from './lib/whats-next/rank.ts';
 import type { Ranking } from './lib/whats-next/rank.ts';
-import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS, NEXT_FROZEN_LABELS, NEXT_BLOCKED_LABELS } from './local-config.ts';
+import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS, NEXT_FROZEN_LABELS, NEXT_BLOCKED_LABELS } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -1252,7 +1252,7 @@ const configuredStatusPageUri = (): string => statusPageUri({
 });
 
 /** The review queue from the stored PR snapshot (no network on a status read); null when none has been taken. */
-const boardReviewQueue = () => boardQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS);
+const boardReviewQueue = () => boardQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, REVIEW_QUEUE_ORGS);
 
 /**
  * The day queue ages are counted to. Rows are stamped with the UTC day (`today()`), so the age must be measured to the UTC day too: the local
@@ -1401,7 +1401,7 @@ function cmdStatus() {
 function cmdReviewQueue() {
     const capArg = arg('cap');
     if (has('cap') && !(capArg !== null && /^\d+$/.test(capArg) && Number(capArg) > 0)) { console.error('--cap must be a positive whole number.'); process.exit(2); }
-    const reading = readQueue({ fetchLive, readStored: () => readSnapshotPrs(freshestSnapshotPath(vault)) }, capArg === null ? REVIEW_QUEUE_CAP : Number(capArg), new Date(), SELF_REVIEW_REPOS);
+    const reading = readQueue({ fetchLive, readStored: () => readSnapshotPrs(freshestSnapshotPath(vault)) }, capArg === null ? REVIEW_QUEUE_CAP : Number(capArg), new Date(), SELF_REVIEW_REPOS, REVIEW_QUEUE_ORGS);
     if (asJson) printJson(reading); else queueText(reading).forEach((l) => console.log(l));
     // Not process.exit: it drops output a pipe has not yet taken, so a slow reader would see a cut answer.
     process.exitCode = queueExitCode(reading);
@@ -1436,7 +1436,7 @@ function footerLiveRead(): ReturnType<typeof fetchLive> {
 }
 
 /** The footer's review queue line: the stored snapshot when it is under 30 minutes old, else a bounded live read (saved), else `unknown` (never an old number). */
-const footerReviewQueue = (): string | null => footerQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, footerLiveRead);
+const footerReviewQueue = (): string | null => footerQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, footerLiveRead, REVIEW_QUEUE_ORGS);
 
 function cmdStandup() {
     console.log(standupText(arg('date', today())));

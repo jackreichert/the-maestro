@@ -339,6 +339,29 @@ test('self_review_repos: default none, a bare owner means owner/*, a wildcard ow
     assert.equal(show({ MAESTRO_SELF_REVIEW_REPOS: 'solo/*' }).SELF_REVIEW_REPOS, 'solo/*');
 });
 
+test('review_queue_orgs: default is gh_org, else none; set, it scopes PR_SEARCH to the queue, self-review and pool owners; env wins', () => {
+    assert.equal(show().REVIEW_QUEUE_ORGS, '(unset)');
+    assert.equal(show().PR_SEARCH, 'is:pr is:open author:@me');
+    assert.equal(show({ MAESTRO_GH_ORG: 'my-org' }).REVIEW_QUEUE_ORGS, 'my-org');
+    assert.equal(show({ MAESTRO_GH_ORG: 'my-org' }).PR_SEARCH, 'is:pr is:open author:@me org:my-org', 'gh_org alone keeps its old search');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('review_queue_orgs: My-Org,  other-org/x\nself_review_repos: example-owner/tool'));
+    const v = show();
+    assert.equal(v.REVIEW_QUEUE_ORGS, 'My-Org, other-org');
+    assert.equal(v.PR_SEARCH, 'is:pr is:open author:@me user:My-Org user:other-org user:example-owner');
+    assert.equal(show({ MAESTRO_REVIEW_QUEUE_ORGS: 'solo' }).PR_SEARCH, 'is:pr is:open author:@me user:solo user:example-owner');
+});
+
+test('review_queue_orgs: malformed entries fail loudly instead of widening the filter', () => {
+    for (const bad of ['Example-Org other-user', '!other-user', '*', 'my-org, *', 'my_org']) {
+        const r = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH ?? '', HOME: home, MAESTRO_REVIEW_QUEUE_ORGS: bad } });
+        assert.notEqual(r.status, 0, `"${bad}" must be rejected`);
+        assert.match(r.stderr, /review_queue_orgs: invalid entry/);
+    }
+    assert.equal(show({ MAESTRO_REVIEW_QUEUE_ORGS: 'Example-Org,other-user' }).REVIEW_QUEUE_ORGS, 'Example-Org, other-user');
+    assert.equal(show({ MAESTRO_REVIEW_QUEUE_ORGS: ' solo ' }).REVIEW_QUEUE_ORGS, 'solo');
+    assert.equal(show({ MAESTRO_REVIEW_QUEUE_ORGS: '' }).REVIEW_QUEUE_ORGS, '(unset)');
+});
+
 test('PR body settings: defaults on, file values, a check switch env var is ignored', () => {
     const checks = ['PR_BODY_CHECK_RISK', 'PR_BODY_CHECK_VERIFY', 'PR_BODY_CHECK_FORBIDDEN', 'PR_BODY_CHECK_DIAGRAM', 'PR_BODY_CHECK_STACK', 'PR_BODY_CHECK_ORDER', 'PR_BODY_CHECK_PRIVATE', 'PR_BODY_CHECK_VOICE', 'PR_BODY_CHECK_COUNTS'];
     const d = show();

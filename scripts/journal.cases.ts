@@ -2819,6 +2819,30 @@ test('review-queue: PRs in a self_review_repos repo are not counted, and the ans
     assert.deepEqual([json.queue.count, json.queue.selfReview], [2, 3]);
 });
 
+test('review-queue: review_queue_orgs leaves other owners PRs out of the count even when the read returns them', () => {
+    const other = (n: number) => prNode(n, { repository: { nameWithOwner: 'other-owner/personal' } });
+    const stub = installGhStub({ pages: [[prNode(1), prNode(2), other(3), other(4), other(5)]] });
+    const gate = (extra: NodeJS.ProcessEnv, ...args: string[]) => spawnSync(process.execPath, [SCRIPT, 'review-queue', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...stub, ...extra, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj' },
+    });
+    assert.equal(gate({}, '--cap', '4').status, 1, 'without the setting all 5 count');
+    const owner = parse<{ queue: { count: number } }>(gate({ MAESTRO_REVIEW_QUEUE_ORGS: 'org' }, '--json').stdout);
+    assert.equal(owner.queue.count, 2, 'only the org/repo PRs count');
+});
+
+test('status and status --footer count only review_queue_orgs owners from a stored snapshot', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const prs = [['example-org/a', false], ['example-org/b', false], ['other-owner/personal', false], ['other-owner/personal', false]].map(([repo, isDraft]) => ({ repo, isDraft }));
+    writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: new Date().toISOString(), prs }));
+    const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_REVIEW_QUEUE_ORGS: '', ...env },
+    }).stdout;
+    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 4 of 4 \(full\)$/m, 'no setting, no filter');
+    assert.match(status(['--footer'], { MAESTRO_REVIEW_QUEUE_ORGS: 'example-org' }), /^\*\*Review queue:\*\* 2 of 4$/m);
+    assert.match(status([], { MAESTRO_REVIEW_QUEUE_ORGS: 'example-org' }), /\n {2}review queue: 2 of 4\n/);
+});
+
 test('status and status --footer list self-review PRs on their own line, apart from the review queue', () => {
     const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
     mkdirSync(journalDir, { recursive: true });

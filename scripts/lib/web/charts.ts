@@ -8,7 +8,7 @@ import type { LedgerItem } from '../ledger-core.ts';
 import type { Pr } from '../status-page/render.ts';
 import { localDate } from '../status-page/priorities.ts';
 import { family } from '../model-family.ts';
-import { reviewQueue } from '../review-queue.ts';
+import { inQueueOwners, reviewQueue } from '../review-queue.ts';
 import { isSelfReview, splitSelfReview } from '../self-review.ts';
 
 const OTHER = 'other';
@@ -21,8 +21,8 @@ export interface DoneRef { id: string; stream: string; text: string; finishedAt:
 /** A pull request as a chart mark links to it. `createdAt` is absent when the PR cache predates the field. */
 export interface PrRef { repo: string; number: number; title: string; url: string; stream: string; createdAt?: string }
 /**
- * Open, non-draft pull requests by whole days old. `inQueue` are the ones the review-queue cap counts (every repo not in
- * `self_review_repos`), `other` the self-review repos. A PR with no usable `createdAt` is in `unknownAge`, split the same way, never in a bucket.
+ * Open, non-draft pull requests by whole days old. `inQueue` are the ones the review-queue cap counts (owned by `review_queue_orgs` and not in
+ * `self_review_repos`), `other` the rest. A PR with no usable `createdAt` is in `unknownAge`, split the same way, never in a bucket.
  */
 export interface PrAgeBucket { label: string; inQueue: PrRef[]; other: PrRef[] }
 export interface PrAge { buckets: PrAgeBucket[]; unknownAge: { inQueue: PrRef[]; other: PrRef[] }; drafts: number }
@@ -51,11 +51,13 @@ export interface ChartsInput {
   selfReview?: readonly string[];
   /** `review_queue_cap`; absent means the page has no queue to report. */
   reviewQueueCap?: number;
+  /** `review_queue_orgs`: only PRs in repos owned by these count toward the queue. Default none (no owner filter). */
+  reviewQueueOwners?: readonly string[];
 }
 
 /** All four charts for the last `days` page days ending today. */
 export function buildCharts(input: ChartsInput): Charts {
-  const { items, awaiting, prs, now, tz, days, selfReview = [], reviewQueueCap } = input;
+  const { items, awaiting, prs, now, tz, days, selfReview = [], reviewQueueCap, reviewQueueOwners = [] } = input;
   return {
     days: lastDays(now, tz, days),
     throughput: throughputByDay(items, days, tz, now),
@@ -63,8 +65,8 @@ export function buildCharts(input: ChartsInput): Charts {
     prMix: prMix(splitSelfReview(prs, selfReview).org),
     modelMix: modelMix(items, days, tz, now),
     doneItems: doneItems(items, days, tz, now),
-    prAge: prAgeBuckets(prs, now, tz, selfReview),
-    reviewQueue: reviewQueueCap === undefined ? { unavailable: 'no review_queue_cap is configured' } : queueState(prs, reviewQueueCap, selfReview),
+    prAge: prAgeBuckets(prs, now, tz, selfReview, reviewQueueOwners),
+    reviewQueue: reviewQueueCap === undefined ? { unavailable: 'no review_queue_cap is configured' } : queueState(prs, reviewQueueCap, selfReview, reviewQueueOwners),
   };
 }
 
@@ -142,25 +144,26 @@ export function awaitingAge(awaiting: LedgerItem[], now: Date, tz: string): AgeB
   return buckets;
 }
 
-/** Open non-draft PRs bucketed by whole page days since `createdAt` (`askAgeDays`, the buckets `awaitingAge` uses), split by whether the review-queue cap counts them. Drafts are only counted. */
-export function prAgeBuckets(prs: Pr[], now: Date, tz: string, selfReview: readonly string[] = []): PrAge {
+/** Open non-draft PRs bucketed by whole page days since `createdAt` (`askAgeDays`, the buckets `awaitingAge` uses), split by whether the review-queue cap counts them (owner in `owners`, not a self-review repo; same rule as `reviewQueue`). Drafts are only counted. */
+export function prAgeBuckets(prs: Pr[], now: Date, tz: string, selfReview: readonly string[] = [], owners: readonly string[] = []): PrAge {
   const buckets: PrAgeBucket[] = AGE_BUCKETS.map((b) => ({ label: b.label, inQueue: [], other: [] }));
   const unknownAge: PrAge['unknownAge'] = { inQueue: [], other: [] };
+  const side = (p: Pr): 'inQueue' | 'other' => (inQueueOwners(p.repo, owners) && !isSelfReview(p.repo, selfReview) ? 'inQueue' : 'other');
   let drafts = 0;
   for (const p of prs) {
     if (p.isDraft) { drafts += 1; continue; }
     const ref: PrRef = { repo: p.repo, number: p.number, title: p.title, url: p.url, stream: p.stream, ...(p.createdAt ? { createdAt: p.createdAt } : {}) };
-    if (!p.createdAt || !Number.isFinite(Date.parse(p.createdAt))) { unknownAge[isSelfReview(p.repo, selfReview) ? 'other' : 'inQueue'].push(ref); continue; }
+    if (!p.createdAt || !Number.isFinite(Date.parse(p.createdAt))) { unknownAge[side(p)].push(ref); continue; }
     const age = askAgeDays({ ts: p.createdAt }, now, tz);
     const bucket = buckets[AGE_BUCKETS.findIndex((b) => age < b.below)];
-    bucket?.[isSelfReview(p.repo, selfReview) ? 'other' : 'inQueue'].push(ref);
+    bucket?.[side(p)].push(ref);
   }
   return { buckets, unknownAge, drafts };
 }
 
 /** The same count `journal.ts review-queue` gates on (open, non-draft, not in a self-review repo), against the cap. */
-function queueState(prs: Pr[], cap: number, selfReview: readonly string[]): ReviewQueueState {
-  const q = reviewQueue(prs, cap, selfReview);
+function queueState(prs: Pr[], cap: number, selfReview: readonly string[], owners: readonly string[]): ReviewQueueState {
+  const q = reviewQueue(prs, cap, selfReview, owners);
   return { count: q.count, cap: q.cap };
 }
 

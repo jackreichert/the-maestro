@@ -127,6 +127,21 @@ test('the push gate and the board line apply the same exclusion', () => {
   assert.equal(boardQueue(stored, 4, now)?.text, 'review queue: 3 of 4');
 });
 
+test('review_queue_orgs: only PRs owned by a listed owner count; another owner is never counted, even from a stale snapshot', () => {
+  const list = [inRepo('Org/a'), inRepo('org/b'), inRepo('other-user/google-type'), inRepo('other-user/google-type'), inRepo('org/c', true)];
+  assert.deepEqual(reviewQueue(list, 4, [], ['org']), { count: 2, cap: 4, full: false, selfReview: 0 }, 'owner match ignores case, drafts and other owners are out');
+  assert.equal(reviewQueue(list, 4).count, 4, 'with no owners configured nothing is filtered (the old behaviour)');
+  assert.equal(reviewQueue([{ isDraft: false }], 4, [], ['org']).count, 1, 'a PR with no repo is still counted');
+  assert.equal(reviewQueue([...list, inRepo('me/tool')], 4, ['me/tool'], ['org', 'me']).selfReview, 1, 'self_review_repos still works inside an allowed owner');
+  const stored = { prs: list, takenAt: '2026-01-01T00:00:00Z' };
+  const now = new Date('2026-01-01T00:05:00Z');
+  assert.equal(boardQueue(stored, 4, now, [], ['org'])?.text, 'review queue: 2 of 4');
+  assert.equal(footerQueue(stored, 4, new Date('2026-01-01T01:00:00Z'), [], () => ({ prs: list }), ['org']), '**Review queue:** 2 of 4');
+  const down = { fetchLive: () => { throw new Error('offline'); }, readStored: () => stored };
+  const r = readQueue(down, 4, now, [], ['org']);
+  assert.ok(r.ok && r.queue.count === 2);
+});
+
 test('with a review pool the queue counts only pool repos: personal and stray repos are left out and reported as self-review', () => {
   const prs = [{ isDraft: false, repo: 'avonlea/a' }, { isDraft: false, repo: 'avonlea/b' }, { isDraft: false, repo: 'samwise/notes' }, { isDraft: false, repo: 'rosie/garden' }, { isDraft: true, repo: 'avonlea/c' }];
   assert.deepEqual(reviewQueue(prs, 2, ['!avonlea/*']), { count: 2, cap: 2, full: true, selfReview: 2 });

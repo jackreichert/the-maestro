@@ -116,7 +116,7 @@ Reviewer attention is the limit, not agent capacity. The cap is per reviewer-att
 node scripts/journal.ts review-queue
 ```
 
-It counts your open, non-draft PRs against `review_queue_cap` (default 4), leaving out PRs in a `self_review_repos` repo (only you review those; see [prs.md](prs.md#self-review-repos)), and exits **0** with room, **1** when full, **2** when it cannot answer (GitHub failed and the stored snapshot is missing or over six hours old, or `--cap` is bad; treat that as full). When it exits 1 or 2:
+It counts your open, non-draft PRs against `review_queue_cap` (default 4), counting only PRs owned by a `review_queue_orgs` owner when that is set (default `gh_org`; any other owner, such as a personal repo, is never counted and, with the setting, never searched), leaving out PRs in a `self_review_repos` repo (only you review those; see [prs.md](prs.md#self-review-repos)), and exits **0** with room, **1** when full, **2** when it cannot answer (GitHub failed and the stored snapshot is missing or over six hours old, or `--cap` is bad; treat that as full). When it exits 1 or 2:
 
 - **Keep building.** Dispatch the work, test it and review it locally on its branch and worktree exactly as if the queue had room. Nothing about the work waits for a slot.
 - **Hold the finished branch as "ready to push".** Record it in the ledger with its head sha (`journal.ts log` or the item's `done` line), so the hold survives a compaction and the sha shows what was reviewed. Do not push it and do not open the PR.
@@ -127,7 +127,7 @@ It counts your open, non-draft PRs against `review_queue_cap` (default 4), leavi
 
 **Self-review repos.** Repos the user reviews alone (config key `self_review_repos`, `owner/repo` or `owner/*`, default empty) draw on no one else's reviewer attention. They are left out of the count, the cap and the footer's queue figure, and the count leaves them out. `review-queue` takes no repo argument and cannot tell which branch you are about to push, so for a self-review repo skip the `review-queue` check; the script does not skip it for you. They are not hidden: the PR digest, `status` and the Podium list them as their own section ([reference/prs.md](prs.md#self-review-repos)).
 
-The count is the same PR search the PR scripts share (open, authored by you, org-scoped), minus drafts. A draft does not count, and a PR approved but not yet merged still does. `status` shows `review queue: N of 4` from the stored snapshot, and the Podium from its own PR cache. The footer does the same while the snapshot is under 30 minutes old, reads GitHub live when it is older, and prints `unknown` rather than an old number when that read fails; the gate itself reads GitHub live, so on a stale board the gate is the authority.
+The count is the same PR search the PR scripts share (open, authored by you, scoped to the `review_queue_orgs` owners plus the self-review and pool owners, or to `gh_org`), minus drafts. A draft does not count, and a PR approved but not yet merged still does. `status` shows `review queue: N of 4` from the stored snapshot, and the Podium from its own PR cache. The footer does the same while the snapshot is under 30 minutes old, reads GitHub live when it is older, and prints `unknown` rather than an old number when that read fails; the gate itself reads GitHub live, so on a stale board the gate is the authority.
 
 ## Picking the next item
 

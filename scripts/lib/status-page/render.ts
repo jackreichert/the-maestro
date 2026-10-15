@@ -67,6 +67,8 @@ export interface PageConfig {
   streamProjects?: (stream: string) => string[];
   /** The review queue cap (`review_queue_cap`). Absent: the page shows no review queue line. */
   reviewQueueCap?: number;
+  /** `review_queue_orgs`: only PRs owned by these count toward the queue. Default none (no owner filter). */
+  reviewQueueOwners?: string[];
   /** `self_review_repos`: PRs in these repos are not counted in the review queue. Absent: none. */
   selfReviewRepos?: string[];
   /** Owners whose repos may appear in the PR list (the configured `gh_org`). Absent or empty means none: the PR list is withheld, never unscoped. */
@@ -288,7 +290,7 @@ function prSection(cfg: PageConfig, all: Pr[], streams: string[]): string[] {
   const tot = (f: (p: Pr) => boolean): number => prs.filter(f).length;
   const out = [`## Open PRs (${prs.length})`, '',
     `${tot((p) => p.isDraft)} draft, ${tot((p) => p.mergeable === 'CONFLICTING')} conflicting, ${tot((p) => p.unresolved > 0)} with unresolved threads, ${tot((p) => p.ci === 'FAILURE' || p.ci === 'ERROR')} failing CI.`, '',
-    ...(cfg.reviewQueueCap === undefined ? [] : [queueSentence(reviewQueue(prs, cfg.reviewQueueCap)), ''])];
+    ...(cfg.reviewQueueCap === undefined ? [] : [queueSentence(reviewQueue(prs, cfg.reviewQueueCap, [], cfg.reviewQueueOwners ?? [])), ''])];
   for (const stream of streams) {
     const mine = prs.filter((p) => p.stream === stream);
     if (!mine.length) continue;
