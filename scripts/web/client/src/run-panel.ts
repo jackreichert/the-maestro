@@ -9,7 +9,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .badge { border: var(--hairline-strong); border-radius: var(--radius-xs); padding: 0 6px; font-size: var(--text-xs); color: var(--text-secondary); }
   pre { margin: 0; padding: var(--space-3); background: var(--surface-2); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22rem; overflow: auto; }
   pre.out:empty { display: none; }
-  .err { color: var(--danger, var(--text-secondary)); }
+  .err { color: var(--bad); }
   .refusals { margin: 0; padding-left: var(--space-4); font-size: var(--text-sm); color: var(--text-secondary); }
   .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
   .status { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }

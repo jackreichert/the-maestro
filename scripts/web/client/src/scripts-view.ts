@@ -9,7 +9,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
   h3.group-name { font-size: var(--text-sm); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 0 0 var(--space-2); }
   article { border-bottom: 1px solid var(--border); padding-block: var(--space-4); }
   .head { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; }
-  .head h4 { margin: 0; font-size: var(--text-base); }
+  .head h4 { margin: 0; font-size: var(--text-md); }
   .badge { border: var(--hairline-strong); border-radius: var(--radius-xs); padding: 0 6px; font-size: var(--text-xs); color: var(--text-secondary); }
   .desc { margin: var(--space-1) 0 var(--space-2); color: var(--text-secondary); max-width: 70ch; }
   .args { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-block: var(--space-2); }
