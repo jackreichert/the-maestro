@@ -212,7 +212,7 @@ function enqueueFix(item: DigestFix, vault: string, project: string): void {
   const r = spawnSync(process.execPath, [
     JOURNAL, 'queue', item.text,
     '--repo', item.repo,
-    '--model', 'unrecorded',
+    '--model', 'n/a',
     '--used', 'tool:loop-supervisor',
     '--vault', vault,
     '--project', project,

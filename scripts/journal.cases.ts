@@ -17,7 +17,7 @@ process.env.MAESTRO_LOCAL_CONFIG = '';
 process.env.MAESTRO_EVENT_DIR = mkdtempSync(join(tmpdir(), 'journal-events-'));
 
 const SCRIPT = new URL('./journal.ts', import.meta.url).pathname;
-const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.ts'];
+const MARK = ['--model', 'claude-opus-5-5', '--used', 'skill:the-maestro,tool:journal.ts'];
 let vault: string;
 let tv: string;
 let projects: string;
@@ -78,7 +78,7 @@ test('start with model and used shows the marks in status', () => {
     assert.equal(run('start', 'marked work', ...MARK).code, 0);
     const s = run('status');
     assert.equal(s.code, 0);
-    assert.match(s.out, /marked work .*model: Test Model · used: skill:the-maestro, tool:journal\.ts/);
+    assert.match(s.out, /marked work .*model: claude-opus-5-5 · used: skill:the-maestro, tool:journal/);
 });
 
 test('standup hides the usage suffix', () => {
@@ -105,7 +105,7 @@ test('fold does not duplicate a stamped item', () => {
     run('stamp-missing');
     const s = parse(run('status', '--json').out);
     assert.equal(s.inflight.length, 1);
-    assert.equal(s.inflight[0].model, 'Test Model');
+    assert.equal(s.inflight[0].model, 'claude-opus-5-5');
 });
 
 test('roll appends a marked row without needing --model', () => {
@@ -114,7 +114,7 @@ test('roll appends a marked row without needing --model', () => {
     const r = run('roll');
     assert.equal(r.code, 0, r.err);
     const rolled = must(ledger().find((e) => e.kind === 'rolled'));
-    assert.deepEqual([rolled.model, rolled.used, rolled.tokens], ['n/a', ['tool:journal.ts'], 'n/a']);
+    assert.deepEqual([rolled.model, rolled.used, rolled.tokens], ['n/a', ['tool:journal'], 'n/a']);
 });
 
 test('roll and scratch list <scripts_dir>/scratch with proposals when scripts_dir is set, and say nothing when it is not', () => {
@@ -561,7 +561,7 @@ test('queue "<text>" writes a wip row marked queued with stream and marks, and s
     assert.match(q.out, /^queued {2}\w{4} {2}later job/);
     const id = idOf(q.out);
     const row = must(ledger().find((e) => e.id === id));
-    assert.deepEqual([row.kind, row.queued, row.stream, row.model], ['wip', true, 'Launch', 'Test Model']);
+    assert.deepEqual([row.kind, row.queued, row.stream, row.model], ['wip', true, 'Launch', 'claude-opus-5-5']);
 
     const s = run('start', id, ...MARK);
     assert.equal(s.code, 0, s.err);
@@ -733,17 +733,27 @@ test('usage counts a numeric mark and its string form as one row', () => {
 });
 
 test('read-time mapping heals old rows without touching the ledger; models check is a dry run', () => {
-    run('start', 'legacy', '--model', 'Claude Opus 5.5', ...usedFlags);
     run('start', 'modern', '--model', 'claude-opus-5-5', ...usedFlags);
+    const hand = (id: string, model: string, used: string[]) => JSON.stringify({ id, kind: 'wip', ts: '2026-10-03T09:00:00Z', date: '2026-10-03', text: `hand ${id}`, model, used }) + '\n';
+    writeFileSync(ledgerFile(), readFileSync(ledgerFile(), 'utf8') + hand('h001', 'Claude Opus 5.5', ['tool:journal.mjs']) + hand('h002', 'House Model', ['tool:journal.ts']));
     const before = readFileSync(ledgerFile(), 'utf8');
-    assert.deepEqual(parse(run('usage', '--json').out).model, { 'Claude Opus 5.5': 1, 'claude-opus-5-5': 1 });   // no models section: nothing enforced
+    const first = parse<{ model: Record<string, number>; used: Record<string, number> }>(run('usage', '--json').out);
+    assert.deepEqual(first.model, { 'claude-opus-5-5': 2, 'House Model': 1 });   // the built-in table folds the old spelling; an unknown model is left alone
+    assert.equal(first.used['tool:journal'], 2);
     seedModels();
-    assert.deepEqual(parse(run('usage', '--json').out).model, { 'claude-opus-5-5': 2 });
     const c = parse(run('models', 'check', '--json').out);
     assert.equal(c.rows, 1);
-    assert.deepEqual(c.models.map((m) => [m.model, m.status]).sort(), [['Claude Opus 5.5', 'alias'], ['claude-opus-5-5', 'canonical']]);
+    assert.deepEqual(c.models.map((m) => [m.model, m.status]).sort(), [['Claude Opus 5.5', 'alias'], ['House Model', 'unknown'], ['claude-opus-5-5', 'canonical']]);
     assert.match(run('models', 'check').out, /1 row\(s\) would show under a different model name; nothing appended/);
     assert.equal(readFileSync(ledgerFile(), 'utf8'), before);
+});
+
+test('--used tool marks are written canonical, and usage reports the unrecorded share', () => {
+    run('start', 'one', '--model', 'sonnet-5.5', '--used', 'skill:the-maestro,tool:journal.mjs,tool:journal.ts');
+    run('start', 'two', '--model', 'unrecorded', '--used', 'unrecorded');
+    assert.deepEqual(ledger().map((e) => [e.model, e.used]), [['claude-sonnet-5-5', ['skill:the-maestro', 'tool:journal']], ['unrecorded', ['unrecorded']]]);
+    assert.deepEqual(parse(run('usage', '--json').out).unrecorded, { model: 1, used: 1 });
+    assert.match(run('usage').out, /unrecorded: model 1 \(50\.0%\), used 1 \(50\.0%\)/);
 });
 
 test('models add is idempotent, refuses alias collisions, and coexists with streams in the one file', () => {
@@ -3027,7 +3037,7 @@ test('learned refuses a claim, evidence or location with a secret shape, never e
 test('learned refuses a secret shape in --used, --repo or --stream and a malformed --date, and writes nothing', () => {
     const secret = ['tok', 'en=abc123secret'].join('');
     for (const extra of [['--used', secret], ['--repo', secret], ['--stream', secret], ['--date', 'yesterday']]) {
-        const marks = extra[0] === '--used' ? ['--model', 'Test Model'] : MARK;
+        const marks = extra[0] === '--used' ? ['--model', 'claude-opus-5-5'] : MARK;
         const r = run('learned', 'A claim.', ...LEARNED, ...marks, ...extra);
         assert.equal(r.code, 1, extra.join(' '));
         assert.ok(!r.err.includes('abc123secret'), 'the value was echoed');

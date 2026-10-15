@@ -50,7 +50,7 @@ export function linkRowToPr(store: Pick<Store, 'readLedger' | 'append' | 'newId'
         text: `PR ${pr.repo}#${pr.number} opened for ${itemId}`,
         refs: [ref],
         ...(branch ? { branch } : {}),
-        model: 'unrecorded',
+        model: 'n/a',
         used: ['tool:pr-open.ts'],
     });
     return 'linked';

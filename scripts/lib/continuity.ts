@@ -50,7 +50,7 @@ export interface ContinuityResult {
 const minutes = (ms: number): number => Math.max(1, Math.round(ms / 60_000));
 
 /** The `--model`/`--used` flags every row a caller writes carries, so the freshness check can tell its rows from work. */
-export const marks = (used: string): string[] => ['--model', 'unrecorded', '--used', used];
+export const marks = (used: string): string[] => ['--model', 'n/a', '--used', used];
 
 /** What the decision scan looked at before it raised an ask: `ask` refuses a row that does not say where it searched. */
 const SEARCHED = 'the session transcript and the ledger (unledgered-decision scan)';

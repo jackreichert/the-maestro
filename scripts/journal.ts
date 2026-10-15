@@ -239,6 +239,7 @@ import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLi
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
 import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
+import { MODEL_SENTINELS, MODEL_TABLE, normaliseUsed } from './lib/ledger-tags.ts';
 import type { TryRun } from './lib/journal/prime.ts';
 import { NO_VAULT_DETAIL, STANDING_FILE, appendEvent, readEvents, recordRan, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
 import type { CheckContext, StandingRow } from './lib/standing.ts';
@@ -413,22 +414,20 @@ function parseList(name: string): string[] | undefined {
     const raw = arg(name);
     if (!raw) return undefined;
     const list = raw.split(',').map((s) => s.trim()).filter(Boolean);
-    return list.length ? list : undefined;
+    return list.length ? (name === 'used' ? (normaliseUsed(list) as string[]) : list) : undefined;
 }
 
-const MODEL_SENTINELS = new Set(['unrecorded', 'n/a', 'unmeasured']);
 
 /**
- * Write-time normalisation for --model. Needs a `models` section in the registry; without one nothing
- * changes. A registered alias is written as its canonical id. An unknown name is warned about and
- * written as-is: the ledger has odd historic values, so this never rejects.
+ * Write-time normalisation for --model. The built-in table (lib/ledger-tags.ts) plus the registry's `models` section
+ * decide. A known alias is written as its canonical id. An unknown name is warned about and written as-is: the ledger
+ * has odd historic values, so this never rejects.
  */
 function normaliseModel(raw: string | null): string | null {
-    const reg = loadRegistry();
-    if (!raw || MODEL_SENTINELS.has(raw) || !reg?.models || !Object.keys(reg.models).length) return raw;
-    const canon = canonicalModel(reg, raw);
+    if (!raw || MODEL_SENTINELS.has(raw)) return raw;
+    const canon = canonicalModel(loadRegistry(), raw);
     if (!canon) {
-        console.error(`unknown model "${raw}": not in the registry, written as-is. Register it with \`journal.ts models add <id> --alias "${raw}"\`.`);
+        console.error(`unknown model "${raw}": not in the model table or the registry, written as-is. Register it with \`journal.ts models add <id> --alias "${raw}"\`.`);
         return raw;
     }
     if (canon !== raw) console.error(`normalised model ${raw} -> ${canon}`);
@@ -1522,7 +1521,7 @@ function raiseEnvAsks(asks: EnvAsk[]): void {
             recommend, door: 'two-way',
             ...template,
             searched: 'the roll worktree scan (branch-sweep) and the open asks',
-            model: 'unrecorded', used: ['skill:the-maestro', 'tool:branch-sweep'],
+            model: 'n/a', used: ['skill:the-maestro', 'tool:branch-sweep'],
         });
         if (!dryRun) render(true);
         console.log(`asked  ${ask.worktree}: move ${ask.files.join(', ')} into the env store`);
@@ -1874,11 +1873,13 @@ function cmdUsage() {
         marks.forEach((x) => bump(used, x));
     }
     const sorted = (m: Map<string, number>) => [...m].sort((a, b) => b[1] - a[1]);
+    const unrecorded = { model: models.get('unrecorded') || 0, used: used.get('unrecorded') || 0 };
+    const pct = (n: number): string => (pool.length ? `${((100 * n) / pool.length).toFixed(1)}%` : '0.0%');
     if (asJson) {
-        printJson({ items: pool.length, model: Object.fromEntries(sorted(models)), used: Object.fromEntries(sorted(used)) });
+        printJson({ items: pool.length, model: Object.fromEntries(sorted(models)), used: Object.fromEntries(sorted(used)), unrecorded });
         return;
     }
-    console.log(`Usage marks — ${pool.length} item(s)${has('open') ? ' open' : ''}`);
+    console.log(`Usage marks — ${pool.length} item(s)${has('open') ? ' open' : ''}; unrecorded: model ${unrecorded.model} (${pct(unrecorded.model)}), used ${unrecorded.used} (${pct(unrecorded.used)})`);
     console.log('\nModel');
     sorted(models).forEach(([k, n]) => console.log(`  ${String(n).padStart(4)}  ${k}`));
     console.log('\nUsed');
@@ -2022,14 +2023,14 @@ function cmdModels() {
     for (const e of entries) if (e.model) rowCounts.set(e.model, (rowCounts.get(e.model) || 0) + 1);
 
     if (sub === 'list') {
-        const models = reg?.models || {};
+        const models = { ...MODEL_TABLE, ...(reg?.models || {}) };
         const rows = Object.entries(models).map(([id, meta]) => ({
             model: id,
             aliases: meta?.aliases || [],
             rows: [...rowCounts].filter(([raw]) => canonicalModel(reg, raw) === id).reduce((a, [, n]) => a + n, 0),
         }));
-        if (asJson) { printJson({ registry: reg?.models ? registryPath : null, models: rows }); return; }
-        console.log(reg?.models ? `Model registry: ${registryPath}` : `No models section in ${registryPath} (model names are free text).`);
+        if (asJson) { printJson({ registry: reg?.models ? registryPath : null, builtIn: true, models: rows }); return; }
+        console.log(`Model table: built in${reg?.models ? `, plus ${registryPath}` : ` (no models section in ${registryPath})`}`);
         for (const r of rows) console.log(`  ${r.model}  rows ${r.rows}${r.aliases.length ? `  aliases: ${r.aliases.join(', ')}` : ''}`);
         return;
     }
@@ -2055,7 +2056,7 @@ function cmdModels() {
         // Dry run: every model spelling in the ledger, what it maps to, and which are unknown. Appends nothing.
         const rows = [...rowCounts].sort((a, b) => b[1] - a[1]).map(([raw, n]) => {
             const canon = canonicalModel(reg, raw);
-            const status = MODEL_SENTINELS.has(raw) ? 'sentinel' : !reg?.models ? 'no registry' : !canon ? 'unknown' : canon === raw ? 'canonical' : 'alias';
+            const status = MODEL_SENTINELS.has(raw) ? 'sentinel' : !canon ? 'unknown' : canon === raw ? 'canonical' : 'alias';
             return { model: raw, rows: n, canonical: canon, status };
         });
         const would = rows.filter((r) => r.status === 'alias');

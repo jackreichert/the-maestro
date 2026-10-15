@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, ren
 import { join, dirname } from 'node:path';
 import { parseLedger, readRegistry } from '../ledger-core.ts';
 import type { LedgerRow, Registry } from '../ledger-core.ts';
+import { normaliseUsed } from '../ledger-tags.ts';
 
 /**
  * The ledger and stream-registry store for one run: paths, reads, appends and the registry cache.
@@ -48,10 +49,16 @@ export function openStore({ vault, project, dryRun, warn = (m) => console.error(
         return parseLedger(readFileSync(ledgerPath, 'utf8'), (n) => warn(`  skipped malformed line ${n}`));
     }
 
-    /** The row with this run's window id added; a row that already names a window keeps it, and a store with no window leaves rows untouched. */
+    /**
+     * The row as it is written: this run's window id added (a row that already names a window keeps it; a store with no window
+     * adds none) and its `used` tool marks in canonical form (lib/ledger-tags.ts), so every writer, not only the CLI, tags one tool one way.
+     */
     function stamped<E>(entry: E): E {
-        if (!window || typeof entry !== 'object' || entry === null || 'window' in entry) return entry;
-        return { ...entry, window };
+        if (typeof entry !== 'object' || entry === null) return entry;
+        const row: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
+        if (window && !('window' in row)) row.window = window;
+        if (row.used !== undefined) row.used = normaliseUsed(row.used);
+        return row as E;
     }
 
     function append<E>(entry: E): E {
