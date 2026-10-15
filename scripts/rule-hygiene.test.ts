@@ -23,6 +23,8 @@ test('enforced-by is read at the top level or under metadata; the body is ignore
 test('an unknown value or a script with no path is invalid', () => {
     assert.equal(readEnforcedBy(rule('enforced-by: convention')).problem, 'invalid');
     assert.equal(readEnforcedBy(rule('enforced-by: script')).problem, 'invalid');
+    assert.equal(readEnforcedBy(rule('enforced-by: script:')).problem, 'invalid');
+    assert.equal(readEnforcedBy(rule('enforced-by: "script: "')).problem, 'invalid');
 });
 
 test('repeat violations count table rows and ignore unknown names', () => {

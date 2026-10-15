@@ -17,10 +17,10 @@ export function readEnforcedBy(file: RuleFile): RuleStatus {
     const line = /^[ \t]*enforced-by:[ \t]*(.*)$/m.exec(frontmatter(file.text));
     if (!line) return { name: file.name, enforcedBy: null, detail: '', problem: 'missing' };
     const value = line[1].trim().replace(/^["']|["']$/g, '');
-    const [kind, ...rest] = value.split(/[:\s]+/);
+    const [kind] = value.split(/[:\s]+/);
     const detail = value.slice(kind.length).replace(/^[:\s]+/, '');
     if (!(ENFORCERS as readonly string[]).includes(kind)) return { name: file.name, enforcedBy: null, detail: value, problem: 'invalid' };
-    if (kind === 'script' && rest.length === 0) return { name: file.name, enforcedBy: 'script', detail: '', problem: 'invalid' };
+    if (kind === 'script' && detail === '') return { name: file.name, enforcedBy: 'script', detail: '', problem: 'invalid' };
     return { name: file.name, enforcedBy: kind as Enforcer, detail, problem: null };
 }
 
