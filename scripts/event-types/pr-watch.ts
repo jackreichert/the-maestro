@@ -29,7 +29,7 @@
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH, SELF_REVIEW_REPOS, TEAMMATE_REVIEW_MINUTES, TEAMMATE_REVIEW_OWNERS } from '../local-config.ts';
+import { COPILOT_ORGS, GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, PR_SEARCH, SELF_REVIEW_REPOS, TEAMMATE_REVIEW_MINUTES, TEAMMATE_REVIEW_OWNERS } from '../local-config.ts';
 import { advanceHelper, selectWaiting, teammateQuery, teammateSearch } from '../lib/teammate/wait.ts';
 import type { HelperEntry, WaitNode } from '../lib/teammate/wait.ts';
 import { isSelfReview } from '../lib/self-review.ts';
@@ -377,7 +377,7 @@ function followTeammates(ctx: Ctx, self: string, prev: Snapshot | null, silent: 
   try {
     const nodes = searchAllPages<WaitNode>(teammateQuery(search), ctx.run);
     const now = ctx.now ?? Date.now();
-    const waiting = selectWaiting(nodes, { self, minutes, now, selfRepos: ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS });
+    const waiting = selectWaiting(nodes, { self, minutes, now, selfRepos: ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS, handsOff: { repos: HANDS_OFF_REPOS, owner: HANDS_OFF_OWNER } });
     return advanceHelper(prev?.helper, waiting, silent, now, minutes);
   } catch (e) {
     console.error(`teammate helper search failed: ${firstLine(e instanceof Error ? e.message : e)}`);

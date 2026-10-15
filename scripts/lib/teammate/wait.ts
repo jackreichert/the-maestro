@@ -5,11 +5,11 @@
  */
 import { isSelfReview } from '../self-review.ts';
 
-/** Repos whose owner wants full control: other people's PRs there are not reviewed unless the user is asked (a requested reviewer). The repo name alone decides, whatever the owner. */
-export const HANDS_OFF_REPOS: readonly string[] = ['arya-agentic'];
-/** The repo's owner, whose own PRs there are in scope. */
-export const HANDS_OFF_OWNER = 'acehand';
-export const isHandsOff = (repo: string, author: string): boolean => HANDS_OFF_REPOS.includes((repo.split('/')[1] ?? '').toLowerCase()) && author.toLowerCase() !== HANDS_OFF_OWNER;
+/** Which repos are hands off (`hands_off_repos`, `owner/name` globs) and whose own PRs there stay in scope (`hands_off_owner`, a login). */
+export const NO_HANDS_OFF: HandsOff = { repos: [], owner: '' };
+export interface HandsOff { repos: readonly string[]; owner: string }
+/** Another person's PR in a hands-off repo: not reviewed unless the user is asked. The owner's own PRs there are in scope. Nothing is hands off when no repo is configured. */
+export const isHandsOff = (repo: string, author: string, h: HandsOff): boolean => h.repos.length > 0 && isSelfReview(repo, h.repos) && author.toLowerCase() !== h.owner.toLowerCase();
 
 export interface WaitNode {
   number: number; url: string; isDraft: boolean; headRefOid: string; headRefName?: string; baseRefName?: string; createdAt?: string;
@@ -21,7 +21,7 @@ export interface WaitNode {
   timelineItems?: { nodes: { createdAt?: string }[] };
 }
 export interface Waiting { key: string; repo: string; number: number; url: string; head: string; headRef: string; base: string; waitedMin: number }
-export interface WaitOptions { self: string; minutes: number; now: number; selfRepos: readonly string[] }
+export interface WaitOptions { self: string; minutes: number; now: number; selfRepos: readonly string[]; handsOff?: HandsOff }
 
 const isBot = (a: { login?: string; __typename?: string } | null | undefined): boolean => a?.__typename === 'Bot' || /\[bot\]$/i.test(a?.login ?? '');
 
@@ -38,7 +38,7 @@ export function selectWaiting(nodes: readonly WaitNode[], o: WaitOptions): Waiti
     const author = n.author?.login;
     if (n.isDraft || !author || author.toLowerCase() === self || isBot(n.author)) continue;
     if (isSelfReview(n.repository.nameWithOwner, o.selfRepos)) continue;
-    if (isHandsOff(n.repository.nameWithOwner, author) && !(n.reviewRequests?.nodes ?? []).some((r) => (r?.requestedReviewer?.login ?? '').toLowerCase() === self)) continue;
+    if (isHandsOff(n.repository.nameWithOwner, author, o.handsOff ?? NO_HANDS_OFF) && !(n.reviewRequests?.nodes ?? []).some((r) => (r?.requestedReviewer?.login ?? '').toLowerCase() === self)) continue;
     if (n.reviewDecision === 'APPROVED' || n.reviewDecision === 'CHANGES_REQUESTED') continue;
     const reviews = (n.reviews?.nodes ?? []).filter((r) => r.state !== 'PENDING');
     if (reviews.some((r) => (r.author?.login ?? '').toLowerCase() === self || !isBot(r.author))) continue;

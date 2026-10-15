@@ -95,7 +95,7 @@ export class OthersPrs extends HTMLElement {
         h('span', { class: `chip ${rv.tone}` }, h('span', { 'aria-hidden': 'true' }, `${rv.glyph} `), h('span', { class: 'vh' }, 'Review: '), rv.word),
         h('span', { class: `chip ${p.copilotThreads > 0 ? 'bad' : ''}` }, `Copilot threads open: ${p.copilotThreads}`),
         h('span', { class: 'chip' }, `Threads open: ${p.unresolved}`),
-        ...(p.handsOff ? [h('span', { class: 'chip warn' }, h('span', { 'aria-hidden': 'true' }, '- '), 'Anand\'s call \u2014 hands off')] : []),
+        ...(p.handsOff ? [h('span', { class: 'chip warn' }, h('span', { 'aria-hidden': 'true' }, '- '), 'Hands off: the repo owner\'s call')] : []),
         draftChip),
       ...(open.length && this.#drafts ? [this.#drafts.queue((x) => x.repo === p.repo && x.pr === p.number, '', true)] : []));
   }

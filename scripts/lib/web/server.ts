@@ -18,7 +18,7 @@ import type { ChangeHub } from './events.ts';
 import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildOpenPrs, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
-import { GH_LOGIN } from '../../local-config.ts';
+import { GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS } from '../../local-config.ts';
 import { buildOthersPrs } from './others-prs.ts';
 import { buildEpics, buildHome } from './home.ts';
 import { buildCost } from './cost.ts';
@@ -110,7 +110,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildStream(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)\/home$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildHome(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/prs$/, handler: () => buildOpenPrs(o.web, now()) },
-    { method: 'GET', pattern: /^\/api\/others-prs$/, handler: () => buildOthersPrs({ statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN }, now()) },
+    { method: 'GET', pattern: /^\/api\/others-prs$/, handler: () => buildOthersPrs({ statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN, handsOff: { repos: HANDS_OFF_REPOS, owner: HANDS_OFF_OWNER } }, now()) },
     { method: 'GET', pattern: /^\/api\/drafts$/, handler: () => buildDrafts(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/epics$/, handler: () => buildEpics(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/cost$/, handler: () => buildCost(o.web, now()) },

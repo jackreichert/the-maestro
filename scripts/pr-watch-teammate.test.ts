@@ -115,11 +115,13 @@ test('with no minutes configured pr-watch never runs the teammate search', () =>
   assert.equal(log.some((l) => l.includes('draft:false')), false);
 });
 
-test('arya-agentic is hands off: no review is drafted there unless the user is a requested reviewer; every other repo is open to review', () => {
-  const agentic = { repository: { nameWithOwner: 'acme/arya-agentic' } };
-  assert.equal(selectWaiting([node(agentic)], O).length, 0);
-  assert.equal(selectWaiting([node({ ...agentic, reviewRequests: { nodes: [{ requestedReviewer: { login: 'someone-else' } }] } })], O).length, 0);
-  assert.equal(selectWaiting([node({ ...agentic, reviewRequests: { nodes: [{ requestedReviewer: { login: 'ME' } }] } })], O).length, 1);
-  assert.equal(selectWaiting([node({ ...agentic, author: { login: 'AceHand', __typename: 'User' } })], O).length, 1, 'the owner\'s own PRs there are in scope');
-  assert.equal(selectWaiting([node()], O).length, 1, 'a repo where the user was not asked is still reviewed');
+test('a hands-off repo is not reviewed unless the user is a requested reviewer or the owner wrote it; every other repo is open to review', () => {
+  const o = { ...O, handsOff: { repos: ['*/guarded'], owner: 'owner-fake' } };
+  const guarded = { repository: { nameWithOwner: 'acme/guarded' } };
+  assert.equal(selectWaiting([node(guarded)], o).length, 0);
+  assert.equal(selectWaiting([node({ ...guarded, reviewRequests: { nodes: [{ requestedReviewer: { login: 'someone-else' } }] } })], o).length, 0);
+  assert.equal(selectWaiting([node({ ...guarded, reviewRequests: { nodes: [{ requestedReviewer: { login: 'ME' } }] } })], o).length, 1);
+  assert.equal(selectWaiting([node({ ...guarded, author: { login: 'Owner-Fake', __typename: 'User' } })], o).length, 1, 'the owner\'s own PRs there are in scope');
+  assert.equal(selectWaiting([node()], o).length, 1, 'a repo where the user was not asked is still reviewed');
+  assert.equal(selectWaiting([node(guarded)], O).length, 1, 'with nothing configured nothing is hands off');
 });

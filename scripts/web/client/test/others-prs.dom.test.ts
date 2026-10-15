@@ -62,7 +62,7 @@ test('states are said in words: loading, unavailable, empty, a failed read and a
 test('a hands-off PR says so in words', async () => {
   const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { handsOff: true }), pr(2)]), loaded: true }, drafts: drafts([]) });
   const [a, b] = [...root.querySelectorAll('li.pr')];
-  assert.match(a?.textContent ?? '', /Anand's call \u2014 hands off/);
+  assert.match(a?.textContent ?? '', /Hands off: the repo owner's call/);
   assert.doesNotMatch(b?.textContent ?? '', /hands off/);
   cleanup();
 });
