@@ -1842,6 +1842,18 @@ test('a paste ask takes no decision fields and warns about none', () => {
     assert.equal(must(ledger()[0]).class, undefined);
 });
 
+test('a paste ask refuses a block that breaks the paste rules, and writes nothing', () => {
+    const block = join(vault, 'bad-block.sh');
+    mkdirSync(vault, { recursive: true });
+    writeFileSync(block, 'psql "postgres://u@h:5432/postgres" -d other\n');
+    const bad = run('ask', 'run this', '--paste', block, '--searched', 'test fixture', ...MARK);
+    assert.equal(bad.code, 1);
+    assert.match(bad.err, /psql-uri-dbname/);
+    assert.equal(existsSync(ledgerFile()) ? ledger().length : 0, 0);
+    writeFileSync(block, 'psql "postgres://u@h:5432/other" -c "select 1"\n');
+    assert.equal(run('ask', 'run this', '--paste', block, '--searched', 'test fixture', ...MARK).code, 0);
+});
+
 test('the decision flags are refused on any command but ask', () => {
     const r = run('log', 'a note', '--door', 'two-way', ...MARK);
     assert.equal(r.code, 1);
