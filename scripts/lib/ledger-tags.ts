@@ -38,13 +38,15 @@ export function tableModel(name: unknown, table: Record<string, { aliases?: unkn
     return null;
 }
 
+/** The script extension `name` ends with, when something is left of it. */
+const stripped = (name: string): string | undefined => TOOL_EXTENSIONS.find((e) => name.endsWith(e) && name.length > e.length);
+
 /** One `used` mark in canonical form. Only `tool:` marks change: extension stripped, lowercased, aliased. Anything else passes through. */
 export function normaliseMark(mark: string): string {
     const m = /^tool:(.+)$/i.exec(mark.trim());
     if (!m) return mark;
     let name = m[1].trim().toLowerCase();
-    const ext = TOOL_EXTENSIONS.find((e) => name.endsWith(e) && name.length > e.length);
-    if (ext) name = name.slice(0, -ext.length);
+    for (let ext = stripped(name); ext; ext = stripped(name)) name = name.slice(0, -ext.length);
     return `tool:${TOOL_ALIASES[name] ?? name}`;
 }
 

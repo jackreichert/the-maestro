@@ -37,6 +37,7 @@ test('the registry models section overrides the built-in table; the table is the
 test('tool marks lose script extensions, case and aliases; other marks are left alone', () => {
     assert.equal(normaliseMark('tool:journal.mjs'), 'tool:journal');
     assert.equal(normaliseMark('tool:journal.ts'), 'tool:journal');
+    assert.equal(normaliseMark('tool:a.js.ts'), 'tool:a');   // idempotent: write and read agree
     assert.equal(normaliseMark('tool:Bash'), 'tool:bash');
     assert.equal(normaliseMark('tool:db-snapshot.sh'), 'tool:db-snapshot');
     assert.equal(normaliseMark('tool:jira-mcp'), 'tool:atlassian-mcp');

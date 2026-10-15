@@ -2,7 +2,7 @@
  * `journal.ts query`: read-only, capped filters over the folded ledger items, and `ready-to-push`: local branches of mine whose work has
  * not reached a remote. Pure filter here; the command does the reads and the printing.
  */
-import { isInFlight, isOpen, isQueued } from '../ledger-core.ts';
+import { canonicalModel, isInFlight, isOpen, isQueued } from '../ledger-core.ts';
 import type { LedgerItem } from '../ledger-core.ts';
 
 export const QUERY_DEFAULT_LIMIT = 50;
@@ -54,10 +54,11 @@ export function filterProblem(f: QueryFilter, rawLimit: string | null): string |
 export function queryItems(items: LedgerItem[], f: QueryFilter): QueryResult {
     const limit = Math.min(f.limit ?? QUERY_DEFAULT_LIMIT, QUERY_MAX_LIMIT);
     const wanted = f.status ?? 'all';
+    const wantedModel = f.model ? (canonicalModel(null, f.model) ?? f.model).toLowerCase() : undefined;
     const matches = items.filter((i) => {
         if (f.id && i.id !== f.id) return false;
         if (f.stream && i.stream !== f.stream) return false;
-        if (f.model && (i.model ?? '').toLowerCase() !== f.model.toLowerCase()) return false;
+        if (wantedModel && (i.model ?? '').toLowerCase() !== wantedModel) return false;
         const day = dayOf(i);
         if (f.date && day !== f.date) return false;
         if (f.since && !(day && day >= f.since)) return false;
