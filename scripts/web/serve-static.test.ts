@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildRoutes, createStaticServer } from './serve-static.ts';
+import { buildRoutes, createStaticServer, fileLookup } from './serve-static.ts';
 import { SECURITY_HEADERS } from '../lib/web/guard.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'serve-static-'));
@@ -26,7 +26,7 @@ writeFileSync(join(dir, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"
 writeFileSync(join(dir, 'favicon-cue.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
 writeFileSync(join(dir, 'stray.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
 
-const server = createStaticServer(dir);
+const server = createStaticServer(dir, 0);
 let port = 0;
 before(async () => {
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
@@ -96,4 +96,29 @@ test('the policy forbids inline script and style, remote origins, plugins, base 
   const csp = SECURITY_HEADERS['content-security-policy'];
   for (const d of ["default-src 'self'", "script-src 'self'", "style-src 'self'", "connect-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'"]) assert.ok(csp.includes(d), d);
   assert.ok(!/unsafe-|\*|https?:|data:/.test(csp), 'no unsafe-inline, unsafe-eval, wildcard or remote source');
+});
+
+test('fileLookup finds a file added after it was built, and a rescan stays inside the whitelist', () => {
+  const live = mkdtempSync(join(tmpdir(), 'serve-static-live-'));
+  mkdirSync(join(live, 'dist'));
+  writeFileSync(join(live, 'dist', 'app.js'), 'export {}');
+  const lookup = fileLookup(live, 0);
+  assert.equal(lookup('/dist/app.js'), join(live, 'dist', 'app.js'));
+  assert.equal(lookup('/dist/needs-items.js'), undefined);
+  writeFileSync(join(live, 'dist', 'needs-items.js'), 'export {}');
+  assert.equal(lookup('/dist/needs-items.js'), join(live, 'dist', 'needs-items.js'));
+  writeFileSync(join(live, 'dist', 'notes.txt'), 'x');
+  assert.equal(lookup('/dist/notes.txt'), undefined);
+  assert.equal(lookup('/dist/../secret.json'), undefined);
+});
+
+test('fileLookup rescans at most once per gap, so a flood of misses does not become a flood of readdirs', () => {
+  const live = mkdtempSync(join(tmpdir(), 'serve-static-gap-'));
+  mkdirSync(join(live, 'dist'));
+  let t = 1000;
+  const lookup = fileLookup(live, 1000, () => t);
+  writeFileSync(join(live, 'dist', 'a.js'), 'x');
+  assert.equal(lookup('/dist/a.js'), undefined, 'inside the gap: no rescan yet');
+  t += 1000;
+  assert.equal(lookup('/dist/a.js'), join(live, 'dist', 'a.js'), 'after the gap: found');
 });

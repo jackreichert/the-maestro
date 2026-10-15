@@ -11,7 +11,7 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { buildRoutes, TYPES } from '../../web/serve-static.ts';
+import { fileLookup, TYPES } from '../../web/serve-static.ts';
 import { boardFiles, createChangeHub, serveEvents } from './events.ts';
 import { vaultWatch } from './vault-watch.ts';
 import type { ChangeHub } from './events.ts';
@@ -39,6 +39,8 @@ import { homedir } from 'node:os';
 export interface WebServerOptions {
   web: WebConfig;
   clientDir: string;
+  /** The least time between two re-reads of the client directories on a request for a file not yet known (default one second). Tests pass 0. */
+  rescanGapMs?: number;
   /** Atlassian tenant hosts (`<label>.atlassian.net`) whose ticket links may reuse a tab. Empty by default; the client re-validates each one. */
   trustedAtlassianHosts?: string[];
   /** Stream name to colour class (`s1`..`s8`, `so`) from the `podium_series` setting. Empty by default; the client re-validates each class. */
@@ -136,7 +138,7 @@ export function createWebServer(o: WebServerOptions): WebServer {
   const catalogFile = o.catalogFile ?? CATALOG_FILE;
   const runs = { ...writes, runner, extraGuard: o.extraGuard, resolveOther: (b: Record<string, unknown>) => resolveScript(o.web, b, catalogFile), listCatalog: () => listCatalog(catalogFile) };
   const refresher = createRefresher({ statusDir: o.web.statusDir, rebuild: o.prsRebuild ?? spawnRebuild({ statusDir: o.web.statusDir, vault: o.web.vault, project: o.web.project }), now: writes.now, log });
-  const files = buildRoutes(o.clientDir);   // a whitelist taken at start: a request path is only ever looked up, never joined onto a path
+  const files = fileLookup(o.clientDir, o.rescanGapMs);   // a whitelist re-read on a miss: a request path is only ever looked up, never joined onto a path
   const server = createServer({ maxHeaderSize: MAX_HEADER_BYTES, requestTimeout: o.requestTimeoutMs ?? 10_000, headersTimeout: o.headersTimeoutMs ?? 5_000, connectionsCheckingInterval: 1000 }, (req, res) => {
     try {
       const no = refuse(req, req.socket.localPort ?? 0, WRITE_PATHS, DRAFT_BODY_LIMITS);
@@ -154,7 +156,7 @@ export function createWebServer(o: WebServerOptions): WebServer {
         const out = route.handler(url, url.pathname.match(route.pattern) as RegExpMatchArray);
         return out === undefined ? sendError(res, 404) : sendJson(res, 200, out);
       }
-      const file = files.get(url.pathname);
+      const file = files(url.pathname);
       if (!file) return sendError(res, 404);
       return send(res, 200, readFileSync(file), TYPES[extname(file)] ?? 'application/octet-stream');
     } catch (e) {
