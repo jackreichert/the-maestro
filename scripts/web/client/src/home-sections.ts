@@ -6,6 +6,7 @@ import { scopedItems } from './needs-items.ts';
 import type { NeedsItem } from './needs-items.ts';
 import type { AskList, RowContext } from './stream-board.ts';
 import { byPriority, clockTime, splitStream, todaysPriorities } from './glance.ts';
+import { newlyShipped } from './home-motion.ts';
 import { linkAttrs } from './link-policy.ts';
 import { STATE_TONE, askAgeBars, byStreamName, epicCards, orderAsks, prGauge, queuedByStream } from './home-model.ts';
 import { scoreTable } from './home-model.ts';
@@ -283,7 +284,8 @@ const CI_LABEL: Record<CiKey, string> = { pass: 'Passing', pending: 'Pending', f
 
 export function deckSection(st: PodiumState, charts: ChartsData | null, redraw: () => void): HTMLElement {
   const newest = [...st.done].sort((a, b) => Date.parse(b.closedAt) - Date.parse(a.closedAt));
-  const items = newest.map((d, i) => h('li', { hidden: !homeUi.allShipped && i >= SHIPPED_CAP },
+  const fresh = newlyShipped(newest.map((d) => d.id));
+  const items = newest.map((d, i) => h('li', { hidden: !homeUi.allShipped && i >= SHIPPED_CAP, class: fresh.has(d.id) ? 'just-shipped' : undefined },
     h('span', { class: 'shipped-text' }, d.text, d.ticket ? ' ' : null, d.ticket ? refLink(d.ticket) : null),
     h('span', { class: 'shipped-meta' }, streamTag(d.stream), h('span', {}, clockTime(d.closedAt, st.tz)))));
   const more = newest.length > SHIPPED_CAP

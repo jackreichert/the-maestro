@@ -22,6 +22,7 @@ import { waiting } from './drafts-model.ts';
 import { createDraftActions, loadDrafts } from './drafts-api.ts';
 import { createPoster } from './write-token.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
+import { armHomeEntrance } from './home-motion.ts';
 import { LOCAL_WIDGET_CSS, localReviewWidget } from './local-review-widget.ts';
 import { streamScore, todayPanel } from './home-sections.ts';
 import { seriesClass } from './series.ts';
@@ -436,6 +437,7 @@ export class PodiumApp extends HTMLElement {
     }
     this.#release({ busy: false });   // this render replaces any card still saving, and its busy=false would never arrive
     this.#active = id;
+    if (id === DASHBOARD) armHomeEntrance();   // coming back to Home plays its entrance again; a live redraw does not
     this.#writeFragment(id);
     this.#safeRender();
     if (focusTab) this.#root.querySelector<HTMLElement>('[role=tab][aria-selected=true]')?.focus();

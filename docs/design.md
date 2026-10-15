@@ -33,7 +33,7 @@ All three are SIL Open Font License faces, subset to Latin, and self-hosted as `
 | Elevation | `--shadow-1` (resting card), `--shadow-2` (over content), `--material-bar` and `--material-blur` (the sticky tab bar) | No other shadows |
 | Colour | Surfaces, text, border, one `--accent`, and `--critical`, `--success`, `--warning` with `-soft` fills | Light and dark follow `prefers-color-scheme`. Every text pair meets 4.5:1 and every control, focus and chart mark 3:1, checked by test in both modes |
 | Status | `--glyph-attention`, `--glyph-critical`, `--glyph-success`, `--glyph-warning` | A status colour always travels with a symbol or a word |
-| Motion | `--dur-press`, `--dur-fast`, `--dur-base`, `--dur-slow`, `--dur-breathe`; `--ease-out`, `--ease-in-out` | All durations are 0 ms under `prefers-reduced-motion: reduce` |
+| Motion | `--dur-press`, `--dur-fast`, `--dur-base`, `--dur-slow`, `--dur-breathe`; `--ease-out`, `--ease-in-out`, `--ease-spring` (arrivals only) | All durations are 0 ms under `prefers-reduced-motion: reduce` |
 | Charts | `--chart-grid`, `--chart-axis`, `--chart-label`, `--chart-label-size`, `--chart-stroke`, `--chart-dot`, `--chart-mark-radius`, `--chart-mark-gap`, `--chart-highlight`; series `--series-1` to `--series-8`, `--series-other` | Gridlines recede, labels are muted and tabular, and series colours mean identity, never status. Every chart has a table view |
 
 ## Using the tokens
