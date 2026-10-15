@@ -54,10 +54,10 @@ test('configured terms: case-insensitive whole words, spaces, hyphens, underscor
   for (const clean of ['acme', 'a comment line', 'care for acme']) assert.deepEqual(labels(clean, raw), [], clean);
 });
 
-test('configured terms: a term inside a longer word does not match, as its own word it does', () => {
+test('configured terms: a term inside a longer word does not match, as its own word or a camelCase step it does', () => {
   const raw = 'Acme Care, Quux-Co';
-  for (const clean of ['acmecarer', 'xAcme Care', 'xquuxcoy', 'AcmeCareLogger', 'the acme carefully', 'acme care2']) assert.deepEqual(labels(clean, raw), [], clean);
-  for (const hit of ['acme care', 'Acme-Care', 'acme.care', 'AcmeCare', 'ACME CARE', 'a Quux Co b', 'quux_co']) assert.deepEqual(labels(hit, raw), ['configured-term'], hit);
+  for (const clean of ['acmecarer', 'xquuxcoy', 'the acme carefully', 'acme care2', 'getacmecareid', 'Acmes Care']) assert.deepEqual(labels(clean, raw), [], clean);
+  for (const hit of ['acme care', 'Acme-Care', 'acme.care', 'AcmeCare', 'ACME CARE', 'a Quux Co b', 'quux_co', 'getAcmeCareId', 'useAcmeCare()', 'AcmeCareService', 'x = acmeCare', 'fooQuuxCoBar']) assert.deepEqual(labels(hit, raw), ['configured-term'], hit);
 });
 
 test('configured terms: a ~ prefix opts one term into substring matching, and still has the minimum length', () => {

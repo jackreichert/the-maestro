@@ -19,7 +19,7 @@
  * `leak_terms` (user config file or overlay config.md) locally and from the `LEAK_TERMS` secret in CI. Comma or
  * newline separated; a term matches case-insensitively as a whole word, with any separator (or none) between its letters
  * (`Acme Care` also finds `acme-care`, `acme.care` and `AcmeCare`; `widgetco` finds `Widget Co`), and never inside a longer run
- * of letters or digits (`acme` is not found in `acmeology`). A `~` prefix opts one term into substring matching.
+ * of letters or digits (`acme` is not found in `acmeology`), except at a camelCase step (`getAcmeCareId` is found). A `~` prefix opts one term into substring matching.
  *
  * Missing terms: locally the run says so and checks built-ins only. In CI (`strict`) it fails unless
  * `LEAK_GATE_BUILTIN_ONLY=1` is set, and then it says in the log that customer names were not checked. It never
@@ -89,10 +89,16 @@ const escapeRe = (c: string): string => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 /** The characters between two letters of a term that may be anything but a letter or digit: `Acme Care`, `acme-care`, `acme.care` and `AcmeCare` are one term. */
 const SEP = '[^\\p{L}\\p{N}]*';
 
-/** A term as a word: it must not sit inside a longer run of letters or digits, so `acme` does not match `acmeology`, but the separators between its letters stay optional. */
+/** A letter written in either case, as a class: the term regex is case-sensitive so its camelCase boundaries can tell upper from lower. */
+const anyCase = (c: string): string => (c.toLowerCase() === c.toUpperCase() ? c : `[${c.toLowerCase()}${c.toUpperCase()}]`);
+/** Where a term may start or end: next to anything but a letter or digit, or at a camelCase step (a lowercase letter or digit, then a capital), so `getAcmeCareId` is a hit but `acmecarer` is not. */
+const EDGE_BEFORE = '(?:(?<![\\p{L}\\p{N}])|(?<=[\\p{Ll}\\p{N}])(?=\\p{Lu}))';
+const EDGE_AFTER = '(?:(?![\\p{L}\\p{N}])|(?<=[\\p{Ll}\\p{N}])(?=\\p{Lu}))';
+
+/** A term as a word: it must not sit inside a longer run of letters or digits, so `acme` does not match `acmeology`, but the separators between its letters stay optional and a capital starts a new word, so `getAcmeCareId` matches `Acme Care`. */
 function wordTerm(entry: string): Term {
-  const chars = [...squash(entry)].map(escapeRe);
-  return { re: new RegExp(`(?<![\\p{L}\\p{N}])${chars.join(SEP)}(?![\\p{L}\\p{N}])`, 'iu') };
+  const chars = [...squash(entry)].map((c) => anyCase(escapeRe(c)));
+  return { re: new RegExp(`${EDGE_BEFORE}${chars.join(SEP)}${EDGE_AFTER}`, 'u') };
 }
 
 /** The compiled configured terms, or the reason the list cannot be used. A term shorter than MIN_TERM would match almost anything. A leading `~` opts one term into the old substring match. */
