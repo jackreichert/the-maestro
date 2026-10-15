@@ -211,8 +211,8 @@ export function run(req: Request, deps: Deps = {}): RunResult {
   try { psql = findPsql(deps); } catch (e) { return { status: 2, stdout: '', stderr: `local-db: ${(e as Error).message}\n` }; }
   const pre = spawnSync(psql, ['-X', '-A', '-t', '-c', PRIVILEGE_PREFLIGHT], { env: childEnv(planned.target, false), encoding: 'utf8', timeout: 30_000 });
   const privileged = pre.status === 0 && pre.stdout.trim() === 't';
-  if (planned.varName === RO_VAR && !(pre.status === 0 && pre.stdout.trim() === 'f')) return { status: 2, stdout: '', stderr: `local-db: refused: could not verify that ${RO_VAR} connects as a restricted role\n` };
   if (privileged && planned.varName === RO_VAR) return { status: 2, stdout: '', stderr: `local-db: refused: ${RO_VAR} connects as a role that is a superuser or has server file or program roles; use a restricted role\n` };
+  if (planned.varName === RO_VAR && !(pre.status === 0 && pre.stdout.trim() === 'f')) return { status: 2, stdout: '', stderr: `local-db: refused: could not verify that ${RO_VAR} connects as a restricted role\n` };
   const r = spawnSync(psql, planned.argv, { env: childEnv(planned.target, !!req.write), input: planned.input, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 300_000 });
   const stderr = r.error ? `local-db: could not run psql: ${(r.error as Error).message}\n` : r.stderr;
   const note = privileged ? `local-db: note: ${planned.varName} connects as a superuser or a role with server file or program roles, so read-only mode and the SQL denylist are best-effort guardrails; set ${RO_VAR} to a restricted role for a hard boundary\n` : '';
