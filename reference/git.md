@@ -208,7 +208,7 @@ Not checked, on purpose: that a migration or flag file in the diff is mentioned 
 ### Smells gate
 
 In repos named in `pr_smells_repos` (GitHub `owner/name` globs, default none, so off), `pr-open.ts` also refuses to open a PR until a report-only smells review has been run on the diff and recorded. `pr_smells_repos` is read from the user config file only; an environment variable cannot add or drop a repo.
-Run `mithril-lite-review` (or `/mithril smells`) on the branch, fix what is worth fixing, then record the run for the head commit:
+Run the `mithril-smells` agent (or `/mithril smells`; a plain `/mithril` runs it in its baseline whenever source files change) on the branch. `mithril-lite-review` does not report smells, so it does not count as the run; fix what is worth fixing, then record the run for the head commit:
 
 ```bash
 node <scripts dir>/pr-smells.ts record --repo <repo> --summary "<findings, fixed, deliberately left>"
