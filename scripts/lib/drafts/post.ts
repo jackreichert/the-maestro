@@ -140,7 +140,7 @@ export function approveAndPost(file: string, id: string, shownRev: string, o: Po
         toPost = { ...d, target: { kind: 'review', commitId: head } };
       }
     }
-    // The live rule, checked now and not at submit: Jack never approves a PR that still has Copilot threads open. A COMMENT review is allowed through, and so is a backmerge.
+    // The live rule, checked now and not at submit: The user never approves a PR that still has Copilot threads open. A COMMENT review is allowed through, and so is a backmerge.
     const approving = d.target.kind === 'review' && d.review !== undefined && eventOf(d.review) === 'APPROVE';
     if (o.asComment && !approving) return refuse('invalid', 'Only an approving review can be posted as a comment.');
     let event: 'COMMENT' | undefined;
