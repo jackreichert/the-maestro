@@ -11,10 +11,15 @@ const ET = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', time
 
 /** The instant of a wall-clock time in US Eastern, as milliseconds. The offset is read for that date, so daylight saving is honoured. */
 export function etMs(y: number, mo: number, d: number, h: number, mi: number): number {
-  const guess = Date.UTC(y, mo - 1, d, h, mi);
-  const name = ET.formatToParts(new Date(guess)).find((x) => x.type === 'timeZoneName')?.value ?? 'GMT-05:00';
-  const m = /GMT([+-])(\d{2}):?(\d{2})?/.exec(name);
-  const off = m ? (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] ?? 0)) : -300;
+  const wall = Date.UTC(y, mo - 1, d, h, mi);
+  const offsetAt = (t: number): number => {
+    const name = ET.formatToParts(new Date(t)).find((x) => x.type === 'timeZoneName')?.value ?? 'GMT-05:00';
+    const m = /GMT([+-])(\d{2}):?(\d{2})?/.exec(name);
+    return m ? (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] ?? 0)) : -300;
+  };
+  // The offset is read at the instant itself, so a time just after a clock change gets the new offset.
+  const off = offsetAt(wall - offsetAt(wall) * 60_000);
+  const guess = wall;
   return guess - off * 60_000;
 }
 
@@ -45,7 +50,7 @@ export function slackActivity(dir: string | undefined, names: readonly string[] 
   const out = new Map<string, SlackActivity>();
   if (!dir) return out;
   const key = names.join('|');
-  const mention = names.length ? new RegExp(`@(?:${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![\\w])`, 'i') : null;
+  const mention = names.length ? new RegExp(`(?<![\\w.])@(?:${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![\\w])`, 'i') : null;
   let files: string[];
   try { files = readdirSync(dir).filter((f) => /^engineering.*\.md$/i.test(f)); } catch { return out; }
   for (const f of files) {

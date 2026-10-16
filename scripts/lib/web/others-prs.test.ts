@@ -59,6 +59,8 @@ const staleOf = (out: ReturnType<typeof buildOthersPrs>): Record<number, boolean
 test('Eastern times honour daylight saving', () => {
   assert.equal(new Date(etMs(2026, 10, 15, 8, 10)).toISOString(), '2026-10-15T12:10:00.000Z');
   assert.equal(new Date(etMs(2026, 12, 1, 8, 10)).toISOString(), '2026-12-01T13:10:00.000Z');
+  assert.equal(new Date(etMs(2026, 3, 8, 3, 30)).toISOString(), '2026-03-08T07:30:00.000Z', 'just after the spring change');
+  assert.equal(new Date(etMs(2026, 11, 1, 5, 0)).toISOString(), '2026-11-01T10:00:00.000Z', 'after the autumn change');
 });
 
 test('a Slack post three days old with a reply yesterday is not stale; with no reply it is, and says why', () => {
