@@ -35,11 +35,12 @@ export function saveBrief(dir: string, text: string, opts: { day: string; title:
   const problem = briefTextProblem(text);
   if (problem) throw new Error(problem);
   mkdirSync(dir, { recursive: true });
+  const body = text.endsWith('\n') ? text : `${text}\n`;
   const base = `${opts.day}-${opts.id ? `${opts.id}-` : ''}${slug(opts.title)}`;
   for (let n = 0; ; n++) {
     const file = join(dir, `${base}${n ? `-${n + 1}` : ''}.md`);
-    if (existsSync(file)) { if (readFileSync(file, 'utf8') === text) return file; continue; }
-    writeFileSync(file, text.endsWith('\n') ? text : `${text}\n`, { flag: 'wx' });
+    if (existsSync(file)) { if (readFileSync(file, 'utf8') === body) return file; continue; }
+    writeFileSync(file, body, { flag: 'wx' });
     return file;
   }
 }
@@ -72,7 +73,7 @@ export function readBriefStdin(): string {
   const buf = Buffer.alloc(64 * 1024);
   while (total <= BRIEF_MAX_BYTES) {
     let n = 0;
-    try { n = readSync(0, buf, 0, buf.length, null); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'EAGAIN') continue; if ((e as NodeJS.ErrnoException).code === 'EOF') break; throw e; }
+    try { n = readSync(0, buf, 0, buf.length, null); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'EAGAIN') { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10); continue; } if ((e as NodeJS.ErrnoException).code === 'EOF') break; throw e; }
     if (!n) break;
     chunks.push(Buffer.from(buf.subarray(0, n)));
     total += n;

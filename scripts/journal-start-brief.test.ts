@@ -85,8 +85,18 @@ test('a directory, an oversize file, oversize stdin and patient identifiers each
     const phi = run(['start', 'g', '--brief-file', '-', ...MARK], 'Patient SSN 123-45-6789 needs a visit\n');
     assert.equal(phi.code, 1);
     assert.match(phi.err, /patient data \(ssn\)/);
+    assert.match(run(['start', 'h', '--brief-file', '-', ...MARK], 'DOB: 01/02/1950 for the visit\n').err, /patient data \(date-of-birth\)/);
+    assert.match(run(['start', 'i', '--brief-file', '-', ...MARK], 'MRN: 12345678 is the chart\n').err, /patient data \(medical-record-number\)/);
     assert.ok(!phi.err.includes('123-45-6789'));
     assert.ok(!existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl')) || rows().length === 0, 'nothing was written');
+});
+
+test('linking the same brief text twice, with no trailing newline, reuses the one file', () => {
+    assert.equal(run(['start', 'p10', '--brief-file', '-', ...MARK], 'no trailing newline').code, 0);
+    const id = rows().find((x) => x.kind === 'wip')?.id as string;
+    assert.equal(run(['start', id, '--brief-file', '-', ...MARK], 'no trailing newline').code, 0);
+    assert.equal(readdirSync(briefsFolder()).length, 1);
+    assert.equal(rows().filter((x) => x.kind === 'brief').length, 1);
 });
 
 test('starting a queued item with --brief promotes it and links the brief once; a rerun is idempotent', () => {
