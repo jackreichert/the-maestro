@@ -121,3 +121,28 @@ test('briefTextProblem and saveBrief never overwrite and reuse an identical file
     assert.notEqual(a, other);
     assert.equal(readFileSync(a, 'utf8'), 'one\n');
 });
+
+const PLAN = '## Invariants\n- the check runs before any write\n\n## Prior art\n- brief-link.ts: reused as is\n\n**Prep refactor:** none\n';
+
+test('start --brief on a repo item refuses a brief without the build plan, and writes nothing', () => {
+    const file = join(cwd, 'bare.md');
+    writeFileSync(file, '# Brief\n\nDo the thing.\n');
+    const r = run(['start', 'build it', '--repo', 'repo-a', '--brief', file, ...MARK]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /"Invariants".*"Prior art".*"Prep refactor"/);
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl')), false, 'no row was written');
+    const stdin = run(['start', 'build it', '--repo', 'repo-a', '--brief-file', '-', ...MARK], '# Brief\n\nNo plan here.\n');
+    assert.equal(stdin.code, 1);
+    assert.equal(existsSync(briefsFolder()), false, 'a refused brief is not saved');
+});
+
+test('start --brief on a repo item accepts a brief with the plan, a --one-point one, and any brief on an item with no repo', () => {
+    const planned = join(cwd, 'planned.md');
+    writeFileSync(planned, PLAN);
+    assert.equal(run(['start', 'build it', '--repo', 'repo-a', '--brief', planned, ...MARK]).code, 0);
+    const bare = join(cwd, 'bare.md');
+    writeFileSync(bare, '# Brief\n\nSmall fix.\n');
+    assert.equal(run(['start', 'tiny fix', '--repo', 'repo-b', '--one-point', '--brief', bare, ...MARK]).code, 0);
+    assert.equal(run(['start', 'scout', '--brief', bare, ...MARK]).code, 0);
+    assert.equal(rows().filter((x) => x.kind === 'brief').length, 3);
+});

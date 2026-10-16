@@ -1008,6 +1008,8 @@ function cmdStart(): void {
     const target = itemNamedByArg(fold(entries).items);
     // A refused brief must exit before anything is written, like a refused --branch below.
     const brief = briefFromFlags();
+    // A linked brief for a repo item is a build brief too: it carries the plan unless it is declared 1-point or read-only.
+    if (brief && (arg('repo') || target?.repo) && !has('one-point') && !has('read-only')) requireBuildPlan(brief.text ?? readFileSync(brief.file as string, 'utf8'), 'a linked build brief (--brief / --brief-file)');
     if (!target || target.kind !== 'wip') {
         if (!has('force')) { const why = umbrellaRefusal({ text: positional.join(' ') || arg('text') }, fold(entries).items); if (why) die(why); }
         const opened = cmdLog('wip', { lease: true, inferStream: true });
@@ -2397,6 +2399,12 @@ function libraryFor(repo: string | undefined, words: string, scripts: string): s
     );
 }
 
+/** Refuses (exit 1, nothing written) text that lacks the build plan's sections; `what` names the text in the message. */
+function requireBuildPlan(text: string | undefined, what: string): void {
+    const missing = planSectionProblems(text);
+    if (missing.length) die(`No brief was written: ${what} need ${PLAN_SECTIONS.map((n) => `"${n}"`).join(', ')} (see reference/brief.md#the-build-plan); ${missing.join('; ')}. A 1-point, one-file change passes --one-point instead.`);
+}
+
 function cmdBrief(): void {
     const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--next "<step>"] [--as holder] [--pid n] [--read-only] [--details-file f] [--one-point] [--done-when "<criteria>"] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
     const entries = readLedger();
@@ -2423,10 +2431,7 @@ function cmdBrief(): void {
 
     // A writer brief is a build brief: its plan carries invariants, prior art and a prep-refactor line, or it is a declared 1-point, one-file change.
     const onePoint = writer && has('one-point');
-    if (writer && !onePoint) {
-        const missing = planSectionProblems(details);
-        if (missing.length) die(`No brief was written: a build brief's details (--details-file) need ${PLAN_SECTIONS.map((n) => `"${n}"`).join(', ')} (see reference/brief.md#the-build-plan); ${missing.join('; ')}. A 1-point, one-file change passes --one-point instead.`);
-    }
+    if (writer && !onePoint) requireBuildPlan(details, 'a build brief\'s details (--details-file)');
 
     const outDir = resolve(arg('out-dir') || (SCRIPTS_SHELF_DIR ? join(SCRIPTS_SHELF_DIR, 'scratch', 'briefs') : join(vault, 'Projects', project, 'Dispatch')));
     const paths = briefPaths(outDir, target.id as string, writer);
