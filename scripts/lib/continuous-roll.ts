@@ -331,7 +331,7 @@ function repairLines(rows: LedgerRow[]): string[] {
 function thrashLines(rows: LedgerRow[]): string[] {
     const t = rows.findLastIndex((r) => r.kind === 'note' && starts(r, COMPACTION_THRASH));
     if (t < 0 || rows.slice(t + 1).some((r) => starts(r, PRECOMPACT_ACK))) return [];
-    return [`!! ${clip(rows[t].text ?? '', 260)} (${rows[t].ts}). Check CLAUDE_AUTOCOMPACT_PCT_OVERRIDE with \`print-settings-snippet.ts\`, then dismiss with \`${ACK}\`.`];
+    return [`!! ${clip(rows[t].text ?? '', 260)} (${rows[t].ts}). Check CLAUDE_AUTOCOMPACT_PCT_OVERRIDE with \`node scripts/hooks/print-settings-snippet.ts\`, then dismiss with \`${ACK}\`.`];
 }
 
 function markerLines(rows: LedgerRow[], handoff: { name: string; at: string } | null): string[] {
