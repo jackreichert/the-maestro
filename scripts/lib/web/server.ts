@@ -18,7 +18,7 @@ import type { ChangeHub } from './events.ts';
 import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildOpenPrs, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
-import { GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS } from '../../local-config.ts';
+import { GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, OTHERS_PRS_MAX_AGE_DAYS, OTHERS_PRS_MENTION_NAMES } from '../../local-config.ts';
 import { buildOthersPrs } from './others-prs.ts';
 import { buildEpics, buildHome } from './home.ts';
 import { buildCost } from './cost.ts';
@@ -111,7 +111,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildStream(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)\/home$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildHome(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/prs$/, handler: () => buildOpenPrs(o.web, now()) },
-    { method: 'GET', pattern: /^\/api\/others-prs$/, handler: () => buildOthersPrs({ statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER } }, now()) },
+    { method: 'GET', pattern: /^\/api\/others-prs$/, handler: () => buildOthersPrs({ statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN, maxAgeDays: OTHERS_PRS_MAX_AGE_DAYS, mentionNames: OTHERS_PRS_MENTION_NAMES, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, ...(o.web.vaultRoot ? { slackDir: join(o.web.vaultRoot, 'Projects', o.web.containerProject ?? o.web.project, 'Slack') } : {}) }, now()) },
     { method: 'GET', pattern: /^\/api\/drafts$/, handler: () => buildDrafts(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/epics$/, handler: () => buildEpics(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/cost$/, handler: () => buildCost(o.web, now()) },
