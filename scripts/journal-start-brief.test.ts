@@ -36,17 +36,19 @@ test('start --brief links an existing file with a brief row, and prime and start
     const wip = rows().find((x) => x.kind === 'wip');
     const link = rows().find((x) => x.kind === 'brief');
     assert.equal(link?.briefs, wip?.id);
-    assert.equal(link?.brief, file);
-    assert.match(run(['prime']).out, new RegExp(`${wip?.id} do the thing \\[brief: ${file}`));
-    assert.match(run(['start-here']).out, new RegExp(`brief: ${file}`));
-    assert.equal(JSON.parse(run(['start-here', '--json']).out).inFlight[0].brief, file);
+    const stored = join(briefsFolder(), readdirSync(briefsFolder())[0] as string);
+    assert.equal(link?.brief, stored, 'the file is copied into the Briefs folder, so the link outlives the original');
+    assert.equal(readFileSync(stored, 'utf8'), '# Brief\n\nDo the thing.\n');
+    assert.match(run(['prime']).out, new RegExp(`${wip?.id} do the thing \\[brief: .*Briefs/`));
+    assert.match(run(['start-here']).out, new RegExp(`brief: ${stored}`));
+    assert.equal(JSON.parse(run(['start-here', '--json']).out).inFlight[0].brief, stored);
     assert.equal(run(['verify']).code, 0);
 });
 
 test('a relative --brief path is resolved against the working directory', () => {
     writeFileSync(join(cwd, 'rel.md'), 'brief text\n');
     assert.equal(run(['start', 'rel', '--brief', 'rel.md', ...MARK]).code, 0);
-    assert.equal(rows().find((x) => x.kind === 'brief')?.brief, join(cwd, 'rel.md'));
+    assert.equal(readFileSync(rows().find((x) => x.kind === 'brief')?.brief as string, 'utf8'), 'brief text\n');
 });
 
 test('--brief-file - saves standard input under the ledger Briefs folder and links it', () => {
@@ -70,6 +72,20 @@ test('a missing file, an empty brief and a brief holding a secret each refuse an
     assert.equal(secret.code, 1);
     assert.match(secret.err, /holds a secret/);
     assert.ok(!secret.err.includes('AKIAIOSFODNN7EXAMPLE'), 'the matched text is never printed');
+    assert.ok(!existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl')) || rows().length === 0, 'nothing was written');
+});
+
+test('a directory, an oversize file, oversize stdin and patient identifiers each refuse', () => {
+    const dir = run(['start', 'd', '--brief', cwd, ...MARK]);
+    assert.equal(dir.code, 1);
+    assert.match(dir.err, /is a directory/);
+    writeFileSync(join(cwd, 'big.md'), 'x '.repeat(200 * 1024));
+    assert.match(run(['start', 'e', '--brief', join(cwd, 'big.md'), ...MARK]).err, /over 256 KB/);
+    assert.match(run(['start', 'f', '--brief-file', '-', ...MARK], 'word '.repeat(60 * 1024)).err, /over 256 KB/);
+    const phi = run(['start', 'g', '--brief-file', '-', ...MARK], 'Patient SSN 123-45-6789 needs a visit\n');
+    assert.equal(phi.code, 1);
+    assert.match(phi.err, /patient data \(ssn\)/);
+    assert.ok(!phi.err.includes('123-45-6789'));
     assert.ok(!existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl')) || rows().length === 0, 'nothing was written');
 });
 

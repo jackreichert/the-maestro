@@ -267,7 +267,7 @@ import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 import { correctedCommand, inferStreamForRepo, isPlaceholder, modelOfAgentType } from './lib/journal/start-hints.ts';
-import { briefLinkRow, briefOf, briefTextProblem, briefsDir, linkableBrief, saveBrief } from './lib/journal/brief-link.ts';
+import { briefLinkRow, briefOf, briefTextProblem, briefsDir, linkableBrief, readBriefStdin, saveBrief } from './lib/journal/brief-link.ts';
 import { dryRunJson, printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -1041,7 +1041,8 @@ function briefFromFlags(): { file?: string; text?: string } | undefined {
     try {
         if (path) return { file: linkableBrief(path, process.cwd()) };
         if (fromStdin) {
-            const text = readFileSync(0, 'utf8');
+            if (process.stdin.isTTY) throw new Error('--brief-file - reads the brief from standard input, and none is piped in');
+            const text = readBriefStdin();
             const problem = briefTextProblem(text);
             if (problem) throw new Error(problem);
             return { text };
@@ -1055,7 +1056,9 @@ function linkBrief(id: string | undefined, brief: { file?: string; text?: string
     if (!brief || !id) return;
     if (dryRun) { console.log(`[dry-run] brief linked to ${id}`); return; }
     let file: string;
-    try { file = brief.file ?? saveBrief(briefsDir(vault, project), brief.text ?? '', { day: today(), title: item.text ?? id, id }); } catch (e) { die(`start: ${errorMessage(e)}. The item ${id} was started without it.`); }
+    // A linked file is copied in, so the link points at a stored, checked brief that cannot change or vanish afterwards.
+    const dir = briefsDir(vault, project);
+    try { file = brief.file?.startsWith(`${dir}/`) ? brief.file : saveBrief(dir, brief.file ? readFileSync(brief.file, 'utf8') : brief.text ?? '', { day: today(), title: item.text ?? id, id }); } catch (e) { die(`start: ${errorMessage(e)}. The item ${id} was started without it.`); }
     const entries = readLedger();
     if (briefOf(entries, id) === file) { console.log(`brief  ${id}  ${file}  (already linked)`); return; }
     append({ id: newId(entries), ts: now(), date: today(), ...briefLinkRow(id, file, { repo: item.repo || undefined, stream: item.stream || undefined }), ...usageFromArgs() });
