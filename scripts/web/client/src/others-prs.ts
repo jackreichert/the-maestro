@@ -3,7 +3,8 @@ import { ago, agoHours } from './glance.ts';
 import { linkAttrs } from './link-policy.ts';
 import { waiting } from './drafts-model.ts';
 import type { DraftRow } from './drafts-model.ts';
-import { PAGE_SIZE, pagePlan } from './others-paging.ts';
+import { pagePlan } from './others-paging.ts';
+import { pager } from './pager.ts';
 import { SUBTABS, classify } from './others-class.ts';
 import type { SubTab } from './others-class.ts';
 import type { OthersPrRow } from './types.ts';
@@ -27,10 +28,6 @@ const CSS = `${BASE_CSS}${UI_CSS}
   button.tab.muted { font-weight: var(--weight-regular); }
   button.tab[aria-selected="true"] { color: var(--text-primary); border-bottom-color: var(--accent); }
   button.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .pager { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: var(--space-4) 0; }
-  .count-line { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-  button.more-prs { font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-primary); min-height: 32px; padding: 0 var(--space-3); border: var(--hairline-strong); border-radius: var(--radius-sm); background: var(--surface-1); cursor: pointer; }
-  @media (hover: hover) { button.more-prs:hover { background: var(--surface-2); } }
   [role=tabpanel]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   li.pr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   h3.orphans { margin: var(--space-6) 0 var(--space-2); font-size: var(--text-md); font-weight: var(--weight-semibold); }
@@ -57,13 +54,12 @@ export class OthersPrs extends HTMLElement {
   #now = '';
   #sig = '';
   #tab: SubTab = 'ready';
+  /** The page each sub-tab is on (1-based). */
   #pages: Partial<Record<SubTab, number>> = {};
   #focusTab: SubTab | null = null;
-  #focusKey: string | null = null;
-  #focusRow: HTMLElement | null = null;
+  #focusPager: string | null = null;
   readonly #status = h('p', { class: 'status', role: 'status' });
-  /** The visible count, and a hidden live region that outlives every redraw (a live region that is removed and re-added is not reliably announced). */
-  readonly #count = h('p', { class: 'count-line' });
+  /** A hidden live region that outlives every redraw (a live region that is removed and re-added is not reliably announced). */
   readonly #announce = h('p', { class: 'vh', role: 'status' });
   readonly #view = h('div', { class: 'view' });
 
@@ -95,7 +91,7 @@ export class OthersPrs extends HTMLElement {
       ...(d.prs.length ? this.#tabbed(d.prs, byPr) : [h('p', { class: 'empty' }, 'No teammate PR is open.')]),
       ...(this.#drafts ? [...(hasOrphans ? [h('h3', { class: 'orphans' }, 'Drafts on PRs not listed above')] : []), this.#drafts.queue((x) => !listed.has(key(x.repo, x.pr)), '', false, authorOf)] : []));
     if (this.#focusTab) { this.#root.querySelector<HTMLElement>(`button.tab[data-tab="${this.#focusTab}"]`)?.focus(); this.#focusTab = null; }
-    if (this.#focusRow) { this.#focusRow.setAttribute('tabindex', '-1'); this.#focusRow.focus(); this.#focusRow = null; }
+    if (this.#focusPager) { this.#root.querySelector<HTMLElement>(`nav.pager [data-dir=${this.#focusPager}]`)?.focus(); this.#focusPager = null; }
   }
 
   /**
@@ -138,29 +134,23 @@ export class OthersPrs extends HTMLElement {
   }
 
   /**
-   * The rows of one tab: those that need you (a waiting draft, a review asked of you) first and always, then the rest 25 at a time. The count line is one live
-   * region kept across redraws, and Load more moves focus to the first row it added, so a keyboard user lands where the new rows begin.
+   * The rows of one tab: those that need you (a waiting draft, a review asked of you) first and always, then the rest `PAGE_SIZE` to a page. The hidden live region
+   * is kept across redraws and says the page and range, and the pager button that was pressed gets focus back after the redraw.
    */
   #list(tab: SubTab, items: { p: OthersPrRow; reasons: string[] }[], byPr: Map<string, DraftRow[]>): Node[] {
     const waitingOn = (x: { p: OthersPrRow }): boolean => x.p.youAsked || (byPr.get(key(x.p.repo, x.p.number)) ?? []).some(waiting);
-    const pages = this.#pages[tab] ?? 0;
-    const plan = pagePlan(items, waitingOn, pages);
+    const plan = pagePlan(items, waitingOn, this.#pages[tab] ?? 1);
+    this.#pages[tab] = plan.view.page;
+    const label = SUBTABS.find((t) => t.id === tab)?.label ?? '';
     const ul = h('ul', { class: 'prs', role: 'list', 'aria-label': 'Open teammate PRs' }, ...plan.shown.map((x) => this.#row(x.p, byPr.get(key(x.p.repo, x.p.number)) ?? [], tab, x.reasons)));
-    const text = `Showing ${plan.shown.length} of ${plan.total}`;
-    if (this.#count.textContent !== text) this.#count.textContent = text;
-    const said = `${text} in ${SUBTABS.find((t) => t.id === tab)?.label ?? ''}`;
+    const said = `${plan.total} in ${label}${plan.view.pages > 1 ? `, page ${plan.view.page} of ${plan.view.pages}` : ''}`;
     if (this.#announce.textContent !== said) this.#announce.textContent = said;
-    const more = plan.hidden > 0 ? h('button', { type: 'button', class: 'more-prs' }, `Load more (${Math.min(PAGE_SIZE, plan.hidden)} of ${plan.hidden} left)`) : null;
-    more?.addEventListener('click', () => {
-      const at = plan.shown.length;
-      this.#pages[tab] = pages + 1;
-      const next = pagePlan(items, waitingOn, pages + 1).shown[at];
-      this.#focusKey = next ? key(next.p.repo, next.p.number) : null;
+    const nav = pager(plan.view, { label, key: `others:${tab}`, go: (page, dir) => {
+      this.#pages[tab] = page;
+      this.#focusPager = dir;
       this.#render();
-    });
-    this.#focusRow = this.#focusKey ? [...ul.querySelectorAll<HTMLElement>('li.pr')].find((li) => li.getAttribute('data-pr') === this.#focusKey) ?? null : null;
-    this.#focusKey = null;
-    return [ul, h('div', { class: 'pager' }, this.#count, ...(more ? [more] : []))];
+    } });
+    return [ul, ...(nav ? [nav.el] : [])];
   }
 
   /** One live region kept across redraws, its text set only when it changes, so a screen reader hears a change and not every redraw. */
