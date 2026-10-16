@@ -7,6 +7,7 @@
  * `["<script>"]`. `X_ARGS` is parsed as JSON and nothing else, never split by a shell. With `X` unset, which is every
  * production run, the tool is called by name exactly as before and `X_ARGS` is not read.
  */
+import { fileURLToPath } from 'node:url';
 
 /** The env var that stands in for each tool the scripts look up by name. */
 const TOOL_VARS: Record<string, string> = { gh: 'MAESTRO_GH_BIN', git: 'MAESTRO_GIT_BIN' };
@@ -19,10 +20,17 @@ export function overrideCommand(varName: string, fallback: string, args: string[
   return [bin, [...(raw ? parseArgv(varName, raw) : []), ...args]];
 }
 
-/** `cmd` and `args` as they should be spawned: through the seam when `cmd` is gh or git and its env var is set, else untouched. */
+const GH_GUARD = fileURLToPath(new URL('../gh-guard.ts', import.meta.url));
+
+/**
+ * `cmd` and `args` as they should be spawned: through the seam when `cmd` is gh or git and its env var is set, else untouched.
+ * A production `gh` (no override, and MAESTRO_GH_GUARD not `off`) runs through scripts/gh-guard.ts, which counts the call and
+ * refuses GraphQL calls while the account is rate-limited.
+ */
 export function toolCommand(cmd: string, args: string[], env: NodeJS.ProcessEnv = process.env): [string, string[]] {
   const varName = TOOL_VARS[cmd];
-  return varName ? overrideCommand(varName, cmd, args, env) : [cmd, args];
+  const [bin, binArgs] = varName ? overrideCommand(varName, cmd, args, env) : [cmd, args];
+  return cmd === 'gh' && bin === 'gh' && env.MAESTRO_GH_GUARD !== 'off' ? [process.execPath, [GH_GUARD, ...binArgs]] : [bin, binArgs];
 }
 
 function parseArgv(varName: string, raw: string): string[] {
