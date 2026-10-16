@@ -310,6 +310,25 @@ test('the real supervisor kills a loop that is alive but silent, then relaunches
   assert.equal(readdirSync(digestDir(ledger, 'proj')).filter((f) => f.endsWith('.md')).length, 1);
 });
 
+test('a second supervisor for the same event dir refuses to start and leaves the first one\'s record alone', async () => {
+  const ledger = tempDir();
+  const bin = writeStub(join(tempDir(), 'exit0.sh'), '#!/bin/sh\nexit 0\n');
+  const env = envFor(ledger, { ...stubEnv('MAESTRO_LOOP_BIN', bin) });
+  const first = startSupervisor(env);
+  try {
+    const record = join(ledger, 'Events', 'supervisor.json');
+    assert.equal(await waitFor(() => existsSync(record)), true, 'the first supervisor never started');
+    const second = startSupervisor(env, ['ignore', 'ignore', 'pipe']);
+    let err = '';
+    second.p.stderr?.on('data', (d) => { err += d; });
+    assert.equal(await second.closed, 2);
+    assert.match(err, new RegExp(`another loop supervisor \\(pid ${first.p.pid}\\)`));
+    assert.equal(JSON.parse(readFileSync(record, 'utf8')).pid, first.p.pid);
+    first.p.kill('SIGTERM');
+    await first.closed;
+  } finally { killTree(first.p); }
+});
+
 test('the real supervisor rotates its log when it is over the limit, keeping the old text in .1', async () => {
   const ledger = tempDir();
   const bin = writeStub(join(tempDir(), 'exit0.sh'), '#!/bin/sh\nexit 0\n');

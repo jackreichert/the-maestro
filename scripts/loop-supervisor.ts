@@ -41,7 +41,7 @@ import { createWatchdog, HANG_GRACE_MS } from './lib/loop-watchdog.ts';
 import type { HeartbeatMode } from './lib/heartbeat.ts';
 import { openStore } from './lib/journal/store.ts';
 import { sleepUntil } from './lib/wall-sleep.ts';
-import { clearRecord, supervisorLogPath, writeRecord } from './lib/supervisor-state.ts';
+import { clearRecord, otherLiveSupervisor, supervisorLogPath, writeRecord } from './lib/supervisor-state.ts';
 import { LOG_MAX_BYTES, rotateLog } from './lib/log-rotate.ts';
 import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, NOTIFY_COMMAND, SELF_REVIEW_REPOS, WAKE_LAUNCH_COMMAND, WATCH_TZ } from './local-config.ts';
 import { DEFAULT_ALERT_QUIET_HOURS, noteRestart, runAlerts } from './lib/alert-policy.ts';
@@ -296,6 +296,8 @@ function moveDigestsToInbox(dir: string): void {
 
 async function main(): Promise<number> {
   if (!LEDGER_ROOT) { console.error(stamped('no ledger root; set LEDGER_ROOT (digests are saved only under it)')); return 2; }
+  const other = otherLiveSupervisor(EVENT_DIR);
+  if (other !== null) { console.error(stamped(`another loop supervisor (pid ${other}) already runs for ${EVENT_DIR}; refusing to start a second one`)); return 2; }
   const dir = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
   const max = Number(process.env.MAESTRO_SUPERVISOR_MAX_RUNS);
   console.error(stamped(`supervising; digests go to ${dir}`));
