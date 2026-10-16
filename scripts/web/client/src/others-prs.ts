@@ -1,5 +1,5 @@
 import { BASE_CSS, UI_CSS, h, shadow } from './dom.ts';
-import { ago } from './glance.ts';
+import { ago, agoHours } from './glance.ts';
 import { linkAttrs } from './link-policy.ts';
 import { waiting } from './drafts-model.ts';
 import type { DraftRow } from './drafts-model.ts';
@@ -182,14 +182,14 @@ export class OthersPrs extends HTMLElement {
       h('h3', {}, link ? h('a', { ...link, class: 'ref' }, ref) : h('span', { class: 'ref' }, ref), h('span', { class: 'by' }, `by ${who(p)} `), p.title),
       h('div', { class: 'meta' },
         h('span', {}, `Into ${p.base || 'unknown'}`),
-        h('span', {}, `Updated ${ago(p.updatedAt, this.#now) || 'at an unknown time'}${ago(p.updatedAt, this.#now) ? ' ago' : ''}`),
-        ...(p.ageDays !== undefined ? [h('span', {}, `Open ${p.ageDays} d`)] : [])),
+        h('span', {}, `Updated ${agoHours(p.updatedAt, this.#now) || 'at an unknown time'}${agoHours(p.updatedAt, this.#now) ? ' ago' : ''}`),
+        ...(p.openedAt && agoHours(p.openedAt, this.#now) ? [h('span', {}, `Open ${agoHours(p.openedAt, this.#now)}`)] : p.ageDays !== undefined ? [h('span', {}, `Open ${p.ageDays} d`)] : [])),
       h('div', { class: 'chips' },
         h('span', { class: `chip ${p.youAsked ? 'good' : ''}` }, p.youAsked ? 'You are a requested reviewer' : 'You are not a requested reviewer'),
         h('span', { class: `chip ${rv.tone}` }, h('span', { 'aria-hidden': 'true' }, `${rv.glyph} `), h('span', { class: 'vh' }, 'Review: '), rv.word),
         h('span', { class: `chip ${p.copilotThreads > 0 ? 'bad' : ''}` }, `Copilot threads open: ${p.copilotThreads}`),
         h('span', { class: 'chip' }, `Threads open: ${p.unresolved}`),
-        ...(p.askedAt ? [h('span', { class: `chip ${tab === 'stale' ? 'warn' : ''}` }, tab === 'stale' ? `Last ask ${ago(p.askedAt, this.#now)}${ago(p.askedAt, this.#now) === 'just now' ? '' : ' ago'}` : `Waiting ${ago(p.askedAt, this.#now)}`)] : []),
+        ...(p.askedAt ? [h('span', { class: `chip ${tab === 'stale' ? 'warn' : ''}` }, tab === 'stale' ? `Last ask ${agoHours(p.askedAt, this.#now)}${agoHours(p.askedAt, this.#now) === 'just now' ? '' : ' ago'}` : `Waiting ${agoHours(p.askedAt, this.#now)}`)] : []),
         ...(tab === 'stale' && p.staleWhy ? [h('span', { class: 'chip' }, p.staleWhy)] : []),
         ...(tab === 'not-ready' ? reasons.map((r) => h('span', { class: 'chip warn' }, h('span', { 'aria-hidden': 'true' }, '- '), r)) : []),
         ...(p.handsOff ? [h('span', { class: 'chip warn' }, h('span', { 'aria-hidden': 'true' }, '- '), 'Hands off: the repo owner\'s call')] : []),

@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/glance.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TEMPO_RULE, ago, askAge, clockTime, cueTitle, tempoWord, cueParts, scoped, freshness, longDate, oldestFirst, shortDate } from '../src/glance.ts';
+import { TEMPO_RULE, ago, agoHours, askAge, clockTime, cueTitle, tempoWord, cueParts, scoped, freshness, longDate, oldestFirst, shortDate } from '../src/glance.ts';
 
 const row = { id: 'x', stream: 's', text: 't', links: { tracker: [], prs: [] }, since: '' };
 
@@ -38,6 +38,16 @@ test('ago is compact and floors to the unit', () => {
   assert.equal(ago('2026-10-06T13:27:00Z', now), '38 min');
   assert.equal(ago('2026-10-06T11:00:00Z', now), '3 h');
   assert.equal(ago('2026-10-03T10:00:00Z', now), '3 d');
+});
+
+test('agoHours keeps hours until three days, then days', () => {
+  const now = '2026-10-06T14:05:00Z';
+  assert.equal(agoHours('2026-10-06T14:04:31Z', now), 'just now');
+  assert.equal(agoHours('2026-10-06T13:27:00Z', now), '38 min');
+  assert.equal(agoHours('2026-10-05T14:05:00Z', now), '24 h');
+  assert.equal(agoHours('2026-10-03T14:06:00Z', now), '71 h');
+  assert.equal(agoHours('2026-10-03T14:05:00Z', now), '3 d');
+  assert.equal(agoHours('not a time', now), '');
 });
 
 test('ago treats a future start as just now and an unreadable time as unknown', () => {

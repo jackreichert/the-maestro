@@ -217,8 +217,9 @@ test('every row says how long its author has waited, and the longest wait leads 
   const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(rows), loaded: true }, drafts: drafts([]) });
   assert.deepEqual(numbers(root), [2, 1, 3, 4], 'oldest ask first; a PR with no known ask last');
   const [first, second] = [...root.querySelectorAll('li.pr')];
-  assert.match(first?.textContent ?? '', /Waiting 1 d/);
+  assert.match(first?.textContent ?? '', /Waiting 24 h/);
   assert.match(second?.textContent ?? '', /Waiting 3 h/);
+  assert.match(first?.textContent ?? '', /Updated 1 h ago/, 'updated and open read in hours under three days');
   cleanup();
 });
 

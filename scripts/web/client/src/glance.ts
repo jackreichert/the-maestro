@@ -40,6 +40,17 @@ export function ago(since: string, now: string): string {
   return `${Math.floor(hours / 24)} d`;
 }
 
+/** Like `ago`, but hours until three days ("30 h", never "1 d"), then days: the unit the Others' PRs tab ages its rows in. */
+export function agoHours(since: string, now: string): string {
+  const a = Date.parse(since);
+  const b = Date.parse(now);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return '';
+  const min = Math.max(0, Math.floor((b - a) / MINUTE));
+  if (min < 60) return min < 1 ? 'just now' : `${min} min`;
+  const hours = Math.floor(min / 60);
+  return hours < 72 ? `${hours} h` : `${Math.floor(hours / 24)} d`;
+}
+
 /** A wall-clock time like "2:05 pm" in `tz`; empty when the time is unreadable, and the browser's zone when `tz` is not one. */
 export function clockTime(iso: string, tz: string): string {
   const t = Date.parse(iso);
