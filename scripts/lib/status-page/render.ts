@@ -19,7 +19,7 @@ import type { FooterRow } from '../journal/board.ts';
 import { askBits, asksNote } from '../journal/ask-fields.ts';
 import { streamLibraryLinks } from '../library/stream-links.ts';
 import { startLines } from '../start/start-here.ts';
-import { askAgeDays } from '../ledger-day.ts';
+import { askAgeDays } from '../day-basis.ts';
 import type { StartHere } from '../start/start-here.ts';
 
 export interface Item { id: string; date: string; ts?: string; stateTs?: string; text: string; model?: string; refs?: string[]; stream?: string; ticket?: string | null; gate?: string; deferredUntil?: string;

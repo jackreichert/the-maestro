@@ -238,7 +238,7 @@ import { pageConfig } from './status-page.ts';
 import type { Priority, PrioritiesState } from './lib/status-page/priorities.ts';
 import { prioritiesDir, readProjectFile } from './lib/status-page/project-priorities.ts';
 import { syncProjectPriorities } from './lib/status-page/project-priorities-sync.ts';
-import { ledgerDay, userDay } from './lib/ledger-day.ts';
+import { ledgerDay, userDay } from './lib/day-basis.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
@@ -333,7 +333,7 @@ const store = openStore({ vault, project, dryRun, window: windowId });
 const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = store;
 const today = (): string => ledgerDay();
 const now = (): string => new Date().toISOString();
-/** The calendar day a `defer --until` date is read in and a deferral lapses on: the user's zone, not the UTC stamp day (lib/ledger-day.ts). */
+/** The calendar day a `defer --until` date is read in and a deferral lapses on: the user's zone, not the UTC stamp day (lib/day-basis.ts). */
 const deferDay = (): string => userDay(WATCH_TZ);
 /** The message of a caught value; `catch` binds `unknown`. */
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
