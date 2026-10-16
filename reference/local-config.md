@@ -97,7 +97,7 @@ protected_branches: main, release/*  # names or globs (`*` within one path segme
 sweep_merge_targets: repo_a=develop|staging  # per-repo branches a branch must be merged into; default develop (plus staging in twin-flow repos)
 sweep_pr_days: 180             # days of merged PRs branch-sweep.ts reads as evidence; default 180
 tracker_key_pattern: \bABC-\d+\b  # regex for tracker keys in a PR title or branch, listed by the pr-merged event; default is any ABC-123 shaped key
-next_frozen_labels: pilot-hold  # ticket or tracker labels that freeze an item: `journal.ts next` never offers it as work; default none
+next_frozen_labels: pilot-hold  # ticket or tracker labels that freeze an item: `journal.ts next` never offers it as work, and jira-freeze-guard refuses any Jira write to it; default none
 next_blocked_labels: needs-you  # labels meaning the item waits on you, held back by `journal.ts next`; `none` clears; default needs-you
 local_key_prefixes: MAESTRO,MITHRIL  # key prefixes no tracker holds (local keys of personal repos); never counted as pending transitions; `none` clears; default MAESTRO,MITHRIL
 sweep_budget_seconds: 300     # the worktree sweep stops at the next repo boundary once over this many seconds, and names what it skipped; default 300
@@ -114,6 +114,7 @@ notify_command: ["my-notifier", "--to-me"]  # event loop: argv (JSON array); the
 watch_network_floor: 120       # event loop: fastest poll for network types (pr-checks, pr-watch, gh-run), seconds; can only raise the 120 floor
 watch_local_floor: 30          # event loop: fastest poll for local types (inbox, reminder), seconds; can only raise the 30 floor
 watch_type_intervals: pr-checks=240, inbox=90  # event loop: default interval per type, seconds; the floors still apply
+jira_labels_command: ["my-jira-labels"]    # jira-freeze-guard: argv printing one label per line for the issue key appended; unset means a Jira write is refused while next_frozen_labels is set
 inbox_command: ["my-inbox", "--unread"]     # event loop `inbox` type: argv printing one line per unread message, without marking them read; omit for none
 container_root: /path/to/container  # the only directory roll and handoff will sweep for stale worktrees, and only when run from inside it; a leading ~/ is expanded; omit and the sweep refuses
 agent_owned_repos: ~/tools, ~/notes  # repos the agent manages itself: the protected-branch stop does not apply there (commit to the default branch); every other git rule still does; omit for none
