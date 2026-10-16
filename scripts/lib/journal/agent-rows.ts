@@ -15,7 +15,8 @@ import { foldLeases } from './leases.ts';
  */
 
 /** The next step the stop hook records on a row whose agent has stopped; the footer counts such rows as "to verify", not in flight. */
-export const AGENT_RETURNED_STEP = 'returned, verify';
+import { AGENT_RETURNED_STEP } from '../ledger-core.ts';
+export { AGENT_RETURNED_STEP };
 
 /** How long a dispatched agent keeps its row leased: past the longest agents run, so a live one is never requeued under it. */
 export const AGENT_TTL_MINUTES = 240;
@@ -95,7 +96,8 @@ export function returnRows(rows: readonly LedgerRow[], window: string, agentType
     const at = new Date(nowMs).toISOString();
     const stamp = { ...base, ts: at, date: at.slice(0, 10), window };
     const ref = d.toolUseId ? { toolUseId: d.toolUseId } : {};
-    const others = (open.get(d.item)?.length ?? 1) - 1;
+    // Only dispatches still inside their lease count as out: one whose stop never fired (a killed agent) must not hold the row open forever.
+    const others = (open.get(d.item) ?? []).filter((x) => x !== d && Date.parse(x.ts) + x.ttl * 60_000 > nowMs).length;
     // Another agent is still out on this row: record this stop (so it is not counted twice) but leave the row in flight with its lease.
     if (others > 0) return [{ ...stamp, id: newId(), kind: 'next', nexts: d.item, nextStep: `agent running: ${others} still out`, agentReturned: true, agentType: d.agentType, ...ref, text: `next ${d.item}: agent running: ${others} still out` } as LedgerRow];
     return [

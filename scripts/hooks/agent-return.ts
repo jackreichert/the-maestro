@@ -25,10 +25,11 @@ export interface AgentStop { session_id?: string; agent_type?: string; agent_id?
  */
 export function toolUseIdOf(input: AgentStop): string {
   try {
-    const transcript = input.agent_transcript_path || (input.transcript_path && input.agent_id ? join(dirname(input.transcript_path), basename(input.transcript_path, '.jsonl'), 'subagents', `agent-${input.agent_id}.jsonl`) : '');
+    const transcript = input.agent_transcript_path || (input.transcript_path && input.agent_id && /^[\w-]+$/.test(input.agent_id) ? join(dirname(input.transcript_path), basename(input.transcript_path, '.jsonl'), 'subagents', `agent-${input.agent_id}.jsonl`) : '');
     if (!transcript.endsWith('.jsonl')) return '';
     const id = (JSON.parse(readFileSync(transcript.replace(/\.jsonl$/, '.meta.json'), 'utf8')) as { toolUseId?: unknown }).toolUseId;
-    return typeof id === 'string' ? id : '';
+    // The id is written into the journal: only the harness's own shape, and bounded.
+    return typeof id === 'string' && /^[\w-]{1,100}$/.test(id) ? id : '';
   } catch { return ''; }
 }
 

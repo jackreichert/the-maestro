@@ -9,6 +9,9 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { normaliseUsed, tableModel } from './ledger-tags.ts';
 
+/** The next step a returned agent's row carries until its hand-back is verified; a `queue` row clears it, so a requeued row is not still "to verify". */
+export const AGENT_RETURNED_STEP = 'returned, verify';
+
 /** One line of ledger.jsonl. The named fields are the ones the fold reads; rows carry others (text, date, ref, gate...) it passes through. */
 export interface LedgerRow {
     id?: string;
@@ -255,7 +258,10 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
             if (e.kind === 'brief' && typeof e.brief === 'string' && e.brief) merged.brief = e.brief;
             where.set(target, merged);
         }
-        if (e.kind === 'queue' && e.queues) moves.set(e.queues, { queued: true, ts: e.ts });
+        if (e.kind === 'queue' && e.queues) {
+            moves.set(e.queues, { queued: true, ts: e.ts });
+            if (where.get(e.queues)?.nextStep === AGENT_RETURNED_STEP) where.set(e.queues, { ...where.get(e.queues), nextStep: undefined });
+        }
         if (e.kind === 'promote' && e.promotes) moves.set(e.promotes, { queued: false, ts: e.ts });
         if (e.closes) closed.set(e.closes, mapMarks(withStamp(e, stamped)));
         if (e.kind === 'tag' && e.tags) streams.set(e.tags, e.stream || undefined);

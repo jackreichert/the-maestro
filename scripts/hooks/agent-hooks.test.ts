@@ -278,3 +278,37 @@ test('the footer counts a returned row as to verify, not in flight, and moves ba
   dispatch(toolCall('Build the widget', 'toolu_C'), led);
   assert.deepEqual([footer().inflight, footer().verify], [1, undefined], 'a re-dispatch puts it back in flight');
 });
+
+test('an agent whose stop never fired does not keep a row from reading "returned, verify" once its lease has lapsed', () => {
+  const led = memory();
+  dispatch(toolCall('Build the widget', 'toolu_A'), led);
+  led.at = T0 + 60 * 60_000;
+  dispatch(toolCall('Build the widget', 'toolu_B'), led);
+  led.at = T0 + 250 * 60_000;
+  const out = returnRows(led.rows, WIN, 'general-purpose', led.at, (() => { let n = 100; return () => `r${n++}`; })(), {}, 'toolu_B');
+  led.rows.push(...out);
+  assert.equal(items(led.rows).find((i) => i.kind === 'wip')?.nextStep, 'returned, verify', 'the first agent was killed: its dispatch is past its lease and is not "still out"');
+});
+
+test('a row requeued after its hand-back lapsed is no longer "to verify"', () => {
+  const led = memory();
+  dispatch(call('Build the widget'), led);
+  const id = items(led.rows).find((i) => i.kind === 'wip')?.id as string;
+  led.at = T0 + 10 * 60_000;
+  agentReturned({ session_id: SESSION, agent_type: 'general-purpose' }, led);
+  assert.equal(items(led.rows).find((i) => i.id === id)?.nextStep, 'returned, verify');
+  led.rows.push({ id: 'q1', kind: 'queue', queues: id, ts: new Date(led.at + 61 * 60_000).toISOString(), date: '2026-10-15' } as LedgerRow);
+  assert.notEqual(items(led.rows).find((i) => i.id === id)?.nextStep, 'returned, verify');
+});
+
+test('the stop hook ignores an agent_id with path separators and a tool-use id of the wrong shape', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-stop-bad-'));
+  try {
+    const sub = join(dir, 'sess-1', 'subagents');
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, 'agent-x1.meta.json'), JSON.stringify({ toolUseId: 'toolu_B' }));
+    assert.equal(toolUseIdOf({ transcript_path: join(dir, 'sess-1.jsonl'), agent_id: '../sess-1/subagents/agent-x1' }), '');
+    writeFileSync(join(sub, 'agent-x2.meta.json'), JSON.stringify({ toolUseId: 'toolu B\nrow' }));
+    assert.equal(toolUseIdOf({ agent_transcript_path: join(sub, 'agent-x2.jsonl') }), '');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
