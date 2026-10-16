@@ -1,6 +1,7 @@
 /** Small DOM helpers shared by the components. Text is always set with textContent, never innerHTML. */
 
 import { GRID_CSS } from './grid.ts';
+import { PAGER_CSS } from './pager-css.ts';
 import { linkAttrs } from './link-policy.ts';
 import { formatFragment, streamTabId } from './tabs.ts';
 import { memoByKey } from './memo.ts';
@@ -101,6 +102,7 @@ export const BASE_CSS = `
  */
 export const UI_CSS = `
   ${GRID_CSS}
+  ${PAGER_CSS}
   .board { align-items: start; }
   .col { display: grid; gap: var(--space-6); min-width: 0; }
   @media (max-width: 480px) { .board { row-gap: var(--space-6); } .col { gap: var(--space-5); } }

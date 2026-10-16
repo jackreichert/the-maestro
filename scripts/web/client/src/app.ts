@@ -25,6 +25,7 @@ import type { DraftRow } from './drafts-model.ts';
 import { createDraftActions, loadDrafts } from './drafts-api.ts';
 import { createPoster } from './write-token.ts';
 import { GRID_CSS } from './grid.ts';
+import { PAGER_CSS } from './pager-css.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
 import { armHomeEntrance } from './home-motion.ts';
 import { queueSize } from './local-review-widget.ts';
@@ -43,7 +44,7 @@ import type { AskBusyDetail, ChartsData, CostData, EpicsData, LocalReview, Podiu
 
 interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; cost: CostData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number; needsSig: string }
 
-const CSS = `${GRID_CSS}${BOARD_CSS}${HOME_TAB_CSS}
+const CSS = `${GRID_CSS}${PAGER_CSS}${BOARD_CSS}${HOME_TAB_CSS}
   .wrap { max-width: var(--grid-max); margin: 0 auto; padding-inline: var(--page-pad); }
 
   /* Off screen until it has focus, then the first thing on the page; fixed so no layout moves. */
