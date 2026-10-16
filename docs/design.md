@@ -27,12 +27,13 @@ All three are SIL Open Font License faces, subset to Latin, and self-hosted as `
 | Group | Tokens | Rule |
 |---|---|---|
 | Type scale | `--text-xs` to `--text-3xl`, `--text-display`, each with a `--leading-*`; `--tracking-*`; `--weight-*` | About a 1.2 ratio. Body is `--text-md`. Display sizes only in the display face |
-| Space | `--space-1` (4 px) to `--space-8` (64 px) | Every margin, padding and gap is a step on this scale |
+| Space | `--space-1` (4 px) to `--space-9` (80 px) | Every margin, padding and gap is a step on this scale |
 | Grid | `--grid-columns` (12), `--grid-max`, `--gutter`, `--page-pad` | Gutter and page margin step up at 640 and 1100 px; lay a screen out as `repeat(var(--grid-columns), minmax(0, 1fr))` with `gap: var(--gutter)` |
 | Lines and radii | `--hairline`, `--hairline-strong`, `--hairline-width`; `--radius-xs` to `--radius-lg`, `--radius-pill` | One rule weight. The strong hairline is for control outlines that must meet 3:1 |
 | Elevation | `--shadow-1` (resting card), `--shadow-2` (over content), `--material-bar` and `--material-blur` (the sticky tab bar) | No other shadows |
 | Colour | Surfaces, text, border, one `--accent`, and `--critical`, `--success`, `--warning` with `-soft` fills | Light and dark follow `prefers-color-scheme`. Every text pair meets 4.5:1 and every control, focus and chart mark 3:1, checked by test in both modes |
 | Status | `--glyph-attention`, `--glyph-critical`, `--glyph-success`, `--glyph-warning` | A status colour always travels with a symbol or a word |
+| Grid spacing | `--col-gap`, `--row-gap`, `--card-pad` | The gap between columns, between rows, and the padding inside a card. They follow `--gutter` and `--section-gap`, which grow at 640 px and 1100 px |
 | Score | `--ink`, `--staff`, `--staff-dim` (staff and note ink), `--section-gap` | Home's staves, measures and section rhythm; stream colours come from `--stream-color` set per section class |
 | Motion | `--dur-press`, `--dur-fast`, `--dur-base`, `--dur-slow`, `--dur-breathe`; `--ease-out`, `--ease-in-out`, `--ease-spring` (arrivals only) | All durations are 0 ms under `prefers-reduced-motion: reduce`. `--dur-sweep` (the playhead) and `--stagger` (the per-item entrance step, with `--i` the item's index) follow |
 | Charts | `--chart-grid`, `--chart-axis`, `--chart-label`, `--chart-label-size`, `--chart-stroke`, `--chart-dot`, `--chart-mark-radius`, `--chart-mark-gap`, `--chart-highlight`; series `--series-1` to `--series-8`, `--series-other` | Gridlines recede, labels are muted and tabular, and series colours mean identity, never status. Every chart has a table view |
@@ -42,3 +43,10 @@ All three are SIL Open Font License faces, subset to Latin, and self-hosted as `
 - Reference names, never values: `padding: var(--space-4)`, not `16px`. Custom properties inherit into shadow roots, so a component's stylesheet can use them directly.
 - Need a value the scale lacks? Add a token to `theme.css` (both themes when it is a colour) rather than a raw value in a component, and extend `test/theme-contrast.test.ts` when it is a colour pair.
 - `test/theme-tokens.test.ts` loads the theme in a headless page in light and dark, and fails if any token the client reads is undeclared, if reduced motion leaves a duration, if a font URL is not a local `woff2` with its licence, or if the content security policy names any origin but its own.
+
+
+## The grid and placing a section
+
+Every page is one `.grid` (`src/grid.ts`): twelve columns, and each child is full width, a half, a third or two thirds, so column edges align across rows and across tabs. Below 768 px everything is full width; from 768 px halves and thirds sit in pairs; from 1100 px thirds are thirds. Gaps come from `--col-gap` and `--row-gap`, never from one-off values.
+
+**Placing a section: what needs acting on goes first.** On Home the order is: Cues (answers waiting on the reader), then open work (In flight, open asks by age), open PRs and local review waiting for the reader, then what is blocked (Fermata), and only then the views that report rather than ask: the score, Movements, Coda, the deck and Brass. A new section is placed by asking "does this need the reader to act, and how soon?", not by when it was built. A section with nothing in it keeps its heading and says so in a tacet line (collapsing the empty ones to a single line is a follow-up).

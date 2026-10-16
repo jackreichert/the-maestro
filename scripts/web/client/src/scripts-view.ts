@@ -18,7 +18,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .args label.check { display: flex; gap: var(--space-2); align-items: center; }
   .args input[type=text], .args input[type=number], .args select { font: inherit; padding: 4px 8px; border: var(--hairline-strong); border-radius: var(--radius-xs); background: var(--surface-1); color: var(--text-primary); }
   .problems { color: var(--text-secondary); font-size: var(--text-sm); }
-  h2.catalog-title { font-size: var(--text-lg); margin: var(--space-6) 0 var(--space-2); }
+  h3.catalog-title { font-size: var(--text-lg); margin: var(--space-6) 0 var(--space-2); }
   .note { color: var(--text-secondary); max-width: 70ch; }
 `;
 
@@ -70,7 +70,7 @@ export class ScriptsViewElement extends HTMLElement {
     const groups = [...new Set(scripts.map((s) => s.group))];
     this.#root.replaceChildren(
       h('script-queue', {}),
-      h('h2', { class: 'catalog-title' }, 'Podium catalog'),
+      h('h3', { class: 'catalog-title' }, 'Podium catalog'),
       h('p', { class: 'note' }, 'Scripts the Podium may run on this computer. Review shows the exact command; nothing runs until you press Run. Arguments are checked against each script\'s schema and are never passed through a shell.'),
       ...groups.map((g) => h('section', { class: 'group', 'aria-label': g }, h('h3', { class: 'group-name' }, g), ...scripts.filter((s) => s.group === g).map((s) => this.#card(s)))),
       ...(scripts.length === 0 ? [h('p', { class: 'note' }, 'The catalog has no scripts.')] : []),

@@ -1,4 +1,5 @@
 import { BASE_CSS, h, refLink, shadow } from './dom.ts';
+import { GRID_CSS } from './grid.ts';
 import { ago, askAge, clockTime } from './glance.ts';
 import { readyToMerge } from './pr-ready.ts';
 import type { OpenPrRow } from './types.ts';
@@ -12,7 +13,8 @@ type Mix = 'pass' | 'pending' | 'fail' | 'none';
 
 const CSS = `${BASE_CSS}
   :host { display: block; }
-  .cue { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: var(--space-6) var(--space-7); align-items: end; padding-bottom: var(--space-6); border-bottom: var(--hairline); }
+  ${GRID_CSS}
+  .cue { row-gap: var(--space-6); align-items: end; padding-bottom: var(--space-6); border-bottom: var(--hairline); }
   .kicker { font-size: var(--text-sm); color: var(--text-muted); }
   .cueline { margin: var(--space-4) 0 0; font: 400 clamp(2rem, 3.6vw, 3.25rem)/1.08 var(--font-display); letter-spacing: -0.02em; color: var(--text-muted); }
   .cue-item { white-space: nowrap; }
@@ -115,7 +117,6 @@ const CSS = `${BASE_CSS}
   .empty { margin: 0; padding: var(--space-4) 0; color: var(--text-muted); font-size: var(--text-sm); }
   .empty i { font-family: var(--font-display); font-style: italic; margin-left: 2px; }
   @media (max-width: 960px) {
-    .cue { grid-template-columns: minmax(0, 1fr); }
     .pr { grid-template-columns: minmax(0, 1fr) auto; }
     .pr .base, .pr .gates { grid-column: 1; }
     .pr .age { grid-column: 2; grid-row: 1; }
@@ -310,8 +311,8 @@ export class OpenPrs extends HTMLElement {
     const repos = new Set(all.map((p) => p.repo)).size;
     const oldest = units.filter((u) => unitMove(u) === 'yours').map((u) => u.lead).sort((a, b) => (b.ageDays ?? 0) - (a.ageDays ?? 0))[0];
     const short = (repo: string): string => repo.split('/')[1] ?? repo;
-    return h('section', { class: 'cue' },
-      h('div', {},
+    return h('section', { class: 'grid pair cue' },
+      h('div', { class: 'two-thirds' },
         h('span', { class: 'kicker' }, 'Open pull requests'),
         line,
         h('p', { class: 'lede' }, `${all.length} open across ${repos} ${repos === 1 ? 'repo' : 'repos'}.`,

@@ -1,5 +1,6 @@
 /** Small DOM helpers shared by the components. Text is always set with textContent, never innerHTML. */
 
+import { GRID_CSS } from './grid.ts';
 import { linkAttrs } from './link-policy.ts';
 import { formatFragment, streamTabId } from './tabs.ts';
 import { memoByKey } from './memo.ts';
@@ -99,9 +100,8 @@ export const BASE_CSS = `
  * the narrow side column and on a phone.
  */
 export const UI_CSS = `
-  .board { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-7) var(--space-7); align-items: start; }
-  @media (min-width: 960px) { .board { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); } }
-  @media (min-width: 1280px) { .board { grid-template-columns: minmax(0, 1fr) 360px; } }
+  ${GRID_CSS}
+  .board { align-items: start; }
   .col { display: grid; gap: var(--space-6); min-width: 0; }
   @media (max-width: 480px) { .board { row-gap: var(--space-6); } .col { gap: var(--space-5); } }
   section { container-type: inline-size; min-width: 0; }

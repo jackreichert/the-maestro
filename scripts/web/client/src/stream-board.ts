@@ -243,14 +243,14 @@ export class StreamBoard extends HTMLElement {
     const slots = { stand: h('div', { class: 'stand' }), left: h('div'), rail: h('div'), below: h('div', { class: 'below' }), clear: h('p', { class: 'clear', hidden: true }) };
     this.#slots = slots;
     this.#filled = false;
-    this.#root.replaceChildren(slots.stand, h('div', { class: 'board' },
-      h('div', { class: 'col' },
+    this.#root.replaceChildren(slots.stand, h('div', { class: 'grid pair board' },
+      h('div', { class: 'col two-thirds' },
         section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false, Number.POSITIVE_INFINITY, (xs) => byPriority(oldestFirst(xs), todaysPriorities(st)))?.list ?? null),
         slots.left,
         shown(prs.length, () => section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: '' }, prList(prs))),
         shown(selfPrs.length, () => section({ title: 'Maestro PRs (self-review)', n: selfPrs.length, tone: 'neutral', empty: '' }, prList(selfPrs))),
         slots.clear),
-      h('div', { class: 'col' },
+      h('div', { class: 'col third' },
         section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, withComments(itemRows(blocked, ctx), blocked, this.#live)),
         section({ title: 'In flight', n: working.length, tone: 'neutral', empty: 'No agent is running here.', rest: RESTS.working, quiet: true }, itemRows(working, ctx)),
         shown(queued.length, () => section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: '', quiet: true }, itemRows(queued, ctx))),

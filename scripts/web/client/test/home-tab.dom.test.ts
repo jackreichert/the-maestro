@@ -23,15 +23,24 @@ const draw = (st: PodiumState, c: ChartsData | null, p: ProjectsLoad): HTMLEleme
 const sec = (el: HTMLElement, name: string): Element => [...el.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent?.startsWith(name))!;
 const text = (el: Element | null | undefined): string => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
-test('Home reads top to bottom as the score, the cues, the held and shipped work, the epics, the deck and the cost, and every section is named by its heading', () => {
+test('Home is ordered by what needs acting on: cues, open work, open PRs, blocked, then the views that only report; every section is named by its heading', () => {
   const el = draw(state(), charts(), { state: 'ok', data: projects() });
   const names = [...el.querySelectorAll('section > .sec-head h2')].map((x) => text(x).replace(/[\s,\d]+$/, ''));
   const at = (n: string): number => names.indexOf(n);
-  assert.deepEqual(['The score', 'Cues', 'Fermata: blocked', 'Coda: shipped today', 'In flight', 'Epics', 'Waiting for local review', 'The deck: shipped and asked per day', 'Open work'].map((n) => at(n) > -1), Array(9).fill(true), names.join('|'));
-  assert.ok(at('The score') < at('Cues') && at('Cues') < at('Fermata: blocked') && at('Fermata: blocked') < at('Coda: shipped today') && at('Coda: shipped today') < at('Epics') && at('Epics') < at('The deck: shipped and asked per day') && at('The deck: shipped and asked per day') < at('Open work'), names.join('|'));
+  const expected = ['Cues', 'In flight', 'Fermata: blocked', 'Open asks by age', 'Open PRs', 'Waiting for local review', 'The score', 'Epics', 'Coda: shipped today', 'The deck: shipped and asked per day'];
+  assert.deepEqual(expected.map((n) => at(n) > -1), expected.map(() => true), names.join('|'));
+  assert.ok(at('Cues') < at('In flight') && at('Fermata: blocked') < at('Open asks by age') && at('Open PRs') < at('The score') && at('The score') < at('Epics') && at('Epics') < at('The deck: shipped and asked per day'), names.join('|'));
   for (const s of el.querySelectorAll('section[aria-labelledby]')) assert.ok(el.querySelector(`#${s.getAttribute('aria-labelledby')}`), 'each region is named by its heading');
   // The instrument name above each heading is decoration: the heading is what names the region.
   assert.deepEqual([...el.querySelectorAll('.sec-title .instrument')].every((i) => i.getAttribute('aria-hidden') === 'true'), true);
+});
+
+test('Home is one grid whose children are placed as thirds or two thirds', () => {
+  const el = draw(state(), charts(), { state: 'ok', data: projects() });
+  const home = el;
+  assert.ok(home.classList.contains('grid'));
+  assert.ok(home.querySelector(':scope > section.two-thirds'), 'the cues take two thirds');
+  assert.ok(home.querySelectorAll(':scope > .third').length >= 3, 'the side column and the gauges sit in thirds');
 });
 
 test('the score has a row per stream with a state word, and a missing charts payload says so instead of a blank', () => {
@@ -135,8 +144,10 @@ test('with no asks, rows for PRs and reviews replace the empty sentence', () => 
 
 test('the gauges say how many asks are open and how many PRs are open, with words and not colour alone', () => {
   const el = draw(state(), charts(), { state: 'ok', data: projects() });
-  assert.match(text(el.querySelector('section.gauge')), /Open asks by age/);
-  assert.match(text(el), /Open PRs/);
+  const gauges = [...el.querySelectorAll('section.gauge')];
+  assert.equal(gauges.length, 2);
+  assert.match(text(gauges[0]), /Open asks by age/);
+  assert.match(text(gauges[1]), /Open PRs/);
 });
 
 test('the Stream order groups the asks by stream and the choice survives a redraw', () => {
