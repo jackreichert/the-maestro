@@ -50,3 +50,9 @@ All three are SIL Open Font License faces, subset to Latin, and self-hosted as `
 Every page is one `.grid` (`src/grid.ts`): twelve columns, and each child is full width, a half, a third or two thirds, so column edges align across rows and across tabs. Below 768 px everything is full width; from 768 px halves and thirds sit in pairs; from 1100 px thirds are thirds. Gaps come from `--col-gap` and `--row-gap`, never from one-off values.
 
 **Placing a section: what needs acting on goes first.** On Home the order is: Cues (answers waiting on the reader), then open work (In flight, open asks by age), open PRs and local review waiting for the reader, then what is blocked (Fermata), and only then the views that report rather than ask: the score, Movements, Coda, the deck and Brass. A new section is placed by asking "does this need the reader to act, and how soon?", not by when it was built. A section with nothing in it keeps its heading and says so in a tacet line (collapsing the empty ones to a single line is a follow-up).
+
+## The stream picker
+
+The picker is a labelled listbox, not a native select, so it can carry each stream's colour and cue count. The button shows a "Voice" caption, the stream swatch, the name and a count pill; the menu lists All streams (italic "tutti") and then each stream with its count, "tacet" when it has none. The current stream has a colour rail, a tinted row and a check. Keys: arrows, Home, End, type-ahead, Enter or Space to choose, Escape to close with focus back on the button.
+
+Two variants were screenshotted: a refined list and a two-column grid of voice cards. The list won. It keeps the one-dimensional listbox keyboard model, stays aligned with the bar's rhythm, and scales to many streams. The card grid read well for three or four streams but needs two-dimensional arrow handling and ragged rows once names differ in length.
