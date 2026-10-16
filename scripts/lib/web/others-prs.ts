@@ -18,6 +18,8 @@ const DAY_MS = 86_400_000;
 export interface OthersScopeOptions { statusDir: string; owners: readonly string[]; selfRepos: readonly string[]; self: string; guard?: Guard;
   /** A PR whose latest ask (Slack activity, or its own opened time when never posted) is older than this many days is marked stale, unless you are asked for review or @-mentioned. Absent means no cutoff. */
   maxAgeDays?: number;
+  /** A PR whose latest ask is older than this many days leaves the tab entirely (Stale included), with the same exemptions as the stale gate: a direct ask or an @-mention is never dropped. Absent means nothing is dropped. */
+  dropDays?: number;
   /** The folder of the slack-watch engineering notes (`<vault_root>/Projects/<container>/Slack`); absent means no Slack ask is known. */
   slackDir?: string;
   /** Names that count as @-mentioning you in Slack (`others_prs_mention_names`). */
@@ -71,14 +73,25 @@ function ask(p: OtherPr, youAsked: boolean, slack: ReadonlyMap<string, SlackActi
   return { askedAt: new Date(at).toISOString(), ...(stale ? { stale: true, staleWhy: why } : {}) };
 }
 
+/** True when the PR's latest ask is past the drop cutoff and nobody asked you directly. Same clock and exemptions as `ask`, so a dropped PR is always one that would also be stale. */
+function dropped(p: OtherPr, self: string, slack: ReadonlyMap<string, SlackActivity>, cutoff: number | null): boolean {
+  if (cutoff === null) return false;
+  const youAsked = self !== '' && p.requested.some((r) => r.toLowerCase() === self);
+  const s = slack.get(p.url.toLowerCase());
+  const at = s ? s.at : Date.parse(p.createdAt);
+  return Number.isFinite(at) && at < cutoff && !youAsked && !s?.mentioned;
+}
+
 export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData {
   const cache = readOthersCache(o.statusDir);
   const owners = new Set(o.owners.map((x) => x.toLowerCase()));
   const self = o.self.toLowerCase();
+  const slack = slackActivity(o.slackDir, o.mentionNames);
+  const dropCutoff = o.dropDays === undefined ? null : now.getTime() - o.dropDays * DAY_MS;
   const kept = (cache?.prs ?? [])
     .filter((p) => p.author.toLowerCase() !== self && owners.has((p.repo.split('/')[0] ?? '').toLowerCase()) && !isSelfReview(p.repo, o.selfRepos))
+    .filter((p) => !dropped(p, self, slack, dropCutoff))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const slack = slackActivity(o.slackDir, o.mentionNames);
   const cutoff = o.maxAgeDays === undefined ? null : now.getTime() - o.maxAgeDays * DAY_MS;
   const fetchedAt = cache?.fetchedAt ?? null;
   const stale = !fetchedAt || now.getTime() - fetchedAt.getTime() > PR_STALE_MS;
