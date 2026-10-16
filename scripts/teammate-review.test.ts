@@ -259,3 +259,11 @@ test('a review that requests changes is not an approval, so the guard does not r
   assert.equal(bad.queued, null);
   assert.match(bad.problem ?? '', /thread id/);
 });
+
+test('a body that outgrows the limit once the worth-addressing list is added is refused with a message, not thrown', () => {
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  const long = Array.from({ length: 30 }, (_, i) => tri(String(i + 1), { worthAddressing: true, reason: 'r'.repeat(190) }));
+  const out = submit(file, sub({ triage: long }), DIFF, { run: ghWith(long.map((_, i) => ({ id: i + 1, ...BOT }))) });
+  assert.equal(out.queued, null);
+  assert.match(out.problem ?? '', /too long/);
+});

@@ -67,8 +67,8 @@ export function checkApprove(run: GhRunner, repo: string, pr: number, reviewedHe
   let open: { thread: OpenBotThread; nodeId: string }[];
   try { open = openBotThreads(run, repo, pr); } catch { return refuse('threads-unreadable', 'Could not read the PR\'s review threads from GitHub, so an approval is not posted.'); }
   if (open.length === 0 || BACKMERGE_HEAD.test(read(run, repo, pr, '.head.ref') ?? '')) return { ok: true, event: 'APPROVE', worth: [], blocking: [] };
-  const entryFor = (o: { thread: OpenBotThread; nodeId: string }): ThreadTriage | undefined => triage.find((e) => e.threadId === o.thread.id || e.threadId === o.nodeId);
-  const untriaged = open.filter((o) => !entryFor(o)).map((o) => o.thread);
+  const entriesFor = (o: { thread: OpenBotThread; nodeId: string }): ThreadTriage[] => triage.filter((e) => e.threadId === o.thread.id || e.threadId === o.nodeId);
+  const untriaged = open.filter((o) => entriesFor(o).length === 0).map((o) => o.thread);
   if (untriaged.length > 0) {
     const list = untriaged.slice(0, SHOWN).map(whereOf).join('; ');
     return refuse('untriaged', `${untriaged.length} open bot thread${untriaged.length === 1 ? ' has' : 's have'} not been triaged by the review (${list}${untriaged.length > SHOWN ? `; and ${untriaged.length - SHOWN} more` : ''}), so an approval is not posted. Have the review triage ${untriaged.length === 1 ? 'it' : 'them'}, or post this as a comment.`, untriaged);
@@ -76,9 +76,11 @@ export function checkApprove(run: GhRunner, repo: string, pr: number, reviewedHe
   const worth: WorthThread[] = [];
   const blocking: OpenBotThread[] = [];
   for (const o of open) {
-    const e = entryFor(o) as ThreadTriage;
-    if (e.worthAddressing) worth.push({ ...o.thread, reason: e.reason });
-    if (e.severity === 'blocking') blocking.push(o.thread);
+    // Two entries can name one thread (its root id and its node id): the most cautious reading wins, so a blocking entry is never hidden behind another.
+    const es = entriesFor(o);
+    const w = es.find((e) => e.worthAddressing);
+    if (w) worth.push({ ...o.thread, reason: (es.find((e) => e.severity === 'blocking') ?? w).reason });
+    if (es.some((e) => e.severity === 'blocking')) blocking.push(o.thread);
   }
   return { ok: true, event: blocking.length > 0 ? 'COMMENT' : 'APPROVE', worth, blocking };
 }

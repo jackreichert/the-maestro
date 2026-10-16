@@ -19,7 +19,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, CONTAINER_ROOT, GH_LOGIN, LEDGER_ROOT, SELF_REVIEW_REPOS, VAULT_ROOT } from './local-config.ts';
-import { addDraft, draftsPath, eventOf, listDrafts, rejectDraft } from './lib/drafts/queue.ts';
+import { addDraft, draftsPath, eventOf, listDrafts, rejectDraft, textProblem } from './lib/drafts/queue.ts';
 import { checkApprove, labelOf, openBotThreads } from './lib/approve-guard.ts';
 import type { GhRunner } from './lib/approve-guard.ts';
 import { triageProblem, worthSection } from './lib/thread-triage.ts';
@@ -84,7 +84,12 @@ export function submit(file: string, s: Submission, diff: string, o: { run?: GhR
     if (!v.ok) return { queued: null, problem: v.message, dropped: plan.dropped, downgraded: plan.downgraded };
     approvalAs = v.event;
     const section = worthSection(v.worth.map((t) => ({ label: labelOf(t), url: t.url, reason: t.reason })));
-    if (section) draft = { ...draft, text: `${draft.text}\n\n${section}` };
+    if (section) {
+      const text = `${draft.text}\n\n${section}`;
+      const long = textProblem(text);
+      if (long) return { queued: null, problem: `with the worth-addressing list the review is too long: ${long}`, dropped: plan.dropped, downgraded: plan.downgraded };
+      draft = { ...draft, text };
+    }
   }
   const out = addDraft(file, draft);
   // A push makes an earlier review of this PR stale: approving it would approve an old commit. Retire the ones still waiting, with the reason on record.

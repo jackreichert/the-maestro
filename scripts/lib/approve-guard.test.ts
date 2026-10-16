@@ -44,6 +44,11 @@ test('a thread triaged blocking turns the approval into a COMMENT; the GraphQL n
   assert.equal(v.ok && v.worth.length, 1);
 });
 
+test('two entries naming one thread (root id and node id): a blocking one is never hidden behind a non-blocking one', () => {
+  const v = checkApprove(rig([COPILOT]).run, 'acme/widgets', 7, HEAD, [T(0), { threadId: 'T0', worthAddressing: true, severity: 'blocking', reason: 'Drops rows.' }]);
+  assert.equal(v.ok && v.event, 'COMMENT');
+});
+
 test('an open bot thread with no triage entry refuses and is listed: Copilot, Aikido and any [bot] alike', () => {
   for (const bot of [COPILOT, { login: 'aikido-pr-checks', type: 'User' }, { login: 'some-scanner[bot]', type: 'User' }]) {
     const v = checkApprove(rig([bot]).run, 'acme/widgets', 7, HEAD, []);
