@@ -20,7 +20,7 @@ export const DRAFT_WRITE_PATHS: ReadonlySet<string> = new Set(OPS.map((o) => `${
 export const DRAFT_BODY_LIMIT = 24 * 1024;
 export const DRAFT_BODY_LIMITS: ReadonlyMap<string, number> = new Map([...DRAFT_WRITE_PATHS].map((p) => [p, DRAFT_BODY_LIMIT]));
 
-const STATUS: Record<Refusal, number> = { unknown: 404, state: 409, invalid: 422, changed: 409, busy: 409 };
+const STATUS: Record<Refusal, number> = { unknown: 404, state: 409, invalid: 422, changed: 409, busy: 409, copilot: 409 };
 const ID = /^dr-[0-9a-f]{8}$/;
 const DAY = 86_400_000;
 const RECENT_DONE = 30;
@@ -46,15 +46,19 @@ export function buildDrafts(o: { vault: string; project: string }, now: Date): {
   return { generatedAt: now.toISOString(), drafts: [...open, ...done].map(view) };
 }
 
-type Body = { id: string; rev?: string; text?: string; comments?: string[]; reason?: string };
+type Body = { id: string; rev?: string; asComment?: boolean; text?: string; comments?: string[]; reason?: string };
 const SHAPES: Record<Op, string> = { approve: 'id,rev', edit: 'id,text', reject: 'id,reason' };
 /** The body in the exact shape its route takes (`edit` may also carry `comments`, one text per inline comment); null for any other shape. */
 export function parseDraftBody(op: Op, body: unknown): Body | null {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return null;
   const rec = body as Record<string, unknown>;
-  const keys = Object.keys(rec).filter((k) => !(op === 'edit' && k === 'comments')).sort().join(',');
+  const keys = Object.keys(rec).filter((k) => !(op === 'edit' && k === 'comments') && !(op === 'approve' && k === 'as')).sort().join(',');
   if (keys !== SHAPES[op].split(',').sort().join(',') || typeof rec.id !== 'string' || !ID.test(rec.id)) return null;
-  if (op === 'approve') return typeof rec.rev === 'string' && /^[0-9a-f]{12}$/.test(rec.rev) ? { id: rec.id, rev: rec.rev } : null;
+  if (op === 'approve') {
+    // `as: 'comment'` is the one optional field: post an approving review as a COMMENT review. Any other value is not a shape this route takes.
+    if (rec.as !== undefined && rec.as !== 'comment') return null;
+    return typeof rec.rev === 'string' && /^[0-9a-f]{12}$/.test(rec.rev) ? { id: rec.id, rev: rec.rev, ...(rec.as === 'comment' ? { asComment: true } : {}) } : null;
+  }
   if (op === 'reject') return typeof rec.reason === 'string' && rec.reason.length <= MAX_REASON * 2 ? { id: rec.id, reason: rec.reason } : null;
   const comments = rec.comments;
   if (typeof rec.text !== 'string' || rec.text.length > MAX_TEXT * 2) return null;
@@ -65,7 +69,7 @@ export function parseDraftBody(op: Op, body: unknown): Body | null {
 function run(o: DraftsWriteOptions, op: Op, b: Body): Outcome<{ url?: string }> {
   const file = draftsPath(o.web.vault, o.web.project);
   const now = o.now;
-  if (op === 'approve') return approveAndPost(file, b.id, b.rev ?? '', { run: o.ghRun, now });
+  if (op === 'approve') return approveAndPost(file, b.id, b.rev ?? '', { run: o.ghRun, now, ...(b.asComment ? { asComment: true } : {}) });
   if (op === 'edit') return editDraft(file, b.id, b.text ?? '', { now }, b.comments);
   return rejectDraft(file, b.id, b.reason ?? '', { now });
 }

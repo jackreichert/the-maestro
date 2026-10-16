@@ -67,7 +67,7 @@ export interface NewDraft {
 export type Row =
   | ({ op: 'add'; id: string; ts: string } & NewDraft)
   | { op: 'edit'; id: string; ts: string; text: string; comments?: string[] }
-  | { op: 'approve'; id: string; ts: string; text: string }
+  | { op: 'approve'; id: string; ts: string; text: string; event?: 'COMMENT' }
   | { op: 'uncertain'; id: string; ts: string }
   | { op: 'posting'; id: string; ts: string; nonce?: string }
   | { op: 'posted'; id: string; ts: string; url?: string }
@@ -212,7 +212,7 @@ export function addDraft(file: string, d: NewDraft, o: { now?: () => Date } = {}
   return { id, created: true };
 }
 
-export type Refusal = 'unknown' | 'state' | 'invalid' | 'changed' | 'busy';
+export type Refusal = 'unknown' | 'state' | 'invalid' | 'changed' | 'busy' | 'copilot';
 export type Outcome<T = object> = ({ ok: true } & T) | { ok: false; code: Refusal; message: string };
 export const refuse = (code: Refusal, message: string): { ok: false; code: Refusal; message: string } => ({ ok: false, code, message });
 

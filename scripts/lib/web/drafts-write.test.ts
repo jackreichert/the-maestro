@@ -22,17 +22,20 @@ const PAGE = { streams: ['Alpha'], repoStreams: {}, vaultName: '', trackerUrlBas
 const servers: Server[] = [];
 after(() => { for (const s of servers) s.close(); });
 
-interface Rig { port: number; file: string; calls: string[][] }
-async function rig(name: string, gh: Partial<GhResult> = {}): Promise<Rig> {
+interface Rig { port: number; file: string; calls: string[][]; inputs: string[] }
+/** The GraphQL answer for a PR with `n` unresolved Copilot threads. */
+const threadsReply = (n: number): string => JSON.stringify({ data: { repository: { pullRequest: { state: 'OPEN', author: { login: 'robin-r' }, reviewThreads: { pageInfo: { hasNextPage: false }, nodes: Array.from({ length: n }, (_, i) => ({ id: `T${i}`, isResolved: false, isOutdated: false, path: 'a.ts', line: 1, comments: { pageInfo: { hasNextPage: false }, nodes: [{ databaseId: i + 1, body: 'x', author: { login: 'copilot-pull-request-reviewer', __typename: 'Bot' } }] } })) } } } } });
+async function rig(name: string, gh: Partial<GhResult> = {}, copilot = 0): Promise<Rig> {
   const vault = join(root, name);
   mkdirSync(join(vault, 'Projects', 'p', 'Journal'), { recursive: true });
   mkdirSync(join(vault, 'Status'), { recursive: true });
   const calls: string[][] = [];
-  const ghRun = (a: string[]): GhResult => { if (a.includes('--jq')) return { status: 0, stdout: `abcdef1${'0'.repeat(33)}\n`, stderr: '' }; calls.push(a); return { status: 0, stdout: '{"html_url":"https://github.com/acme/widgets/pull/7#r1"}', stderr: '', ...gh }; };
+  const inputs: string[] = [];
+  const ghRun = (a: string[], input?: string): GhResult => { if (a.includes('graphql')) return { status: 0, stdout: threadsReply(copilot), stderr: '' }; if (a.at(-1) === '.head.ref') return { status: 0, stdout: 'feat/widgets\n', stderr: '' }; if (a.includes('--jq')) return { status: 0, stdout: `abcdef1${'0'.repeat(33)}\n`, stderr: '' }; calls.push(a); if (input) inputs.push(input); return { status: 0, stdout: '{"html_url":"https://github.com/acme/widgets/pull/7#r1"}', stderr: '', ...gh }; };
   const server = createWebServer({ web: { vault, project: 'p', statusDir: join(vault, 'Status'), page: PAGE }, clientDir: client, now: () => NOW, log: () => {}, token: TOKEN, ghRun });
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
   servers.push(server);
-  return { port: (server.address() as AddressInfo).port, file: draftsPath(vault, 'p'), calls };
+  return { port: (server.address() as AddressInfo).port, file: draftsPath(vault, 'p'), calls, inputs };
 }
 const rev = (r: Rig): string => revOf(listDrafts(r.file)[0] as never);
 const seed = (r: Rig, text = 'Could this guard an empty list?', key = 'k1'): string => addDraft(r.file, { key, source: 'review', repo: 'acme/widgets', pr: 7, severity: 'suggestion', text, target: { kind: 'general' } }, { now: () => NOW }).id;
@@ -143,4 +146,18 @@ test('a review draft over HTTP: the view carries the event and rev, edit takes c
   assert.equal((await call(r, '/api/drafts/approve', { body: { id, rev: rev(r) } })).status, 200);
   assert.equal(r.calls.length, 1);
   assert.ok(r.calls[0]?.includes('repos/acme/widgets/pulls/7/reviews'));
+});
+
+test('approve over HTTP refuses an approving review while Copilot threads are open (409 copilot), then `as: comment` posts it as a COMMENT review', async () => {
+  const r = await rig('copilot', {}, 2);
+  const compliment = 'The ID validation before anything goes into a URL is exactly right.';
+  const id = addDraft(r.file, { key: 'rv2', source: 'review', repo: 'acme/widgets', pr: 7, severity: 'review', text: `${compliment}\n\nOk.`, target: { kind: 'review', commitId: 'abcdef1' }, review: { compliment, comments: [] } }, { now: () => NOW }).id;
+  const refused = await call(r, '/api/drafts/approve', { body: { id, rev: rev(r) } });
+  assert.equal(refused.status, 409);
+  assert.equal(refused.json.error, 'copilot');
+  assert.equal(r.calls.length, 0);
+  assert.equal((await call(r, '/api/drafts/approve', { body: { id, rev: rev(r), as: 'nonsense' } })).status, 400, 'only as: comment is a shape');
+  const ok = await call(r, '/api/drafts/approve', { body: { id, rev: rev(r), as: 'comment' } });
+  assert.equal(ok.status, 200);
+  assert.equal(JSON.parse(r.inputs[0] ?? '{}').event, 'COMMENT');
 });
