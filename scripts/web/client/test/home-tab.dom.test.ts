@@ -24,13 +24,14 @@ const draw = (st: PodiumState, c: ChartsData | null, p: ProjectsLoad): HTMLEleme
 const sec = (el: HTMLElement, name: string): Element => [...el.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent?.startsWith(name))!;
 const text = (el: Element | null | undefined): string => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
-test('Home is ordered by what needs acting on: cues, open work, open PRs, blocked, then the views that only report; every section is named by its heading', () => {
+test('Home is ordered streams first, then what needs acting on: cues, open work, open PRs, blocked, then the views that only report; every section is named by its heading', () => {
   const el = draw(state(), charts(), { state: 'ok', data: projects() });
   const names = [...el.querySelectorAll('section > .sec-head h2')].map((x) => text(x).replace(/[\s,\d]+$/, ''));
   const at = (n: string): number => names.indexOf(n);
   const expected = ['Cues', 'In flight', 'Fermata: blocked', 'Open asks by age', 'Open PRs', 'Waiting for local review', 'The score', 'Epics', 'Coda: shipped today', 'The deck: shipped and asked per day'];
   assert.deepEqual(expected.map((n) => at(n) > -1), expected.map(() => true), names.join('|'));
-  assert.ok(at('Cues') < at('In flight') && at('Fermata: blocked') < at('Open asks by age') && at('Open PRs') < at('The score') && at('The score') < at('Epics') && at('Epics') < at('The deck: shipped and asked per day'), names.join('|'));
+  assert.equal(at('The score'), 0, 'the streams head the page');
+  assert.ok(at('The score') < at('Cues') && at('Cues') < at('In flight') && at('Fermata: blocked') < at('Open asks by age') && at('Open PRs') < at('Epics') && at('Epics') < at('The deck: shipped and asked per day'), names.join('|'));
   for (const s of el.querySelectorAll('section[aria-labelledby]')) assert.ok(el.querySelector(`#${s.getAttribute('aria-labelledby')}`), 'each region is named by its heading');
   // The instrument name above each heading is decoration: the heading is what names the region.
   assert.deepEqual([...el.querySelectorAll('.sec-title .instrument')].every((i) => i.getAttribute('aria-hidden') === 'true'), true);
@@ -210,4 +211,18 @@ test('a stream choice nothing waits on any more narrows nothing: no staff is dim
   homeUi.stream = null;
   assert.equal(stale.querySelectorAll('.staff-row.dim').length, 0);
   assert.equal(el.querySelectorAll('.staff-row.dim').length, 0);
+});
+
+test('the PRs and reviews waiting on you are bounded to a page, with a count and a link to the Others\' PRs tab', () => {
+  const st = state();
+  homeUi.order = 'oldest'; homeUi.stream = null; PAGES.clear();
+  const many = Array.from({ length: 9 }, (_, i) => ({ ...needsOf('Elsewhere')[1]!, key: `review:dr-${i}`, number: 40 + i, title: `Review ${i}` }));
+  const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, needs: many, redraw: () => {} })).el;
+  const cues = sec(el, 'Cues');
+  const rows = [...cues.querySelectorAll('ul.needs-items > li')];
+  assert.equal(rows.length, 9);
+  assert.equal(rows.filter((r) => !(r as HTMLElement).hidden).length, 3, 'three rows show');
+  assert.match(text(cues.querySelector('.needs-count')), /9 items wait on you, 3 to a page/);
+  assert.match(cues.querySelector('.needs-count a')!.getAttribute('href')!, /^#tab=others/);
+  assert.match(text(cues.querySelector('.needs-count a')), /All 9 reviews are on the Others' PRs tab/);
 });

@@ -11,11 +11,14 @@ import { scopedItems } from './needs-items.ts';
 import type { NeedsItem } from './needs-items.ts';
 import { needsRows } from './needs-view.ts';
 import { PAGES, pagedRows } from './pager.ts';
+import { OTHERS_PRS, formatFragment } from './tabs.ts';
 import type { PodiumState } from './types.ts';
 
 const CUE_KEY = 'home-cues';
 /** Cues on one page of the Cues list. */
 export const CUE_PAGE = 6;
+export const NEEDS_PAGE = 3;
+const NEEDS_KEY = 'cues-needs';
 
 export const CUES_CSS = `
   .chips-row { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 2px 0; list-style: none; }
@@ -105,6 +108,11 @@ export function cuesSection(st: PodiumState, live: boolean, redraw: () => void, 
     ? 'Questions your agents are waiting on. Open a cue to see its context and the recommendation, then send an answer, take the recommendation, or skip a two-way door. It is saved to the ledger and leaves on the next update. Cues tied to the first priority of the day come first; PRs ready to merge and reviews waiting for your OK follow.'
     : 'Sample data: cues open read-only. Answering needs the Podium server.';
   const rows = needsRows(shownExtra, true);
+  // The PRs and reviews waiting on you are bounded to a few rows, so they cannot take the page; the rest is one page away.
+  const needsMore = rows ? pagedRows([...rows.children] as HTMLElement[], { key: NEEDS_KEY, size: NEEDS_PAGE, label: 'PRs and reviews', noun: 'items' }) : null;
+  const reviews = shownExtra.filter((i) => i.kind === 'approve review').length;
+  const needsNote = rows ? h('p', { class: 'sec-note needs-count' }, `${shownExtra.length} ${shownExtra.length === 1 ? 'item waits' : 'items wait'} on you${shownExtra.length > NEEDS_PAGE ? `, ${NEEDS_PAGE} to a page` : ''}. `,
+    reviews > 0 ? h('a', { href: formatFragment(OTHERS_PRS) }, `All ${reviews} ${reviews === 1 ? 'review' : 'reviews'} are on the Others' PRs tab`) : null) : null;
   return conceptSection('cues', { instrument: 'Woodwinds', title: 'Cues', n: total },
-    h('p', { class: 'sec-note' }, hint), controls, list, more, cards.length === 0 && shownExtra.length === 0 ? tacet('Nothing needs you right now.', 'tacet', 'la') : null, rows ? h('div', { class: 'cues-tail' }, rows) : null);
+    h('p', { class: 'sec-note' }, hint), controls, list, more, cards.length === 0 && shownExtra.length === 0 ? tacet('Nothing needs you right now.', 'tacet', 'la') : null, rows ? h('div', { class: 'cues-tail' }, needsNote, rows, needsMore) : null);
 }
