@@ -7,7 +7,7 @@
  *   3. a thread triaged `blocking` turns the approval into a COMMENT review. Threads triaged worth-addressing do not block: they are pointed out
  *      (the verdict lists them; the review body carries them), and the approval stands.
  *
- * Callers: the Podium's approve (lib/drafts/post.ts), `teammate-review.ts submit` (so the reviewer hears about it while the draft is queued) and
+ * Callers: the Podium's approve route (the draft poster in lib/drafts), `teammate-review.ts submit` (so the reviewer hears about it while the draft is queued) and
  * `approve-pr.ts` (manual approvals). A thread is a bot thread when a bot started it (lib/github-bots.ts, plus any login naming Copilot); every
  * unresolved one counts, whoever spoke last. A thread a person started never matters here. An unreadable head or thread list refuses: the guard
  * fails closed. A backmerge (head branch `backmerge/...` or `back-merge-...`) is exempt from the thread rules, never from the head rule.
