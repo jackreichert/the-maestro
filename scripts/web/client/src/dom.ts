@@ -99,9 +99,9 @@ export const BASE_CSS = `
  * the narrow side column and on a phone.
  */
 export const UI_CSS = `
-  .board { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-7) var(--space-7); align-items: start; }
-  @media (min-width: 960px) { .board { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); } }
-  @media (min-width: 1280px) { .board { grid-template-columns: minmax(0, 1fr) 360px; } }
+  .board { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--row-gap) var(--col-gap); align-items: start; }
+  .board > * { grid-column: 1 / -1; }
+  @media (min-width: 1100px) { .board > :first-child { grid-column: span 8; } .board > :last-child:not(:first-child) { grid-column: span 4; } }
   .col { display: grid; gap: var(--space-6); min-width: 0; }
   @media (max-width: 480px) { .board { row-gap: var(--space-6); } .col { gap: var(--space-5); } }
   section { container-type: inline-size; min-width: 0; }

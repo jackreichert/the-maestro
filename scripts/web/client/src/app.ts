@@ -6,7 +6,7 @@ import './open-prs.ts';
 import './draft-queue.ts';
 import './scripts-view.ts';
 import { h, s, shadow } from './dom.ts';
-import { BOARD_CSS, section } from './stream-board.ts';
+import { BOARD_CSS } from './stream-board.ts';
 import { describeSources, loadCharts, loadCost, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadSeries, loadOpenPrs, loadOthersPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
@@ -31,7 +31,7 @@ import { CHROME_CSS, baton, masthead, pickerOpen, streamPicker } from './home-ch
 import { shouldPulse, startAmbience, sweepPlayhead } from './home-ambience.ts';
 import { streamScore, todayPanel } from './home-sections.ts';
 import { seriesClass } from './series.ts';
-import { streamVar } from './home-concept.ts';
+import { conceptSection, streamVar, tacet } from './home-concept.ts';
 import type { ProjectsLoad } from './home-tab.ts';
 import { chipId, filteredView } from './filter-view.ts';
 import { needsItems, needsSig } from './needs-items.ts';
@@ -95,20 +95,19 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .stream-title .tempo-line { margin-left: var(--space-2); }
 
   .badge { min-width: 20px; min-height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xs); line-height: 20px; font-weight: var(--weight-semibold); text-align: center; font-variant-numeric: tabular-nums; }
-  .lead-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 400px); gap: var(--space-6) var(--space-7); align-items: start; padding-bottom: var(--space-6); border-bottom: var(--hairline); margin-bottom: var(--space-7); }
+  .lead-grid { row-gap: var(--space-6); align-items: start; padding-bottom: var(--space-6); border-bottom: var(--hairline); margin-bottom: var(--space-7); }
   .lede { margin: var(--space-4) 0 0; max-width: 62ch; font-size: var(--text-lg); line-height: var(--leading-lg); color: var(--text-secondary); }
   .lede strong { color: var(--text-primary); font-weight: var(--weight-semibold); }
   .stream-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-3); }
   .stream-title h2 { margin: 0; display: inline-flex; align-items: center; gap: var(--space-3); font-size: var(--text-xl); font-weight: var(--weight-semibold); letter-spacing: -0.012em; }
   .stream-title .projects-line { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
-  .stream-page { display: grid; gap: var(--space-7); }
   .s1 { background: var(--series-1); } .s2 { background: var(--series-2); } .s3 { background: var(--series-3); } .s4 { background: var(--series-4); }
   .s5 { background: var(--series-5); } .s6 { background: var(--series-6); } .s7 { background: var(--series-7); } .s8 { background: var(--series-8); }
   .so { background: var(--series-other); }
   .stream-title .mark { width: 12px; height: 12px; border-radius: 3px; }
   /* Side by side, the priorities panel is one compact line per priority and takes the height it needs, top-aligned beside the headline. */
   @media (min-width: 901px) { .lead-grid > priority-list { align-self: start; } }
-  @media (max-width: 900px) { .lead-grid { grid-template-columns: minmax(0, 1fr); } }
+  @media (min-width: 1100px) { .lead-grid > :first-child { grid-column: span 8; } .lead-grid > :last-child { grid-column: span 4; } }
 
   @media (forced-colors: active) {
     [role=tab][aria-selected=true]::after { forced-color-adjust: none; background: Highlight; height: 4px; bottom: 0; }
@@ -596,7 +595,7 @@ export class PodiumApp extends HTMLElement {
       rule,
       buckets.asks.length ? h('p', { class: 'lede' }, 'The oldest ask has waited ', h('strong', {}, `${oldest} ${oldest === 1 ? 'day' : 'days'}`), stale ? `, and ${stale} ${stale === 1 ? 'is' : 'are'} past the 3 day mark` : '', '. ', oneWay ? `${oneWay} ${oneWay === 1 ? 'is a one-way door' : 'are one-way doors'}. ` : '', `${queued} ${queued === 1 ? 'task is' : 'tasks are'} queued behind your answers.`) : null);
     if (this.#filter) return lead;
-    return h('section', { class: 'lead-grid' }, lead, stream === null ? this.#priorities(st) : todayPanel(st.priorities.state === 'ok' ? st.priorities.items : [], this.#projects.state === 'ok' ? this.#projects.data : null, stream));
+    return h('section', { class: 'grid lead-grid' }, lead, stream === null ? this.#priorities(st) : todayPanel(st.priorities.state === 'ok' ? st.priorities.items : [], this.#projects.state === 'ok' ? this.#projects.data : null, stream));
   }
 
   /** The project names a stream's rows cover, as one mono line; empty until the projects payload has loaded or when it lists none. */
@@ -673,7 +672,7 @@ export class PodiumApp extends HTMLElement {
     board.home = this.#homes.get(stream) ?? null;
     if (board.live) void this.#loadHome(stream, board);
     const score = streamScore(st, this.#charts, stream);
-    return score ? h('div', { class: 'stream-page' }, score, board) : board;
+    return score ? h('div', { class: 'grid stream-page' }, score, board) : board;
   }
 
   /** Fetch the stream's home base and hand it to the board that asked; a board redrawn in the meantime is a different element and is left alone. */
@@ -741,8 +740,8 @@ export class PodiumApp extends HTMLElement {
     if (this.#sources.state === 'server') void this.#prs.load();   // each draw asks again, so the tab never shows older data than the cache holds
     const localList = h('local-review');
     localList.review = this.#local;   // the one copy of the queue, the same one Home's widget counts from
-    return h('div', {}, el, this.#replyDrafts(),
-      section({ title: 'Waiting for local review', n: queueSize(this.#local), tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
+    return tabPage(el, this.#replyDrafts(),
+      conceptSection('rehearsal', { instrument: 'Rehearsal', title: 'Waiting for local review', n: queueSize(this.#local) || null }, localList));
   }
 
   /** Drafts still waiting for a decision, for the tab's count. */
@@ -763,8 +762,7 @@ export class PodiumApp extends HTMLElement {
 
   /** Under the Open PRs table: drafted replies to other people's comments on your own PRs, one section per PR. Approve posts the reply as you; nothing posts before that. */
   #replyDrafts(): Node {
-    return h('section', { 'aria-label': 'Drafted replies' }, h('h2', { class: 'tab-title' }, 'Drafted replies'),
-      h('p', { class: 'section-hint' }, 'Replies drafted to people\'s comments on your PRs. Nothing is posted until you press Approve; Edit changes the wording first, Reject records why and posts nothing.'),
+    return conceptSection('replies', { instrument: 'Replies', title: 'Drafted replies', hint: 'Replies drafted to people\'s comments on your PRs. Nothing is posted until you press Approve; Edit changes the wording first, Reject records why and posts nothing.' },
       this.#draftQueue(['reply'], 'No replies are waiting for your approval.'));
   }
 
@@ -789,21 +787,24 @@ export class PodiumApp extends HTMLElement {
     const redraw = (): void => { if (!el.isConnected) { for (const off of stops.splice(0)) off(); return; } draw(); };
     stops.push(this.#others.subscribe(redraw), this.#drafts.subscribe(redraw));
     if (this.#sources.state === 'server') void this.#others.load();   // each draw asks again, so the tab never shows an older list than the cache holds
-    return h('div', {}, h('h2', { class: 'tab-title' }, 'Others\' PRs'),
-      h('p', { class: 'section-hint' }, 'Every open PR by a teammate, newest activity first. Where a review comment is drafted, it sits under the PR. Nothing is posted until you press Approve; Edit changes the wording first, Reject records why and posts nothing.'),
-      el);
+    return tabPage(conceptSection('others', { instrument: 'The orchestra', title: 'Others\' PRs', hint: 'Every open PR by a teammate, newest activity first. Where a review comment is drafted, it sits under the PR. Nothing is posted until you press Approve; Edit changes the wording first, Reject records why and posts nothing.' }, el));
   }
 
   /** The Scripts tab: the catalog of scripts the server can run. Sample data has no server to run them. */
   #scripts(): Node {
-    return h('div', {}, h('h2', { class: 'tab-title' }, 'Scripts'),
-      this.#sources.state === 'server' ? h('scripts-view') : h('p', { class: 'section-hint' }, 'Scripts run on the server, which this page is not connected to.'));
+    return tabPage(conceptSection('scripts', { instrument: 'Repertoire', title: 'Scripts' },
+      this.#sources.state === 'server' ? h('scripts-view') : tacet('Scripts run on the server, which this page is not connected to.', 'tacet')));
   }
 
   /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */
   #home(st: PodiumState): Node {
     return homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects, epics: this.#epics, cost: this.#cost, local: this.#local, needs: this.#needs(st), redraw: () => this.#redrawKeepingFocus() });
   }
+}
+
+/** A tab's body: the shared grid, each child a full-width section. */
+function tabPage(...children: Node[]): HTMLElement {
+  return h('div', { class: 'grid tab-page' }, ...children);
 }
 
 /**
