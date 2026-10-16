@@ -22,6 +22,7 @@ On every `MERGED` line, do all of these in the same turn (the rule is in [refere
 3. **Overlay sync.** If the merged repo is the-maestro itself, fast-forward the live checkout and sync the overlay branch (the overlay's sync script).
 4. **Ledger.** Close the row the PR was for. `node scripts/merge-sweep.ts --close-ledger` closes every row whose linked PRs have all merged (it leaves a row open while any linked PR is open); for a row that was never linked, `journal.ts done <id>`. Log a note carrying the repo and PR only when the merge has no row.
 5. **Stack ancestry.** If the merged PR was part of a stack, check that each fix pushed to the PRs above it reached the base: `git merge-base --is-ancestor <fix sha> origin/<base>` for each recorded head. A fix not in the base is a follow-up, not a merged one.
+6. **Review-miss harvest.** If the merged PR is the user's own, run `node scripts/review-harvest.ts harvest <owner>/<repo>#<n>` (read-only against GitHub; it skips a PR the user did not author and a second run adds nothing). Triage and the weekly note are the cheap runner's job: [playbooks/review-miss-harvest.md](../review-miss-harvest.md). Do not triage here.
 
 ## Do not
 

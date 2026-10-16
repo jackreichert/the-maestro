@@ -1,12 +1,13 @@
 # Playbook: merge-sweep standing pickup (for a cheap runner)
 
-You are the runner. The `merge-sweep` standing pickup is due. The sweep has three steps and each is its own command, so each can be allowed or refused on its own. Run them in order, copy the lists into your report, and never close a ledger row or delete a branch by any other route.
+You are the runner. The `merge-sweep` standing pickup is due. The sweep has four steps and each is its own command, so each can be allowed or refused on its own. Run them in order, copy the lists into your report, and never close a ledger row or delete a branch by any other route.
 
 | Step | Command | Writes | Reversible |
 |---|---|---|---|
 | 1. Read | `merge-sweep.ts --json` | nothing | n/a |
 | 2. Close ledger rows | `merge-sweep.ts --close-ledger` | appends `done` to local ledger rows whose linked PRs all merged | yes (the ledger is append-only and local) |
 | 3. Delete branches | `branch-sweep.ts --apply --ids ...` | deletes remote branches from a fresh listing | no, but each deletion prints a `restore` line first |
+| 4. Harvest review misses | `review-harvest.ts harvest --since <7 days ago>`, then [review-miss-harvest.md](review-miss-harvest.md) | the local harvest store, triage lines, and the weekly note | yes (local files; the note is never overwritten) |
 
 ## 1. Read
 
@@ -55,9 +56,20 @@ node scripts/branch-sweep.ts --apply --ids <id,id,...> --container <container_ro
 
 For each branch it prints `restore <id>: git -C <repo> push origin <sha>:refs/heads/<branch>` before deleting, then `ok` or `REFUSED` with a reason. It re-scans first and refuses a branch that moved, no longer qualifies, has an open PR, or whose PRs it could not read. Copy every `restore` line into your report. Never pass an id from an older listing or one you made up. If the command is refused by a permission prompt or a classifier, report that and stop: do not try another way to delete.
 
-## 4. Report back
+## 4. Harvest review misses
 
-Report at most 14 lines, then stop:
+Merged PRs carry what reviewers found that the author missed; this step reads it, whether or not step 2 closed a row. It is read-only against GitHub and idempotent, so it is safe to run every sweep:
+
+```bash
+node scripts/review-harvest.ts harvest --since <7 days ago, YYYY-MM-DD>
+node scripts/review-harvest.ts pending --json
+```
+
+If anything is pending, follow [review-miss-harvest.md](review-miss-harvest.md) to triage it, and when nothing is pending and this week has no note yet, write it with `batch --write`. If the harvest exits 2, report its line and carry on. Never edit a mithril skill: candidates stay proposals in the note.
+
+## 5. Report back
+
+Report at most 15 lines, then stop:
 
 1. `merge-sweep: <clean | N actions | BLIND>`, the step 1 exit code, and `closedCount`
 2. one line per row in `autoClosed`: `<id> -> closed by --close-ledger`
@@ -66,8 +78,9 @@ Report at most 14 lines, then stop:
 5. one line per unknown row: `<id> -> could not read, not merged`
 6. one line per closed-without-merging row: `<id> -> closed unmerged, not closed`
 7. one line per deleted branch: its `restore` line; one line per `REFUSED`: `<id> -> <reason>`
+8. `harvest: <N> new findings, <M> pending, note <path or none>`
 
-Do not paraphrase `MERGED`, `OPEN`, `CLOSED`, or `UNKNOWN`. If a list has more rows than fit, end with `+N more`. Do not paste raw JSON, `gh` stderr, or logs. If `actions` is 0, nothing was closed and nothing was deleted, the whole report is `merge-sweep: clean`.
+Do not paraphrase `MERGED`, `OPEN`, `CLOSED`, or `UNKNOWN`. If a list has more rows than fit, end with `+N more`. Do not paste raw JSON, `gh` stderr, or logs. If `actions` is 0, nothing was closed and nothing was deleted, the whole report is `merge-sweep: clean` plus the harvest line.
 
 ## Hard rules
 
