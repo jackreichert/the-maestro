@@ -35,6 +35,7 @@ import { toolCommand } from './lib/tool-bin.ts';
 import { refreshOthers } from './lib/teammate/others.ts';
 import { draftsPath } from './lib/drafts/queue.ts';
 import { reconcileFailedReviews } from './lib/drafts/reconcile.ts';
+import { settleStaleDrafts } from './lib/drafts/settle.ts';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 
@@ -117,6 +118,8 @@ export function regenerate(o: RegenerateOptions): GenerateResult {
     if (others.failure) console.error(`status-page: teammate PR list not refreshed (${others.failure}); the Others' PRs tab keeps the last list`);
     // A failed review draft whose PR you already reviewed by hand is settled here, on the rebuild's cadence, so reading the queue never calls GitHub. A GitHub failure leaves the draft as it was.
     try { reconcileFailedReviews(draftsPath(o.ledger, o.project), GH_LOGIN); } catch (e) { console.error(`status-page: failed review drafts not reconciled (${(e as Error).message.split('\n')[0]})`); }
+    // Queued review drafts on a PR that is merged, closed, approved or picked up by another reviewer are rejected with the reason (the same rule that drops the PR from the tab), so they are never posted later.
+    try { for (const d of settleStaleDrafts(draftsPath(o.ledger, o.project), GH_LOGIN)) console.error(`status-page: rejected the draft on ${d.repo}#${d.pr} (${d.reason})`); } catch (e) { console.error(`status-page: stale review drafts not settled (${(e as Error).message.split('\n')[0]})`); }
   }
   return result;
 }
