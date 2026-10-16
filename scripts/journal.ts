@@ -75,6 +75,8 @@
  *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
  *   journal.ts shared <path-or-url> --project <p> --title "<t>" [--why "<one line>"] --model ... --used ...
  *                                             records a document the user handed over so its project tab lists it; only the title and place are stored, a path must sit under the vault or container root, secret-shaped names and links are refused (`shared --help`)
+ *   journal.ts script add --kind one-time|reusable --title "<t>" --what "<what it does>" --why "<why we need it>" --after "<what happens after>" --blocks <id> [--blocked-by "<agent: task>"] -- <command>
+ *                                             register a command only the user can run: a Scripts-tab entry plus a Needs-you run-this ask that links to it; `script list [--all] [--json]`, `script ran <id> [--result done|failed]` (`script --help`)
  *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json] [--no-miss]
  *                                             library pages, best first: path, kind, read-when line, verified-at age, stale flag; --neighbors adds the pages one link away.
  *                                             Reads the library under --tickets-vault (else $VAULT_ROOT) through ledger-index.ts, which rebuilds its index when a page changed.
@@ -189,6 +191,7 @@ import { parseLearned, relearn } from './lib/journal/learned.ts';
 import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
 import { missingRetros, noRetroRefusals, parseAgentRetro, pendingRetros, retroGate, reviewRefusals, seenRetro } from './lib/journal/agent-retro.ts';
 import { parseShared, alreadyShared, SHARED_USAGE } from './lib/journal/shared.ts';
+import { runScript } from './lib/scripts/cli.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import { splitInflight, staleRollLines } from './lib/journal/stale-wip.ts';
@@ -926,6 +929,17 @@ function cmdShared(): void {
     append(entry);
     if (!dryRun) render(true);
     console.log(`shared  ${entry.id}  ${entry.text}`);
+}
+
+/** `script add|list|ran`: commands only the user can run, each with what it does and why (lib/scripts/cli.ts). `ran ... done` resolves the script's ask. */
+function cmdScript(): void {
+    const code = runScript({
+        store, vault, project, argv, arg, has, positional, stream: () => streamOrNone(arg('stream')), usage: () => ({ ...usageFromArgs() }), today, now: () => new Date(), dryRun,
+        close: (askId, note) => closeItem({ readLedger, append, newId, fold, today, now }, { kind: 'resolved', needle: askId, note, skipIfClosed: true, extras: () => usageFromArgs() }).kind,
+        out: (l) => console.log(l), err: (l) => console.error(l),
+    });
+    if (!dryRun && code === 0 && positional[0] !== 'list') render(true);
+    process.exitCode = code;
 }
 
 /** The one id an argument names: a single bare token (no --text) that is the id of an existing item, else undefined. */
@@ -2970,6 +2984,7 @@ switch (cmd) {
     case 'agent-retros': cmdAgentRetros(); break;
     case 'retro-reviewed': cmdRetroReviewed(); break;
     case 'shared': cmdShared(); break;
+    case 'script': cmdScript(); break;
     case 'find': cmdFind(); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;

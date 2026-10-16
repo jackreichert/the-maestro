@@ -2,6 +2,7 @@
 import { ASK_USAGE, CLASSES, DOORS } from './ask-fields.ts';
 import { CONFIDENCES, LEARNED_KINDS, LEARNED_USAGE } from './learned.ts';
 import { SHARED_USAGE } from './shared.ts';
+import { SCRIPT_USAGE } from '../scripts/cli.ts';
 import { MISS_SOURCES } from './miss.ts';
 import { LESSON_MAX, LESSONS_MAX, RETRO_SOURCES } from './agent-retro.ts';
 import { QUERY_STATUSES } from './query.ts';
@@ -62,6 +63,10 @@ export const COMMANDS: CommandHelp[] = [
         [`--confidence ${oneOf(CONFIDENCES)}`, 'required'], ['--supersedes <id|path>', 'an earlier learned id or page path'], ...MARK], notes: LEARNED_USAGE },
     { name: 'shared', args: '<path-or-url>', summary: 'Record a document the user handed over, so its project tab lists it.', flags: [
         ['--project <name>', 'required: the project whose tab lists it'], ['--title "<what it is>"', 'required'], ['--why "<one line>"', 'why it was shared'], ['--by <name>', 'who handed it over'], ['--repo <name>', 'repo'], ['--stream <name>', 'workstream'], DATE, ...MARK], notes: SHARED_USAGE },
+    { name: 'script', args: 'add|list|ran', summary: 'Register a command only the user can run (what it does, why we need it), raise a Needs-you ask that links to it, list them, or record a run.', flags: [
+        ['--kind one-time|reusable', 'add: required; a one-time script leaves the active list once run, a reusable one stays'], ['--title "<t>"', 'add: required'], ['--what "<what it does>"', 'add: required, one line'], ['--why "<why we need it>"', 'add: required, the work it unblocks'],
+        ['--after "<what happens after>"', 'add: required'], ['--blocks <id>', 'add: required, the ledger or ticket id of the blocked work'], ['--blocked-by "<agent: task>"', 'add: who hit the wall'], ['--stream <name>', 'add: workstream of the ask'],
+        ['--command "<text>" | --command-file <path>', 'add: the command, instead of words after `--`'], ['--all', 'list: include History'], JSON_OUT, ['--result done|failed', 'ran: default done'], ...MARK], notes: SCRIPT_USAGE },
     { name: 'miss', args: '"<question>"', summary: 'Record a question the library could not answer, for the composer.', flags: [[`--source ${oneOf(MISS_SOURCES)}`, 'where the question came from (required)'], ['--repo <name>', 'repo'], ...MARK] },
     { name: 'misses', args: '', summary: 'List the open misses grouped by topic.', flags: [JSON_OUT] },
     { name: 'agent-retro', args: '<item id>', summary: 'Record what an agent learned on one item, before it is closed.', flags: [
