@@ -516,13 +516,14 @@ A done item that carries a tracker key (any match of `tracker_key_pattern`, in i
 
 ### On every merge
 
-When a `pr-merged` watch reports `MERGED` (or you learn of a merge any other way), the orchestrator does all five of these in the same turn, not at end of day. The `pr-merged` ACTION line already names the repo and PR and the tracker keys found in the title and branch ([playbooks/event-types/pr-merged.md](../playbooks/event-types/pr-merged.md)).
+When a `pr-merged` watch reports `MERGED` (or you learn of a merge any other way), the orchestrator does all six of these in the same turn, not at end of day. The `pr-merged` ACTION line already names the repo and PR and the tracker keys found in the title and branch ([playbooks/event-types/pr-merged.md](../playbooks/event-types/pr-merged.md)).
 
 1. **Scoped sweep.** `node scripts/branch-sweep.ts --apply-worktrees --container <container_root> --repo <repo>`. It touches only that repo, and the same guards decide: a worktree that is not idle, is claimed or has uncommitted work stays and is listed.
 2. **Tickets.** Transition each key per the overlay's tracker rules (what a merge into each branch means), then record it: `journal.ts log "moved <KEY> to <status>" --transitioned <KEY>[,<KEY>]`. A merge with no key is worth a line saying so.
 3. **Overlay sync.** If the merged repo is the-maestro itself, fast-forward the live checkout and sync the overlay branch with the overlay's sync script.
 4. **Ledger.** Close the row the PR was for, not just a note about it. A row linked at PR open (`pr-open.ts` writes the link) closes itself: run `node scripts/merge-sweep.ts --close`, which appends `done` once every PR on the row has merged and leaves the row open while any linked PR is still open. If the row was never linked, close it by hand with `journal.ts done <id>`. Then log a note carrying the repo and PR only if the merge has no row.
 5. **Stack ancestry.** If the merged PR was part of a stack, check that each fix pushed to the PRs above it reached the base branch: `git merge-base --is-ancestor <fix sha> origin/<base>` for each recorded head ([reference/prs.md](prs.md#re-review-before-ready)). A fix not in the base is a follow-up, not a merged one.
+6. **Review-miss harvest.** If the merged PR is the user's own, `node scripts/review-harvest.ts harvest <owner>/<repo>#<n>` records what reviewers found that the author's review missed (twins and repeat passes collapse; planning misses, such as prior art in `core`, are kept apart from mithril misses). Read-only against GitHub and idempotent. Triage and the weekly note follow [playbooks/review-miss-harvest.md](../playbooks/review-miss-harvest.md).
 
 ## Reading it back
 
