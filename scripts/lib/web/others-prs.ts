@@ -10,6 +10,7 @@ import type { Guard } from '../teammate/wait.ts';
 import type { OtherPr } from '../teammate/others.ts';
 import { isGuard, NO_GUARD } from '../teammate/wait.ts';
 import { isSelfReview } from '../self-review.ts';
+import { isFormerTeammate } from '../teammate/former.ts';
 import { PR_STALE_MS } from './state.ts';
 import type { OthersPrRow, OthersPrsData } from '../../web/client/src/types.ts';
 
@@ -17,6 +18,8 @@ const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
 export interface OthersScopeOptions { statusDir: string; owners: readonly string[]; selfRepos: readonly string[]; self: string; guard?: Guard;
+  /** Logins of people who have left (`former_teammates`): a PR by one leaves the tab whatever the cache holds. */
+  former?: readonly string[];
   /** A PR opened less than this many hours ago is never stale or dropped. Absent (with `activeHours`) means no staleness gate. */
   openHours?: number;
   /** A PR opened longer ago is active only with activity in the last this many hours; otherwise it is stale. */
@@ -105,7 +108,7 @@ export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData 
   const slack = slackActivity(o.slackDir);
   const gate: Gate = { open: o.openHours === undefined ? null : o.openHours * HOUR_MS, active: o.activeHours === undefined ? null : o.activeHours * HOUR_MS, drop: o.dropDays === undefined ? null : o.dropDays * DAY_MS };
   const kept = (cache?.prs ?? [])
-    .filter((p) => p.author.toLowerCase() !== self && owners.has((p.repo.split('/')[0] ?? '').toLowerCase()) && !isSelfReview(p.repo, o.selfRepos))
+    .filter((p) => p.author.toLowerCase() !== self && owners.has((p.repo.split('/')[0] ?? '').toLowerCase()) && !isSelfReview(p.repo, o.selfRepos) && !isFormerTeammate(p.author, o.former))
     .filter((p) => !dropped(p, slack, now, gate))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const fetchedAt = cache?.fetchedAt ?? null;

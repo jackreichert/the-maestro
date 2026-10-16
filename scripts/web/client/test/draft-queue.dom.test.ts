@@ -140,3 +140,11 @@ test('each card names whose PR it is beside repo#number: the draft\'s author, or
   assert.equal(fb.root.querySelectorAll('section.pr h3')[1]?.textContent, 'acme/widgets#8 by list-author');
   fb.cleanup();
 });
+
+test('a plain approving review with no inline comments still shows Approve, Edit and Reject', async () => {
+  const d = row({ severity: 'review', review: { event: 'APPROVE', compliment: 'Tidy change.', comments: [] }, where: undefined });
+  const { root, cleanup } = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([d]), actions: noop, sources: ['review'] });
+  assert.match(root.textContent ?? '', /Review: approve/);
+  assert.deepEqual([...root.querySelectorAll('button')].map((b) => b.textContent), ['Approve', 'Edit', 'Reject']);
+  cleanup();
+});

@@ -127,3 +127,8 @@ test('checks, conflicts, block labels and a review the author has not pushed aft
   assert.deepEqual([by(1)?.ci, by(1)?.conflicting, by(2)?.block, by(2)?.ci, by(3)?.block], ['fail', true, 'release', 'pending', 'blocked']);
   assert.deepEqual([4, 5, 6].map((n) => by(n)?.awaitingAuthor === true), [true, false, false]);
 });
+
+test('a former teammate\'s PRs are filtered on read too, even when the cache holds them and they are recent', () => {
+  const out = buildOthersPrs({ ...opts(cacheWith([pr(1), pr(2, { author: 'Gone-Fake' }), pr(3, { author: 'gone-fake', requested: ['me-fake'] })])), former: ['gone-fake'] }, NOW);
+  assert.deepEqual(out.prs.map((p) => p.number), [1]);
+});
