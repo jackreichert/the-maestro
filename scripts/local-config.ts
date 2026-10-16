@@ -516,8 +516,8 @@ export const HANDS_OFF_OWNER = pick('MAESTRO_HANDS_OFF_OWNER', 'hands_off_owner'
 
 /** Others' PRs tab: a PR whose latest Slack activity (a post with its link or a reply under it; its own opening time when never posted) is more than this many days old goes to the Stale sub-tab. Default 2. */
 export const OTHERS_PRS_MAX_AGE_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_MAX_AGE_DAYS', 'others_prs_max_age_days'), 2);
-/** Days since a teammate PR's latest ask after which it leaves the Others' PRs tab entirely (Stale included). Keep it above `others_prs_max_age_days`. */
-export const OTHERS_PRS_DROP_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_DROP_DAYS', 'others_prs_drop_days'), 3);
+/** Days since a teammate PR's latest ask after which it leaves the Others' PRs tab entirely (Stale included). Never below `others_prs_max_age_days`, so Stale is never skipped. */
+export const OTHERS_PRS_DROP_DAYS = Math.max(positiveInt(pick('MAESTRO_OTHERS_PRS_DROP_DAYS', 'others_prs_drop_days'), 3), OTHERS_PRS_MAX_AGE_DAYS);
 /** Names that count as an @-mention of you in the Slack notes (comma-separated, no `@`). A PR whose thread mentions one never goes stale. Default none. */
 export const OTHERS_PRS_MENTION_NAMES = globList('MAESTRO_OTHERS_PRS_MENTION_NAMES', 'others_prs_mention_names');
 
