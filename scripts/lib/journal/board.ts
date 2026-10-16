@@ -153,7 +153,9 @@ export const FOOTER_STALE_DAYS = DEFAULT_STALE_WIP_DAYS;
 /** What the footer needs to tell a live in-flight row from a forgotten one: the day it is read on, and the ids that hold a live lease. */
 export interface FooterLiveness { today: string; leased: ReadonlySet<string>; /** Days in flight, with no live lease, after which a row counts as stale; `FOOTER_STALE_DAYS` when absent (`stale_wip_days`). */ staleDays?: number;
     /** Newest day of any row that touched each id (`touchDates`); a row touched within `staleDays` is not stale however old its opening row is. */
-    touched?: ReadonlyMap<string, string> }
+    touched?: ReadonlyMap<string, string>;
+    /** Words for the day the done count is of: `done today` (default) or `done on 2026-10-01` when the caller asked for another day. */
+    doneLabel?: string }
 
 /** The in-flight items nothing is known to be working on: untouched for `staleDays` (see `lastTouchOf`) and holding no live lease. The footer counts them and `status --json` lists them. */
 export const staleInflight = (inflight: LedgerItem[], live: FooterLiveness): LedgerItem[] =>
@@ -174,11 +176,11 @@ export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | '
     return rows;
 }
 
-const footerLine = (r: FooterRow, staleDays = FOOTER_STALE_DAYS): string =>
-    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today${r.sinceRoll !== undefined ? ` · ${r.sinceRoll} since last roll` : ''} · ${r.inflight} in flight${r.stale ? ` · ${r.stale} stale (${staleDays}d+, no lease)` : ''}${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
+const footerLine = (r: FooterRow, staleDays = FOOTER_STALE_DAYS, doneLabel = 'done today'): string =>
+    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} ${doneLabel}${r.sinceRoll !== undefined ? ` · ${r.sinceRoll} since last roll` : ''} · ${r.inflight} in flight${r.stale ? ` · ${r.stale} stale (${staleDays}d+, no lease)` : ''}${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
 
 /** The reply-footer Ledger lines, one per `footerRows` row. `sinceRoll` is shown only when the caller passes that day's post-roll slice. */
-export const footerLines = (g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[], live?: FooterLiveness): string[] => footerRows(g, done, sinceRoll, live).map((r) => footerLine(r, live?.staleDays));
+export const footerLines = (g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[], live?: FooterLiveness): string[] => footerRows(g, done, sinceRoll, live).map((r) => footerLine(r, live?.staleDays, live?.doneLabel));
 
 export function standupText(ctx: BoardContext, d: string): string {
     const { has } = ctx;

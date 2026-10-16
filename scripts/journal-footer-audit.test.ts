@@ -19,7 +19,8 @@ function world() {
     const line = (env: Record<string, string> = {}) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--line', '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000', MAESTRO_CLAUDE_SETTINGS: '/nonexistent', CLAUDE_CODE_SESSION_ID: '', ...env },
     }).stdout.trim();
-    return { line };
+    const dated = (day: string) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--line', '--date', day, '--vault', vault, '--project', 'test-proj'], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CLAUDE_SETTINGS: '/nonexistent', CLAUDE_CODE_SESSION_ID: '' } }).stdout.trim();
+    return { line, dated };
 }
 
 test('the footer measures the session Claude Code names for this window, not whichever transcript was written last', () => {
@@ -36,4 +37,11 @@ test('a session id that names no transcript here falls back to the newest, label
 
 test('the one-line footer says its done count is today\'s', () => {
     assert.match(world().line(), /^Ledger: 0 done today · /);
+});
+
+test('a footer of another day says which day its done count is of', () => {
+    const { line, dated } = world();
+    assert.match(line(), /\d+ done today/);
+    assert.match(dated('2026-10-01'), /0 done on 2026-10-01/);
+    assert.doesNotMatch(dated('2026-10-01'), /done today/);
 });

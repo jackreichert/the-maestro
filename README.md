@@ -908,10 +908,10 @@ GraphQL charges by the connections a query asks for, so the costly reads are kep
 
 | Field | Source | Freshness |
 |---|---|---|
-| `N done today` | `done` rows closed on the local day (`watch_tz`) | read live from the ledger |
-| `N in flight`, `stale`, `queued`, `awaiting`, `to run`, `blocked` | the ledger fold; `stale` is in flight 14 days with no live lease | read live; a row nobody opened with `start` is not counted (see the drift check) |
+| `N done today` | `done` rows closed on the local day (`watch_tz`); with `--date <day>` it reads `N done on <day>` | read live from the ledger |
+| `N in flight`, `stale`, `queued`, `awaiting`, `to run`, `blocked` | the ledger fold; `stale` is in flight `stale_wip_days` days (3 by default) with no live lease | read live; a row nobody opened with `start` is not counted (see the drift check) |
 | `Review queue` | the stored PR board (`prs-current.json`, else `prs-snapshot.json`, whichever was taken later) | under 10 minutes old: shown; 10 to 30: shown with `(snapshot Nm old)`; older: replaced by a live read, or `unknown` when that fails, never the old number. Over the cap it reads `11 waiting on reviewers, cap 4 (7 over)` |
-| `Loop` | the loop's heartbeat file | age printed; `STALLED`, `DOWN` or `NOT INSTALLED` when it is old or absent |
+| `Loop` | the loop's heartbeat file | age printed; `STALLED` or `DOWN` when it is old or absent; `NOT INSTALLED` only with `loop_supervisor: required` |
 | `Window`, `Leases` | the window id and the lease rows | read live; `Window` appears only when the session is pinned |
 | `Session` turns, context, read per turn | the session transcript: the one named by `--session`, `--stdin`, or the `CLAUDE_CODE_SESSION_ID` Claude Code exports into every Bash call; otherwise the newest transcript, which may be another window's, and the line says `(newest transcript)` | measured when the footer runs; `N turns since compact (M before)` counts assistant responses since the last compaction marker |
 

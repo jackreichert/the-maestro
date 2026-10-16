@@ -156,7 +156,8 @@ export const FOOTER_REFRESH_MS = 30 * 60_000;
 export function footerQueue(stored: { prs: readonly QueuePr[]; takenAt?: string } | null, cap: number, now: Date, selfReview: readonly string[], refresh: () => { prs: readonly QueuePr[] }, owners: readonly string[] = []): string | null {
   if (!stored) return null;
   const ageMs = stored.takenAt ? now.getTime() - Date.parse(stored.takenAt) : Number.NaN;
-  if (ageMs < FOOTER_REFRESH_MS) return boardQueue(stored, cap, now, selfReview, owners)?.footer ?? null;
+  // A snapshot dated in the future (clock skew) is not fresh: its age is unknown, so it takes the live read.
+  if (ageMs >= 0 && ageMs < FOOTER_REFRESH_MS) return boardQueue(stored, cap, now, selfReview, owners)?.footer ?? null;
   try {
     const q = reviewQueue(refresh().prs, cap, selfReview, owners);
     return `**Review queue:** ${queueCount(q)}`;

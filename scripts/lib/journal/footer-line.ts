@@ -9,6 +9,8 @@ export interface FooterLineParts {
     /** The `Loop:` line, with its markup; empty when no loop is set up. */
     loop?: string;
     session: SessionStatus;
+    /** `done today` (default) or `done on <day>` when the footer is of another day. */
+    doneLabel?: string;
     /** The orchestrator window this footer is for (lib/window-id.ts); left out when absent. */
     window?: string;
     /** `Leases: 2 mine, 1 other` (live leases on open items); left out when absent. */
@@ -22,10 +24,10 @@ const plain = (s: string): string => s.replace(/\*\*/g, '').trim();
  * the loop, the window and the session, joined by ` | `. Parts that are empty are left out. Pure: the numbers are the ones `footerRows`
  * and `sessionStatus` already computed, so it cannot disagree with the multi-line footer.
  */
-export function footerOneLine({ rows, queue, loop, session, window, leases }: FooterLineParts): string {
+export function footerOneLine({ rows, queue, loop, session, window, leases, doneLabel = 'done today' }: FooterLineParts): string {
     const sum = (pick: (r: FooterRow) => number): number => rows.reduce((n, r) => n + pick(r), 0);
     const ledger = [
-        `${sum((r) => r.done)} done today`,
+        `${sum((r) => r.done)} ${doneLabel}`,
         `${sum((r) => r.inflight)} in flight`,
         ...(sum((r) => r.stale ?? 0) ? [`${sum((r) => r.stale ?? 0)} stale`] : []),
         ...(sum((r) => r.queued) ? [`${sum((r) => r.queued)} queued`] : []),

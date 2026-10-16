@@ -1407,7 +1407,7 @@ function cmdStatus() {
         return;
     }
 
-    const live = { today: ledgerDay(), leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched };
+    const live = { today: ledgerDay(), leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched, doneLabel: explicit === null ? undefined : `done on ${d}` };
     const queueFooter = has('footer') ? footerReviewQueue() ?? undefined : boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
     if (has('footer')) {
@@ -1418,7 +1418,7 @@ function cmdStatus() {
         // The window is named only when the session is pinned (--session, or a status line's stdin): the newest transcript may belong to
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
-        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window) })); return; }
+        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window), doneLabel: live.doneLabel })); return; }
         [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, ledgerDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...[githubFooter(EVENT_DIR, Date.now(), WATCH_TZ)].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }

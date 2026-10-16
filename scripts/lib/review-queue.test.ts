@@ -237,3 +237,9 @@ test('the push gate reads the same split: a live fetch of 18 PRs where 11 wait o
   assert.equal(queueText(r)[0], 'review queue: 11 waiting on reviewers, cap 4 (7 over) \u00b7 7 waiting on you (live)');
   assert.equal(queueExitCode(r), 1);
 });
+
+test('footerQueue treats a snapshot dated in the future as stale and reads live', () => {
+  const now = new Date('2026-01-01T12:00:00Z');
+  const future = { prs: prs(false), takenAt: '2026-01-02T12:00:00Z' };
+  assert.equal(footerQueue(future, 4, now, [], () => ({ prs: prs(false, false, false) })), '**Review queue:** 3 of 4 waiting on reviewers');
+});
