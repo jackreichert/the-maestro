@@ -252,6 +252,21 @@ test('a waiting draft outside the open sub-tab is announced with a jump to it', 
   cleanup();
 });
 
+test('a draft on a PR the tab no longer lists is announced at the top, with a jump to it, not left at the foot of the page', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1)]), loaded: true }, drafts: drafts([draft(9), draft(10)]) });
+  const note = root.querySelector('[data-note="orphan-drafts"]');
+  assert.match(note?.textContent ?? '', /2 drafted reviews wait on PRs the tab does not list/);
+  assert.ok(note?.querySelector('button'));
+  assert.ok(root.querySelector('h3.orphans'));
+  cleanup();
+});
+
+test('no orphan-drafts note when every waiting draft sits on a listed PR', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1)]), loaded: true }, drafts: drafts([draft(1)]) });
+  assert.equal(root.querySelector('[data-note="orphan-drafts"]'), null);
+  cleanup();
+});
+
 test('focusDraft opens the sub-tab that holds that draft, once', async () => {
   const { root, cleanup } = await mount<El & { focusDraft: string | null }>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1), pr(2)]), loaded: true }, drafts: drafts([draft(1)]), focusDraft: 'dr-00000001' });
   assert.equal(root.querySelector('button.tab[aria-selected="true"]')?.getAttribute('data-tab'), 'in-review');
