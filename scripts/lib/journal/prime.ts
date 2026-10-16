@@ -3,6 +3,7 @@ import { BOX, classify, gateStatus } from '../boxes.ts';
 import { approvalMap } from './approvals.ts';
 import { activeStreams } from './board.ts';
 import { clip } from './format.ts';
+import { isInFlight } from '../ledger-core.ts';
 import type { LedgerItem, LedgerRow } from '../ledger-core.ts';
 import type { Args } from './args.ts';
 import type { BoardContext, Groups } from './board.ts';
@@ -81,7 +82,7 @@ export function primeLines(ctx: PrimeContext): string[] {
     const approvals = approvalMap(readLedger());
     const asks = g.awaiting.filter((i) => classify(i, approvals.get(i.id ?? '')) !== BOX.PASTE);
     const paste = [...g.paste, ...g.awaiting.filter((i) => classify(i, approvals.get(i.id ?? '')) === BOX.PASTE)];
-    const label = (i: LedgerItem): string => `${i.id} ${clip(i.text, 90)}${i.paste ? ` [block: ${clip(i.paste, 120)}]` : ''}${i.gate ? ` [gate: ${clip(i.gate, 80)}]` : ''}${i.stream ? ` (${clip(i.stream, 40)})` : ''}`;
+    const label = (i: LedgerItem): string => `${i.id} ${clip(i.text, 90)}${i.paste ? ` [block: ${clip(i.paste, 120)}]` : ''}${i.brief && isInFlight(i) ? ` [brief: ${clip(i.brief, 110)}]` : ''}${i.gate ? ` [gate: ${clip(i.gate, 80)}]` : ''}${i.stream ? ` (${clip(i.stream, 40)})` : ''}`;
     const sections = [
         { title: 'Needs Jack', items: asks },
         { title: 'Paste blocks for Jack', items: paste },
