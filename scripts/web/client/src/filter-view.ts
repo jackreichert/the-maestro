@@ -60,7 +60,7 @@ function asksAndItems(asks: Node | null, items: Node | null): Node | null {
   return both;
 }
 
-/** Every item in one bucket, uncapped, under its own heading, with a way back to the whole board. */
+/** Every item in one bucket (asks are paged), under its own heading, with a way back to the whole board. */
 export function filteredView(buckets: Buckets, key: CueKey, label: string, o: FilterOptions): Node {
   const spec = FILTER_SECTIONS[key];
   const extra = key === 'asks' ? o.extra ?? [] : [];
@@ -70,7 +70,7 @@ export function filteredView(buckets: Buckets, key: CueKey, label: string, o: Fi
   const shownExtra = picked ? extra.filter((x) => x.stream === picked) : extra;
   const chips = key === 'asks' && o.setStream ? streamChips(everything) : [];
   const body = key === 'asks'
-    ? asksAndItems(askCards(items as Buckets['asks'], o.live, o.ctx.showStream)?.list ?? null, needsRows(shownExtra, o.ctx.showStream))
+    ? asksAndItems(askCards(items as Buckets['asks'], o.live, o.ctx.showStream, 'filter-asks')?.block ?? null, needsRows(shownExtra, o.ctx.showStream))
     : key === 'blocked' ? withComments(itemRows(buckets.blocked, o.ctx), buckets.blocked, o.live)
     : itemRows(items as Parameters<typeof itemRows>[0], o.ctx);
   const clear = h('button', { type: 'button', class: 'more', id: CLEAR_FILTER_ID }, 'Show everything');

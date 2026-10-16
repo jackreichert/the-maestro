@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sanitizeHome } from '../src/contract.ts';
-import { awaitingLabel, firstSentence, kindWord, railCount, railGroups, barSegments, capRows, clearAgainstHome, clearLine, epicEnd, leftGroups, leftHeading, noEpicLine, openCounts, progressSentence, quietNote, ticketNotes, verifiedSentence, sharedFacts, sharedHeading, sharedKindWord } from '../src/home-text.ts';
+import { awaitingLabel, firstSentence, kindWord, railCount, railGroups, barSegments, clearAgainstHome, clearLine, epicEnd, leftGroups, leftHeading, noEpicLine, openCounts, progressSentence, quietNote, ticketNotes, verifiedSentence, sharedFacts, sharedHeading, sharedKindWord } from '../src/home-text.ts';
 import { home } from './home-fixture.ts';
 
 test('the progress sentence always states its denominator, for every epic shape', () => {
@@ -68,12 +68,6 @@ test('what is left adds loose tickets to Not started once, and the heading says 
   const dup = { ...h, loose: [h.left.notStarted[0]!] };
   assert.equal(leftGroups(dup).notStarted.length, 1);
   assert.equal(leftHeading({ ...g, truncated: 4 }, []), "What's left (7)");
-});
-
-test('capRows shows the first five and hands back the rest', () => {
-  const { shown, rest } = capRows([1, 2, 3, 4, 5, 6, 7]);
-  assert.deepEqual([shown.length, rest.length], [5, 2]);
-  assert.deepEqual(capRows([1, 2]).rest, []);
 });
 
 test('the no-epic line teaches how to get progress, or says why the vault was not read', () => {

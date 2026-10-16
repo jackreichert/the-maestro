@@ -3,8 +3,6 @@ import type { EpicLine, HomeEpic, HomeTicket, RailGroup, RailLink, SharedDoc, St
 
 /** An epic or ticket this many days without a change is called quiet, as a fact about its note. */
 export const QUIET_DAYS = 14;
-/** How many rows a long group shows before its "Show all". */
-export const ROW_CAP = 5;
 
 const plural = (n: number, one: string, many = `${one}s`): string => (n === 1 ? one : many);
 
@@ -68,11 +66,6 @@ export function leftHeading(g: LeftGroups, epics: Pick<HomeEpic, 'total'>[]): st
   const total = epics.reduce((n, e) => n + e.total, 0);
   const open = g.shown + g.truncated;
   return total >= open && epics.length > 0 ? `What's left (${open} of ${total})` : `What's left (${open})`;
-}
-
-/** The first `cap` rows, and how many are behind "Show all". */
-export function capRows<T>(rows: T[], cap = ROW_CAP): { shown: T[]; rest: T[] } {
-  return { shown: rows.slice(0, cap), rest: rows.slice(cap) };
 }
 
 /** A section that has nothing in it, named for the Clear line ("nothing blocked"). */
