@@ -184,3 +184,34 @@ test('a review draft made before summaries still renders, and says no summary wa
   assert.deepEqual([...root.querySelectorAll('button')].map((b) => b.textContent), ['Approve', 'Edit', 'Reject']);
   cleanup();
 });
+
+test('an approving review also offers "Post as comment", which calls approveAsComment; a request-changes review and a plain comment do not', async () => {
+  const calls: string[] = [];
+  const actions: DraftActions = { ...noop, approveAsComment: (id) => calls.push(`comment ${id}`) };
+  const ok = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([summarised()]), actions, sources: ['review'] });
+  assert.deepEqual([...ok.root.querySelectorAll('button')].map((b) => b.textContent), ['Approve', 'Edit', 'Post as comment', 'Reject']);
+  (ok.root.querySelector('button[aria-label^="Post review of"]') as HTMLButtonElement).click();
+  assert.deepEqual(calls, ['comment dr-0000000a']);
+  ok.cleanup();
+  const blocks = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([summarised({ review: { ...(summarised().review as NonNullable<DraftRow['review']>), event: 'REQUEST_CHANGES' } })]), actions, sources: ['review'] });
+  assert.ok(![...blocks.root.querySelectorAll('button')].some((b) => b.textContent === 'Post as comment'));
+  blocks.cleanup();
+  const plain = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([row()]), actions, sources: ['review'] });
+  assert.ok(![...plain.root.querySelectorAll('button')].some((b) => b.textContent === 'Post as comment'));
+  plain.cleanup();
+});
+
+test('every waiting card links "Open on GitHub" to its PR', async () => {
+  const { root, cleanup } = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([row()]), actions: noop, sources: ['review'] });
+  const a = [...root.querySelectorAll('li.draft a')].find((x) => x.textContent === 'Open on GitHub') as HTMLAnchorElement;
+  assert.equal(a.getAttribute('href'), 'https://github.com/acme/widgets/pull/7');
+  assert.equal(a.getAttribute('aria-label'), 'Open acme/widgets#7 on GitHub');
+  cleanup();
+});
+
+test('when the text no longer carries the compliment, the card shows the whole text under the summary', async () => {
+  const d = summarised({ text: 'Rewritten by hand: this reads differently now.' });
+  const { root, cleanup } = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([d]), actions: noop, sources: ['review'] });
+  assert.equal(root.querySelector('li.draft > p.body')?.textContent, 'Rewritten by hand: this reads differently now.');
+  cleanup();
+});

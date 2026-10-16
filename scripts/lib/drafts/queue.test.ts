@@ -235,6 +235,12 @@ test('approving a review names every inline comment: editing one invalidates the
   assert.equal(g.calls.length, 0);
 });
 
+test('a review\'s stored context must be an object: a string, null, an array or a number is refused as "Bad review context."', () => {
+  const f = file();
+  for (const context of ['text', null, [], 7]) assert.throws(() => addDraft(f, review({ review: { compliment: COMPLIMENT, comments: [], context } as never })), /Bad review context\./, JSON.stringify(context));
+  assert.equal(listDrafts(f).length, 0, 'nothing was stored');
+});
+
 test('a review must carry its compliment slot: missing, empty or absent from the text is refused; context lines before it are fine', () => {
   const f = file();
   assert.throws(() => addDraft(f, review({ review: { compliment: '', comments: [] } })));

@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, GH_LOGIN, LEDGER_ROOT, PR_SEARCH, REPOST_NUDGE_ASKED_MINUTES, REPOST_NUDGE_AUTHOR, REPOST_NUDGE_CHECK_SECONDS, REPOST_NUDGE_COUNT, REPOST_NUDGE_DAYS, REPOST_NUDGE_ENABLED, REPOST_NUDGE_END, REPOST_NUDGE_GAP_MINUTES, REPOST_NUDGE_HOLD_EMPTY, REPOST_NUDGE_MINUTES, REPOST_NUDGE_REPOS, REPOST_NUDGE_START, REPOST_NUDGE_TRIGGERS, REPOST_NUDGE_TZ, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, VAULT_ROOT } from '../local-config.ts';
 import { isBotLogin } from '../lib/github-bots.ts';
 import { draftsPath, readRows } from '../lib/drafts/queue.ts';
+import { actionsPath, isIgnored, readIgnored } from '../lib/teammate/others-actions.ts';
 import { searchAllPages } from '../lib/gh-search.ts';
 import { latestAskInDir } from '../lib/repost-nudge-slack.ts';
 import { advance, approvalTime, HOUR_MS, nudgeLine, nudgeOn } from '../lib/repost-nudge.ts';
@@ -77,10 +78,11 @@ const slackDir = (): string => join(VAULT_ROOT, 'Projects', CONFIGURED_PROJECT |
 const draftsFile = (): string => draftsPath(LEDGER_ROOT || VAULT_ROOT, CONFIGURED_PROJECT || CONTAINER_PROJECT);
 
 /** The newest time a teammate review draft (a `review`-source draft) was queued or posted in the queue file; 0 for none or an unreadable file. */
-export function latestReviewDraftAt(file: string): number {
+export function latestReviewDraftAt(file: string, ignored: ReadonlyMap<string, string> = new Map()): number {
   let rows;
   try { rows = readRows(file); } catch { return 0; }
-  const review = new Set(rows.flatMap((r) => (r.op === 'add' && r.source === 'review' ? [r.id] : [])));
+  // A draft on a PR the person ignored (at the head it was written for) is not a review we did, so it starts no nudge.
+  const review = new Set(rows.flatMap((r) => (r.op === 'add' && r.source === 'review' && !(r.target.kind === 'review' && isIgnored(ignored, `${r.repo}#${r.pr}`, r.target.commitId)) ? [r.id] : [])));
   const times = rows.filter((r) => (r.op === 'add' || r.op === 'posted') && review.has(r.id)).map((r) => Date.parse(r.ts)).filter(Number.isFinite);
   return times.length ? Math.max(...times) : 0;
 }
@@ -88,7 +90,7 @@ export function latestReviewDraftAt(file: string): number {
 export const realIo: NudgeIo = {
   fetchPrs: (run) => (PR_SEARCH.includes('user:') || PR_SEARCH.includes('org:') ? searchAllPages<Node>(QUERY, run).map((n) => toPr(n, GH_LOGIN)) : []),
   latestSlackAskAt: (now) => (VAULT_ROOT ? latestAskInDir(slackDir(), REPOST_NUDGE_AUTHOR, REVIEW_QUEUE_ORGS, now, 2 * 24 * HOUR_MS) : 0),
-  latestDraftAt: () => latestReviewDraftAt(draftsFile()),
+  latestDraftAt: () => latestReviewDraftAt(draftsFile(), readIgnored(actionsPath(LEDGER_ROOT || VAULT_ROOT, CONFIGURED_PROJECT || CONTAINER_PROJECT))),
 };
 
 const settings = (): NudgeSettings => ({ enabled: REPOST_NUDGE_ENABLED, triggers: REPOST_NUDGE_TRIGGERS, minutes: REPOST_NUDGE_MINUTES, askedMinutes: REPOST_NUDGE_ASKED_MINUTES, gapMinutes: REPOST_NUDGE_GAP_MINUTES, count: REPOST_NUDGE_COUNT, start: REPOST_NUDGE_START, end: REPOST_NUDGE_END, zone: REPOST_NUDGE_TZ, days: REPOST_NUDGE_DAYS, repos: REPOST_NUDGE_REPOS, holdEmpty: REPOST_NUDGE_HOLD_EMPTY, selfReview: SELF_REVIEW_REPOS, owners: REVIEW_QUEUE_ORGS });

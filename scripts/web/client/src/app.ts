@@ -18,6 +18,7 @@ import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, long
 import { parseDraftFocus, DASHBOARD, OPEN_PRS, OTHERS_PRS, SCRIPTS, formatFragment, streamTabId, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, parseStreamFilter, tabIds } from './tabs.ts';
 import { OpenPrsStore } from './open-prs-store.ts';
 import { OthersPrsStore } from './others-prs-store.ts';
+import { createOthersActions } from './others-api.ts';
 import './others-prs.ts';
 import { DraftsStore } from './drafts-store.ts';
 import { waiting } from './drafts-model.ts';
@@ -220,6 +221,8 @@ export class PodiumApp extends HTMLElement {
   });
   // The draft queue's data and what is being typed live here too (see drafts-store.ts); every decision goes to the server, which alone posts.
   readonly #drafts = new DraftsStore({ load: () => loadDrafts(), send: (op, payload, comments) => createDraftActions().send(op, payload, comments) });
+  // The Others' PRs tab's own writes (ignore, un-ignore, review anyway); each reloads the list on success, so the row reflects the server's word.
+  readonly #othersActions = createOthersActions();
   // The Others' PRs tab's list of every open teammate PR (the server reads its cache; it never calls GitHub per request).
   readonly #others = new OthersPrsStore(loadOthersPrs);
   // The fingerprint of the needs-you rows on screen, and the store subscriptions that watch for a change in them.
@@ -758,7 +761,7 @@ export class PodiumApp extends HTMLElement {
     const s = this.#drafts;
     el.sources = sources;
     el.emptyText = empty;
-    el.actions = { startEdit: (id) => s.startEdit(id), startReject: (id) => s.startReject(id), cancel: (id) => s.cancel(id), setBuffer: (id, t) => s.setBuffer(id, t), setComment: (id, i, t) => s.setComment(id, i, t), saveEdit: (id) => { void s.saveEdit(id); }, approve: (id) => { void s.approve(id); }, reject: (id) => { void s.reject(id); } };
+    el.actions = { startEdit: (id) => s.startEdit(id), startReject: (id) => s.startReject(id), cancel: (id) => s.cancel(id), setBuffer: (id, t) => s.setBuffer(id, t), setComment: (id, i, t) => s.setComment(id, i, t), saveEdit: (id) => { void s.saveEdit(id); }, approve: (id) => { void s.approve(id); }, approveAsComment: (id) => { void s.approve(id, 'comment'); }, reject: (id) => { void s.reject(id); } };
     el.model = s.model;
     const unsubscribe = s.subscribe(() => { if (!el.isConnected) { unsubscribe(); return; } el.model = s.model; });
     if (load && this.#sources.state === 'server') void s.load();
@@ -788,6 +791,7 @@ export class PodiumApp extends HTMLElement {
       el.model = this.#others.model;
       el.drafts = { rows: this.#drafts.model.data?.drafts.filter((d) => d.source === 'review') ?? null, queue: (match, empty, quiet, authorOf) => this.#queueView(match, empty, quiet, authorOf) };
     };
+    el.actions = { run: async (op, p) => { const out = await this.#othersActions.send(op, p); if (out === null) await this.#others.load(); return out; } };
     draw();
     const stops: Array<() => void> = [];
     const redraw = (): void => { if (!el.isConnected) { for (const off of stops.splice(0)) off(); return; } draw(); };

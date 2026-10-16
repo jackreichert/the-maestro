@@ -132,3 +132,20 @@ test('a former teammate\'s ready PR is never selected for a review wait', () => 
   assert.equal(selectWaiting([gone], { ...O, former: ['gone-fake'] }).length, 0);
   assert.equal(selectWaiting([node()], { ...O, former: ['gone-fake'] }).length, 1, 'other authors are untouched');
 });
+
+test('a PR the person ignored at its current head is not selected; a new head selects it again', () => {
+  const head = 'a'.repeat(40);
+  assert.equal(selectWaiting([node()], { ...O, ignored: new Map([['acme/widgets#12', head]]) }).length, 0);
+  assert.equal(selectWaiting([node()], { ...O, ignored: new Map([['acme/widgets#12', 'b'.repeat(40)]]) }).length, 1, 'ignored at an older head');
+  assert.equal(selectWaiting([node()], { ...O, ignored: new Map([['acme/other#12', head]]) }).length, 1, 'another PR\'s ignore does not apply');
+});
+
+test('"Review anyway" at the current head selects a hands-off PR at once, with no wait; at an older head it does not', () => {
+  const head = 'a'.repeat(40);
+  const o = { ...O, guard: { globs: ['*/guarded'], login: 'owner-fake' } };
+  const fresh = node({ repository: { nameWithOwner: 'acme/guarded' }, createdAt: new Date(T0 - 2 * MIN).toISOString() });
+  assert.equal(selectWaiting([fresh], o).length, 0);
+  assert.equal(selectWaiting([fresh], { ...o, requested: new Map([['acme/guarded#12', head]]) }).length, 1);
+  assert.equal(selectWaiting([fresh], { ...o, requested: new Map([['acme/guarded#12', 'b'.repeat(40)]]) }).length, 0);
+  assert.equal(selectWaiting([node({ ...fresh, reviewDecision: 'APPROVED' })], { ...o, requested: new Map([['acme/guarded#12', head]]) }).length, 0, 'a decided PR is still skipped');
+});

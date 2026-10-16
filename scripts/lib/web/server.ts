@@ -1,7 +1,7 @@
 /**
  * The Podium server: GET endpoints over buildState/buildCharts and the client's static files, plus one narrow write surface.
  * `GET /api/events` is the one streaming route: Server-Sent Events from a shared watcher (events.ts), so the page updates without a reload.
- * The write surface is sixteen POST routes (the six `/api/run/*` ones run a reviewed command or list the script catalog; see run-write.ts): three reorder, add and delete today's priorities (priorities-write.ts), one answers an ask (answer-write.ts), one comments on a blocked item and optionally unblocks it (blocked-write.ts), one marks a registered script as run by the person (scripts-write.ts), one refreshes the PR data (prs-refresh.ts), and three decide a drafted GitHub comment: approve (the only route that posts), edit, reject (drafts-write.ts).
+ * The write surface is nineteen POST routes (the six `/api/run/*` ones run a reviewed command or list the script catalog; see run-write.ts): three reorder, add and delete today's priorities (priorities-write.ts), one answers an ask (answer-write.ts), one comments on a blocked item and optionally unblocks it (blocked-write.ts), one marks a registered script as run by the person (scripts-write.ts), one refreshes the PR data (prs-refresh.ts), and three decide a drafted GitHub comment: approve (the only route that posts), edit, reject (drafts-write.ts), and three belong to the Others' PRs tab: ignore, un-ignore and review anyway, which only append a row to the actions file (others-write.ts).
  * They need a per-start token the page reads from `GET /api/edit-token`, and guard.ts only lets them through from the page's own origin.
  * Every request goes through guard.refuse first; every response is written by guard.send, so the security headers
  * are on 404s and 500s too. Every GET is read-only: nothing on a GET path writes the ledger, the priorities file or the page.
@@ -20,6 +20,7 @@ import { buildCharts, buildOpenPrs, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
 import { GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, OTHERS_PRS_ACTIVE_HOURS, OTHERS_PRS_DROP_DAYS, OTHERS_PRS_OPEN_HOURS } from '../../local-config.ts';
 import { buildOthersPrs } from './others-prs.ts';
+import type { OthersScopeOptions } from './others-prs.ts';
 import { buildEpics, buildHome } from './home.ts';
 import { buildCost } from './cost.ts';
 import { buildProjects } from './projects.ts';
@@ -30,6 +31,8 @@ import { ANSWER_PATH, handleAnswer } from './answer-write.ts';
 import { BLOCKED_PATH, handleBlocked } from './blocked-write.ts';
 import { SCRIPTS_RAN_PATH, buildScripts, handleScriptRan } from './scripts-write.ts';
 import { DONE_BODY_LIMITS, DONE_SAVE_PATH, handleDoneSave, readDone, sourceFromQuery } from './done-write.ts';
+import { OTHERS_BODY_LIMITS, OTHERS_WRITE_PATHS, handleOthers } from './others-write.ts';
+import { actionsPath } from '../teammate/others-actions.ts';
 import { DRAFT_BODY_LIMITS, DRAFT_WRITE_PATHS, buildDrafts, handleDraft } from './drafts-write.ts';
 import type { GhRun } from '../drafts/post.ts';
 import { REFRESH_PATH, REFRESH_STATE_PATH, createRefresher, handleRefresh, spawnRebuild } from './prs-refresh.ts';
@@ -86,8 +89,8 @@ const EVENTS_PATH = '/api/events';
 const MAX_HEADER_BYTES = 8 * 1024;
 
 /** Every exact path that accepts POST: the three priorities edits, the answer to an ask, a comment on a blocked item, marking a script run, saving a stream's definition of done, the PR refresh and the three draft-comment decisions. */
-const WRITE_PATHS: ReadonlySet<string> = new Set([...PRIORITY_PATHS, ANSWER_PATH, BLOCKED_PATH, SCRIPTS_RAN_PATH, REFRESH_PATH, DONE_SAVE_PATH, ...DRAFT_WRITE_PATHS, ...RUN_WRITE_PATHS]);
-const BODY_LIMITS: ReadonlyMap<string, number> = new Map([...DRAFT_BODY_LIMITS, ...DONE_BODY_LIMITS]);
+const WRITE_PATHS: ReadonlySet<string> = new Set([...PRIORITY_PATHS, ANSWER_PATH, BLOCKED_PATH, SCRIPTS_RAN_PATH, REFRESH_PATH, DONE_SAVE_PATH, ...DRAFT_WRITE_PATHS, ...OTHERS_WRITE_PATHS, ...RUN_WRITE_PATHS]);
+const BODY_LIMITS: ReadonlyMap<string, number> = new Map([...DRAFT_BODY_LIMITS, ...OTHERS_BODY_LIMITS, ...DONE_BODY_LIMITS]);
 
 type Handler = (url: URL, match: RegExpMatchArray) => unknown;
 interface Route { method: 'GET'; pattern: RegExp; handler: Handler }
@@ -101,6 +104,11 @@ function daysParam(url: URL): number {
 /** A path segment decoded, or null when it is not valid percent-encoding. */
 function decodeName(segment: string): string | null {
   try { return decodeURIComponent(segment); } catch { return null; }
+}
+
+/** What the Others' PRs tab is built from (its GET route and the checks its writes make against the rows it shows). */
+function othersOptions(o: WebServerOptions): OthersScopeOptions {
+  return { statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN, openHours: OTHERS_PRS_OPEN_HOURS, activeHours: OTHERS_PRS_ACTIVE_HOURS, dropDays: OTHERS_PRS_DROP_DAYS, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, actionsFile: actionsPath(o.web.vault, o.web.project), ...(o.web.vaultRoot ? { slackDir: join(o.web.vaultRoot, 'Projects', o.web.containerProject ?? o.web.project, 'Slack') } : {}) };
 }
 
 /** The data routes. Handlers return the JSON value, or undefined for "no such thing" (404). */
@@ -120,7 +128,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
       return out?.ok ? { text: out.text, rev: out.rev } : undefined;
     } },
     { method: 'GET', pattern: /^\/api\/prs$/, handler: () => buildOpenPrs(o.web, now()) },
-    { method: 'GET', pattern: /^\/api\/others-prs$/, handler: () => buildOthersPrs({ statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN, openHours: OTHERS_PRS_OPEN_HOURS, activeHours: OTHERS_PRS_ACTIVE_HOURS, dropDays: OTHERS_PRS_DROP_DAYS, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, ...(o.web.vaultRoot ? { slackDir: join(o.web.vaultRoot, 'Projects', o.web.containerProject ?? o.web.project, 'Slack') } : {}) }, now()) },
+    { method: 'GET', pattern: /^\/api\/others-prs$/, handler: () => buildOthersPrs(othersOptions(o), now()) },
     { method: 'GET', pattern: /^\/api\/drafts$/, handler: () => buildDrafts(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/scripts$/, handler: () => buildScripts(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/epics$/, handler: () => buildEpics(o.web, now()) },
@@ -159,7 +167,7 @@ export function createWebServer(o: WebServerOptions): WebServer {
       if (no) return sendError(res, no.status, no.headers);
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       if (req.method === 'POST') {   // the guard let a POST through only for a write path
-        (url.pathname === ANSWER_PATH ? handleAnswer(writes, req, res) : url.pathname === BLOCKED_PATH ? handleBlocked(writes, req, res) : url.pathname === SCRIPTS_RAN_PATH ? handleScriptRan(writes, req, res) : url.pathname === DONE_SAVE_PATH ? handleDoneSave(writes, req, res) : RUN_WRITE_PATHS.has(url.pathname) ? handleRun(runs, url.pathname, req, res) : DRAFT_WRITE_PATHS.has(url.pathname) ? handleDraft(writes, url.pathname, req, res) : url.pathname === REFRESH_PATH ? handleRefresh(writes, refresher, req, res) : handleWrite(writes, url.pathname, req, res)).catch((e: unknown) => { log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error'); sendError(res, 500); });
+        (url.pathname === ANSWER_PATH ? handleAnswer(writes, req, res) : url.pathname === BLOCKED_PATH ? handleBlocked(writes, req, res) : url.pathname === SCRIPTS_RAN_PATH ? handleScriptRan(writes, req, res) : url.pathname === DONE_SAVE_PATH ? handleDoneSave(writes, req, res) : RUN_WRITE_PATHS.has(url.pathname) ? handleRun(runs, url.pathname, req, res) : DRAFT_WRITE_PATHS.has(url.pathname) ? handleDraft(writes, url.pathname, req, res) : OTHERS_WRITE_PATHS.has(url.pathname) ? handleOthers({ ...writes, rows: () => buildOthersPrs(othersOptions(o), writes.now()).prs }, url.pathname, req, res) : url.pathname === REFRESH_PATH ? handleRefresh(writes, refresher, req, res) : handleWrite(writes, url.pathname, req, res)).catch((e: unknown) => { log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error'); sendError(res, 500); });
         return;
       }
       if (url.pathname === TOKEN_PATH) return sendJson(res, 200, { token, max: writes.max }, false);

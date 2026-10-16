@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { buildOthersPrs } from './others-prs.ts';
 import { etMs } from './slack-activity.ts';
 import { writeOthersCache } from '../teammate/others.ts';
+import { ignorePr, requestReview } from '../teammate/others-actions.ts';
 import type { OtherPr } from '../teammate/others.ts';
 
 const NOW = new Date('2026-10-15T12:10:00Z');
@@ -45,6 +46,22 @@ test('a hands-off repo\'s PR is listed and marked unless you were asked or its o
   const by = new Map(buildOthersPrs(o, NOW).prs.map((p) => [p.number, p]));
   assert.deepEqual([1, 2, 3, 4].map((n) => by.get(n)?.handsOff), [true, undefined, undefined, undefined]);
   assert.equal(buildOthersPrs({ ...o, guard: undefined }, NOW).prs.some((p) => p.handsOff), false, 'nothing configured, nothing marked');
+});
+
+test('rows carry headSha, the ignore state at that head, the hands-off reason and whether a review was asked for', () => {
+  const h1 = '1'.repeat(40);
+  const h2 = '2'.repeat(40);
+  const actionsFile = join(mkdtempSync(join(tmpdir(), 'others-acts-')), 'others-actions.jsonl');
+  ignorePr(actionsFile, 'acme/app#1', h1);
+  ignorePr(actionsFile, 'acme/app#2', h1);
+  requestReview(actionsFile, 'acme/guarded#3', h1);
+  const o = { ...opts(cacheWith([pr(1, { headSha: h1 }), pr(2, { headSha: h2 }), pr(3, { repo: 'acme/guarded', headSha: h1 }), pr(4, { repo: 'acme/guarded', headSha: h2 }), pr(5)])), guard: { globs: ['*/guarded'], login: 'owner-fake' }, actionsFile };
+  const by = new Map(buildOthersPrs(o, NOW).prs.map((p) => [p.number, p]));
+  assert.deepEqual([1, 2, 3, 4, 5].map((n) => by.get(n)?.ignored), ['ignored', 'new-commits', undefined, undefined, undefined]);
+  assert.deepEqual([1, 3, 5].map((n) => by.get(n)?.headSha), [h1, h1, undefined]);
+  assert.deepEqual([3, 4].map((n) => by.get(n)?.reviewRequested), [true, undefined], 'a request holds only at the head it was made on');
+  assert.match(by.get(3)?.handsOffWhy ?? '', /guarded is a hands-off repo \(hands_off_repos\): only owner-fake's own PRs/);
+  assert.equal(by.get(1)?.handsOffWhy, undefined);
 });
 
 const slackDir = (lines: string[]): string => {
