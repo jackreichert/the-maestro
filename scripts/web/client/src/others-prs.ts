@@ -1,5 +1,5 @@
 import { BASE_CSS, UI_CSS, h, shadow } from './dom.ts';
-import { TACET_CSS, tacet } from './home-concept.ts';
+import { TACET_CSS, tacet } from './score.ts';
 import { ago, agoHours } from './glance.ts';
 import { linkAttrs } from './link-policy.ts';
 import { waiting } from './drafts-model.ts';

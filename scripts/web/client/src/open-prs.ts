@@ -1,6 +1,6 @@
 import { BASE_CSS, h, refLink, shadow } from './dom.ts';
 import { GRID_CSS } from './grid.ts';
-import { INSTRUMENT_CSS, TACET_CSS, tacet } from './home-concept.ts';
+import { INSTRUMENT_CSS, TACET_CSS, tacet } from './score.ts';
 import { ago, askAge, clockTime } from './glance.ts';
 import { readyToMerge } from './pr-ready.ts';
 import type { OpenPrRow } from './types.ts';

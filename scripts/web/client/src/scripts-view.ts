@@ -1,5 +1,5 @@
 import { BASE_CSS, UI_CSS, h, shadow } from './dom.ts';
-import { TACET_CSS, tacet } from './home-concept.ts';
+import { TACET_CSS, tacet } from './score.ts';
 import { createRunApi } from './run-api.ts';
 import type { ArgSpec, CatalogView, RunApi, RunSource, ScriptInfo } from './run-api.ts';
 import './run-panel.ts';
