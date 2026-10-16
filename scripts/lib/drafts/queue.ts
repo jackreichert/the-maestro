@@ -16,6 +16,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { isBotLogin } from '../github-bots.ts';
 import type { ReviewContext } from '../teammate/context.ts';
+import { triageProblem } from '../thread-triage.ts';
+import type { ThreadTriage } from '../thread-triage.ts';
 
 export const MAX_TEXT = 4000;
 export const MAX_REASON = 500;
@@ -38,7 +40,7 @@ export type Target =
 /** One inline comment of a review: a line on the RIGHT side of the diff of the head commit. */
 export interface ReviewComment { path: string; line: number; text: string; severity: 'blocking' | 'suggestion' }
 /** The inline half of a review draft. `compliment` is the specific thing done well that the text must carry (a review may open with its context lines before it), never generic. */
-export interface ReviewBundle { compliment: string; comments: ReviewComment[]; /** The structured summary (what it does, core logic, tests, ticket match) the review body was written from; the Podium renders it. Absent on older drafts. */ context?: ReviewContext }
+export interface ReviewBundle { compliment: string; comments: ReviewComment[]; /** The structured summary (what it does, core logic, tests, ticket match) the review body was written from; the Podium renders it. Absent on older drafts. */ context?: ReviewContext; /** The reviewer's call on each open bot thread (worth addressing? blocking?), which the approve-time guard checks against GitHub's live threads. Absent when no bot thread was open. */ triage?: ThreadTriage[] }
 export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES';
 /** What the review says to GitHub: it requests changes when a comment still blocks, and approves otherwise. Derived, never stored, so an edit cannot leave it stale. */
 export const eventOf = (b: ReviewBundle): ReviewEvent => (b.comments.some((c) => c.severity === 'blocking') ? 'REQUEST_CHANGES' : 'APPROVE');
@@ -163,6 +165,7 @@ function reviewProblem(d: NewDraft): string | null {
   if (typeof r !== 'object' || r === null || typeof r.compliment !== 'string' || !Array.isArray(r.comments)) return 'Bad review.';
   if (d.source !== 'review') return 'Only a review comment can be a review.';
   if (!r.compliment.trim() || !d.text.includes(r.compliment)) return 'A review must carry its compliment.';
+  if (r.triage !== undefined) { const t = triageProblem(r.triage); if (t) return t; }
   if (r.context !== undefined && (typeof r.context !== 'object' || r.context === null || Array.isArray(r.context))) return 'Bad review context.';
   if (!Array.isArray(r.comments) || r.comments.length > MAX_COMMENTS) return `A review has at most ${MAX_COMMENTS} inline comments.`;
   for (const c of r.comments) {

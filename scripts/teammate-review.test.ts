@@ -7,6 +7,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { submit } from './teammate-review.ts';
+import type { GhOut } from './lib/approve-guard.ts';
 import { listDrafts } from './lib/drafts/queue.ts';
 import { cleanup, prepare } from './lib/teammate/worktree.ts';
 import type { Cmd, Runner } from './lib/teammate/worktree.ts';
@@ -186,4 +187,83 @@ test('supersedes replaces a pending draft of the SAME head: the old one is rejec
   assert.match(ds[0]?.rejectReason ?? '', /fuller review of the same head/);
   assert.match(ds[1]?.text ?? '', /Ticket match \(WID-1\):\*\* partly matches/);
   assert.throws(() => submit(file, sub({ supersedes: 'dr-nope', head: 'c'.repeat(40) }), DIFF), /supersedes/);
+});
+
+// The approve guard at submit: a stand-in gh answering the head and the PR's review threads.
+const ghWith = (threads: { id: number; login: string; type: string }[], head = HEAD): ((a: string[]) => GhOut) => (a) => {
+  if (a.includes('graphql')) {
+    const nodes = threads.map((t) => ({ id: `T${t.id}`, isResolved: false, isOutdated: false, path: 'src/a.ts', line: t.id, comments: { pageInfo: { hasNextPage: false }, nodes: [{ databaseId: t.id, body: 'x', author: { login: t.login, __typename: t.type } }] } }));
+    return { status: 0, stderr: '', stdout: JSON.stringify({ data: { repository: { pullRequest: { state: 'OPEN', author: { login: 'robin-r' }, reviewThreads: { pageInfo: { hasNextPage: false }, nodes } } } } }) };
+  }
+  return { status: 0, stderr: '', stdout: `${a.at(-1) === '.head.ref' ? 'feat/x' : head}\n` };
+};
+const BOT = { login: 'copilot-pull-request-reviewer', type: 'Bot' };
+const tri = (threadId: string, over: object = {}) => ({ threadId, worthAddressing: false, reason: 'A style nit.', ...over });
+const queuedText = (file: string): string => listDrafts(file)[0]?.text ?? '';
+
+test('submit with open bot threads all triaged not worth addressing queues an approval with no list in the body', () => {
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  const out = submit(file, sub({ triage: [tri('1')] }), DIFF, { run: ghWith([{ id: 1, ...BOT }]) });
+  assert.ok(out.queued);
+  assert.equal(out.approvalAs, 'APPROVE');
+  assert.equal(queuedText(file).includes('Worth addressing'), false);
+  assert.equal(queuedText(file).includes('A style nit.'), false);
+  assert.equal(listDrafts(file)[0]?.review?.triage?.length, 1, 'the triage is stored for the approve-time check');
+});
+
+test('threads triaged worth addressing are listed in the body with a link and the reason, an approval still queues, and a not-worth thread is not mentioned', () => {
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  const out = submit(file, sub({ triage: [tri('1', { worthAddressing: true, reason: 'The empty cart is not handled.' }), tri('2')] }), DIFF, { run: ghWith([{ id: 1, ...BOT }, { id: 2, ...BOT }]) });
+  assert.ok(out.queued);
+  assert.equal(out.approvalAs, 'APPROVE');
+  assert.match(queuedText(file), /\*\*Worth addressing before merge\*\*\n- \[src\/a\.ts:1\]\(https:\/\/github\.com\/acme\/widgets\/pull\/12#discussion_r1\): The empty cart is not handled\.$/);
+  assert.equal(queuedText(file).includes('discussion_r2'), false);
+});
+
+test('a thread triaged blocking still queues the draft but reports that it will post as a COMMENT', () => {
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  const out = submit(file, sub({ triage: [tri('1', { worthAddressing: true, severity: 'blocking', reason: 'Drops rows on a retry.' })] }), DIFF, { run: ghWith([{ id: 1, ...BOT }]) });
+  assert.ok(out.queued);
+  assert.equal(out.approvalAs, 'COMMENT');
+});
+
+test('an open bot thread with no triage entry (it arrived after the review) is not queued and is named', () => {
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  const out = submit(file, sub({ triage: [tri('1')] }), DIFF, { run: ghWith([{ id: 1, ...BOT }, { id: 2, login: 'aikido-pr-checks', type: 'User' }]) });
+  assert.equal(out.queued, null);
+  assert.match(out.problem ?? '', /1 open bot thread has not been triaged.*aikido-pr-checks at src\/a\.ts:2 \(thread 2\)/);
+  assert.equal(listDrafts(file).length, 0);
+});
+
+test('a head that moved since the review is not queued', () => {
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  const out = submit(file, sub(), DIFF, { run: ghWith([], 'b'.repeat(40)) });
+  assert.equal(out.queued, null);
+  assert.match(out.problem ?? '', /moved since the review/);
+});
+
+test('open threads that only people started never block an approval', () => {
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  const out = submit(file, sub(), DIFF, { run: ghWith([{ id: 1, login: 'sam-q', type: 'User' }]) });
+  assert.ok(out.queued);
+  assert.equal(out.approvalAs, 'APPROVE');
+});
+
+test('a review that requests changes is not an approval, so the guard does not run on it, and a malformed triage is refused', () => {
+  const blocking = { category: 'correctness', input: 'an empty cart', failure: 'throws TypeError on items[0]', text, path: 'src/a.ts', line: 4 };
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  const out = submit(file, sub({ findings: [blocking] }), DIFF, { run: ghWith([{ id: 1, ...BOT }]) });
+  assert.ok(out.queued);
+  assert.equal(out.approvalAs, undefined);
+  const bad = submit(join(tmp(), 'J', 'drafts.jsonl'), sub({ triage: [{ threadId: '', worthAddressing: true, reason: 'x' }] }), DIFF, { run: ghWith([]) });
+  assert.equal(bad.queued, null);
+  assert.match(bad.problem ?? '', /thread id/);
+});
+
+test('a body that outgrows the limit once the worth-addressing list is added is refused with a message, not thrown', () => {
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  const long = Array.from({ length: 30 }, (_, i) => tri(String(i + 1), { worthAddressing: true, reason: 'r'.repeat(190) }));
+  const out = submit(file, sub({ triage: long }), DIFF, { run: ghWith(long.map((_, i) => ({ id: i + 1, ...BOT }))) });
+  assert.equal(out.queued, null);
+  assert.match(out.problem ?? '', /too long/);
 });

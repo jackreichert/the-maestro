@@ -14,6 +14,7 @@ import { randomBytes } from 'node:crypto';
 import { appendRow, eventOf, listDrafts, refuse, revOf, textProblem, withLock } from './queue.ts';
 import type { Draft, Outcome, ReviewEvent } from './queue.ts';
 import { fetchThreads } from '../replies/threads.ts';
+import { checkApprove } from '../approve-guard.ts';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -79,31 +80,6 @@ function liveHead(run: GhRun, repo: string, pr: number): string | null {
   const sha = r.stdout.trim().toLowerCase();
   return r.status === 0 && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
-/**
- * How many unresolved review threads Copilot opened on the PR, read live from GitHub now; null when GitHub cannot say (the caller then fails closed).
- * Every unresolved thread counts, whoever spoke last, because the rule is about what is still open on the PR.
- */
-export function openCopilotThreads(run: GhRun, repo: string, pr: number): number | null {
-  try { return fetchThreads(repo, pr, '', run).threads.filter((t) => /copilot/i.test(t.comments[0]?.author ?? '')).length; } catch { return null; }
-}
-
-/** A backmerge PR is one whose head branch is named for it (`backmerge/...`, `back-merge-...`): the repo convention, and not something a title can claim. */
-const BACKMERGE_HEAD = /^(backmerge\/|back-merge-)/i;
-function isBackmerge(run: GhRun, repo: string, pr: number): boolean {
-  let r: GhResult;
-  try { r = run(['api', `repos/${repo}/pulls/${pr}`, '--jq', '.head.ref']); } catch { return false; }
-  return r.status === 0 && BACKMERGE_HEAD.test(r.stdout.trim());
-}
-
-/** The refusal that stops an approving review while Copilot threads are open, or null when the review may go out as it is. Backmerges are exempt; an unreadable PR is not. */
-function copilotRefusal(run: GhRun, d: Draft): ReturnType<typeof refuse> | null {
-  const open = openCopilotThreads(run, d.repo, d.pr);
-  if (open === 0) return null;
-  if (open !== null && isBackmerge(run, d.repo, d.pr)) return null;
-  const why = open === null ? 'Could not read the PR\'s review threads from GitHub, so an approval is not posted.' : `${open} Copilot thread${open === 1 ? ' is' : 's are'} still open on this PR, so an approval is not posted.`;
-  return refuse('copilot', `${why} Post it as a comment instead, or resolve the threads first. Nothing was posted.`);
-}
-
 function urlOf(stdout: string): string | undefined {
   try {
     const u = (JSON.parse(stdout) as { html_url?: unknown }).html_url;
@@ -111,7 +87,7 @@ function urlOf(stdout: string): string | undefined {
   } catch { return undefined; }
 }
 
-/** `asComment` posts an approving review as a COMMENT review: the way through when open Copilot threads forbid the approval. */
+/** `asComment` posts an approving review as a COMMENT review: the way through when the approve guard (lib/approve-guard.ts) refuses the approval. */
 export interface PostOptions { run?: GhRun; now?: () => Date; asComment?: boolean }
 
 /** Approve this draft as the text shown and post it. The one posting path. */
@@ -127,10 +103,20 @@ export function approveAndPost(file: string, id: string, shownRev: string, o: Po
     if (shownRev !== revOf(d)) return refuse('changed', 'The draft changed since you opened it. Reload and approve what you see.');
     const bad = textProblem(d.text);
     if (bad) return refuse('invalid', bad);
-    // A review is pinned to the commit it was written against. When the PR has moved, GitHub refuses inline comments on a commit that is no longer the head (HTTP 422).
-    // If the push touched none of the files the review comments on, the same comments still mean the same lines, so it is re-pinned to the head; otherwise it is refused and the draft stays pending.
+    const approving = d.target.kind === 'review' && d.review !== undefined && eventOf(d.review) === 'APPROVE';
+    if (o.asComment && !approving) return refuse('invalid', 'Only an approving review can be posted as a comment.');
     let toPost: Draft = d;
-    if (d.target.kind === 'review') {
+    let event: 'COMMENT' | undefined;
+    if (approving && !o.asComment) {
+      // The live rule, checked now and not at submit (lib/approve-guard.ts): the head is still the reviewed commit, every open bot thread was triaged by the review,
+      // and a thread triaged blocking turns the approval into a COMMENT review. An approval is never re-pinned to a newer head: that would approve code nobody reviewed.
+      const v = checkApprove(run, d.repo, d.pr, (d.target as { commitId: string }).commitId, d.review?.triage ?? []);
+      if (!v.ok) return v.code.startsWith('head-') ? refuse('changed', v.code === 'head-moved' ? 'PR moved since this draft; re-prepare it. Nothing was posted.' : `${v.message} Try again.`) : refuse('copilot', `${v.message} Nothing was posted.`);
+      if (v.event === 'COMMENT') event = 'COMMENT';
+    } else if (d.target.kind === 'review') {
+      if (o.asComment) event = 'COMMENT';
+      // A review is pinned to the commit it was written against. When the PR has moved, GitHub refuses inline comments on a commit that is no longer the head (HTTP 422).
+      // If the push touched none of the files the review comments on, the same comments still mean the same lines, so it is re-pinned to the head; otherwise it is refused and the draft stays pending.
       const head = liveHead(run, d.repo, d.pr);
       if (head === null) return refuse('changed', 'Could not read the PR\'s current head from GitHub, so nothing was posted. Try again.');
       if (!head.startsWith(d.target.commitId.toLowerCase())) {
@@ -139,14 +125,6 @@ export function approveAndPost(file: string, id: string, shownRev: string, o: Po
         if (touched === null || touched.some((f) => commented.has(f))) return refuse('changed', 'PR moved since this draft; re-prepare it. Nothing was posted.');
         toPost = { ...d, target: { kind: 'review', commitId: head } };
       }
-    }
-    // The live rule, checked now and not at submit: The user never approves a PR that still has Copilot threads open. A COMMENT review is allowed through, and so is a backmerge.
-    const approving = d.target.kind === 'review' && d.review !== undefined && eventOf(d.review) === 'APPROVE';
-    if (o.asComment && !approving) return refuse('invalid', 'Only an approving review can be posted as a comment.');
-    let event: 'COMMENT' | undefined;
-    if (approving) {
-      if (o.asComment) event = 'COMMENT';
-      else { const blocked = copilotRefusal(run, d); if (blocked) return blocked; }
     }
     appendRow(file, { op: 'approve', id, ts: ts(), text: d.text, ...(event ? { event } : {}) });
     const nonce = randomBytes(8).toString('hex');

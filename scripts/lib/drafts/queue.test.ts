@@ -14,9 +14,9 @@ const file = (): string => { const d = mkdtempSync(join(tmpdir(), 'drafts-')); m
 const R = (f: string, id: string): string => { const d = listDrafts(f).find((x) => x.id === id); return d ? revOf(d) : '000000000000'; };
 const draft = (over: Partial<NewDraft> = {}): NewDraft => ({ key: 'acme/widgets#7@abc:a.ts:3:x', source: 'review', repo: 'acme/widgets', pr: 7, severity: 'suggestion', text: 'Could this guard against an empty list?', target: { kind: 'inline', path: 'src/a.ts', line: 3, commitId: 'abcdef1' }, ...over });
 interface Stub { calls: string[][]; run: (a: string[], input?: string) => GhResult; postedInput?: string; copilot: number; headRef: string }
-/** The GraphQL answer for a PR with `n` unresolved Copilot threads (and one human thread, which must never count). */
+/** The GraphQL answer for a PR with `n` unresolved Copilot threads (and one human thread, which must never count; the Copilot ones have root comment ids 1..n). */
 const threadsReply = (n: number): string => {
-  const thread = (i: number, login: string): object => ({ id: `T${i}`, isResolved: false, isOutdated: false, path: 'a.ts', line: 1, comments: { pageInfo: { hasNextPage: false }, nodes: [{ databaseId: i + 1, body: 'x', author: { login, __typename: 'Bot' } }] } });
+  const thread = (i: number, login: string): object => ({ id: `T${i}`, isResolved: false, isOutdated: false, path: 'a.ts', line: 1, comments: { pageInfo: { hasNextPage: false }, nodes: [{ databaseId: i + 1, body: 'x', author: { login, __typename: i === 99 ? 'User' : 'Bot' } }] } });
   const nodes = [...Array.from({ length: n }, (_, i) => thread(i, 'copilot-pull-request-reviewer')), thread(99, 'robin-r')];
   return JSON.stringify({ data: { repository: { pullRequest: { state: 'OPEN', author: { login: 'robin-r' }, reviewThreads: { pageInfo: { hasNextPage: false }, nodes } } } } });
 };
@@ -351,10 +351,10 @@ test('a refusal carries GitHub\'s own reason from the JSON body, not only the ba
   assert.equal(listDrafts(f)[0]?.state, 'failed');
 });
 
-test('when the PR moved but the push touched none of the files the review comments on, the review is re-pinned to the live head', () => {
+test('a non-approving review is re-pinned: when the PR moved but the push touched none of the files the review comments on, it is posted on the live head', () => {
   const f = file(); const newHead = '9'.repeat(40);
   const g = stub({}, { stdout: `${newHead}\n` });   // the compare answers with README.md only; the review comments on src/a.ts
-  const { id } = addDraft(f, review());
+  const { id } = addDraft(f, review({}, [{ path: 'src/a.ts', line: 3, text: 'This crashes on an empty cart.', severity: 'blocking' }]));
   assert.equal(approveAndPost(f, id, R(f, id), { run: g.run }).ok, true);
   assert.equal(JSON.parse(g.postedInput ?? '{}').commit_id, newHead);
   assert.deepEqual(listDrafts(f)[0]?.target, { kind: 'review', commitId: 'abcdef1' }, 'the stored draft keeps the commit it was written against');
@@ -366,16 +366,48 @@ test('an approving review is refused while Copilot threads are open, and nothing
   const out = approveAndPost(f, id, R(f, id), { run: g.run });
   assert.equal(out.ok, false);
   assert.equal(out.ok === false && out.code, 'copilot');
-  assert.match(out.ok === false ? out.message : '', /2 Copilot threads are still open.*as a comment/);
+  assert.match(out.ok === false ? out.message : '', /2 open bot threads have not been triaged.*post this as a comment/);
   assert.equal(g.calls.length, 0, 'no review reached GitHub');
   assert.equal(listDrafts(f)[0]?.state, 'pending', 'the draft stays pending, so it can still be posted as a comment');
+});
+
+const triaged = (triage: object[]): NewDraft => review({ review: { compliment: COMPLIMENT, comments: [{ path: 'src/a.ts', line: 3, text: 'Could this guard an empty list?', severity: 'suggestion' }], triage: triage as never } });
+
+test('an open Copilot thread the review triaged as not worth addressing, or worth addressing, still approves; the triage comes back as nothing to block on', () => {
+  for (const worthAddressing of [false, true]) {
+    const f = file(); const g = stub(); g.copilot = 1;
+    const { id } = addDraft(f, triaged([{ threadId: '1', worthAddressing, reason: 'One line.' }]));
+    assert.equal(approveAndPost(f, id, R(f, id), { run: g.run }).ok, true);
+    assert.equal(JSON.parse(g.postedInput ?? '{}').event, 'APPROVE');
+  }
+});
+
+test('a thread the review triaged blocking posts the approval as a COMMENT review, and records it', () => {
+  const f = file(); const g = stub(); g.copilot = 1;
+  const { id } = addDraft(f, triaged([{ threadId: '1', worthAddressing: true, severity: 'blocking', reason: 'Drops rows on a retry.' }]));
+  assert.equal(approveAndPost(f, id, R(f, id), { run: g.run }).ok, true);
+  assert.equal(JSON.parse(g.postedInput ?? '{}').event, 'COMMENT');
+  assert.ok(readFileSync(f, 'utf8').split('\n').some((l) => l.includes('"op":"approve"') && l.includes('"event":"COMMENT"')));
+});
+
+test('a thread that opened after the review was triaged refuses the approval and names it', () => {
+  const f = file(); const g = stub(); g.copilot = 2;
+  const { id } = addDraft(f, triaged([{ threadId: '1', worthAddressing: false, reason: 'A nit.' }]));
+  const out = approveAndPost(f, id, R(f, id), { run: g.run });
+  assert.equal(out.ok === false && out.code, 'copilot');
+  assert.match(out.ok === false ? out.message : '', /1 open bot thread has not been triaged.*thread 2\)/);
+  assert.equal(g.calls.length, 0);
+});
+
+test('a malformed triage is refused when the draft is added', () => {
+  assert.throws(() => addDraft(file(), triaged([{ threadId: '1', worthAddressing: false, severity: 'blocking', reason: 'x' }])), /refused/);
 });
 
 test('the check is live at click time: threads that opened after submit block it, and threads that closed let it through', () => {
   const f = file(); const g = stub();
   const { id } = addDraft(f, review());
   g.copilot = 1;
-  assert.equal(approveAndPost(f, id, R(f, id), { run: g.run }).ok, false, 'a thread opened since the draft was made');
+  assert.equal(approveAndPost(f, id, R(f, id), { run: g.run }).ok, false, 'a thread opened since the draft was made, with no triage for it');
   g.copilot = 0;
   assert.equal(approveAndPost(f, id, R(f, id), { run: g.run }).ok, true, 'resolved since: the same draft now posts as an approval');
   assert.equal(JSON.parse(g.postedInput ?? '{}').event, 'APPROVE');
