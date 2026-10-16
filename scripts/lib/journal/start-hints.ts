@@ -8,7 +8,7 @@ import type { LedgerItem } from '../ledger-core.ts';
  */
 
 /** A fill-in marker such as `<MODEL>`: printed bare, so a line still holding one is a shell syntax error and cannot run as printed. */
-export const isPlaceholder = (s: string): boolean => /^<[A-Z_]+>$/.test(s);
+export const isPlaceholder = (s: string): boolean => /^<[^<>\s]+>$/.test(s);
 
 const shq = (s: string): string => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) || isPlaceholder(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
 const skipsValue = (argv: readonly string[], i: number): boolean => !(argv[i] as string).includes('=') && argv[i + 1] !== undefined && !argv[i + 1]?.startsWith('--');

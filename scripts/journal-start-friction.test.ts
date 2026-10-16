@@ -129,8 +129,7 @@ test('--agent-type supplies --model from the agent definition', () => {
 });
 
 test('a fill-in marker is refused in every mark flag, and an empty HOME never makes the agent lookup read the working directory', () => {
-    for (const flag of ['--tokens', '--harness', '--agent']) assert.equal(run(['start', 'x', flag, '<NAME>', ...MARK]).code, 1, flag);
-    mkdirSync(join(home, '.claude', 'agents'), { recursive: true });
+    for (const flag of ['--tokens', '--harness', '--agent']) for (const v of ['<NAME>', '<...>']) assert.equal(run(['start', 'x', flag, v, ...MARK]).code, 1, `${flag} ${v}`);
     mkdirSync(join(home, '.claude', 'agents'), { recursive: true });
     writeFileSync(join(home, '.claude', 'agents', 'evil.md'), '---\nmodel: claude-opus-5-5\n---\n');
     const r = spawnSync(process.execPath, [SCRIPT, 'start', 'y', '--agent-type', 'evil', '--used', 'tool:Agent', '--vault', vault, '--project', 'test-proj'], { encoding: 'utf8', cwd: home, env: { ...process.env, HOME: '', VAULT_ROOT: '', MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_WINDOW: 'w1' } });
