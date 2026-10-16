@@ -8,7 +8,7 @@ import { h } from './dom.ts';
 import { CONCEPT_CSS } from './home-concept.ts';
 import { GRID_CSS } from './grid.ts';
 import { CUES_CSS, cuesSection, pickedStream } from './home-cues.ts';
-import { DECK_CSS, deckSection, gaugesSection } from './home-deck.ts';
+import { DECK_CSS, deckSection, agesSection, prsSection } from './home-deck.ts';
 import { HELD_CSS, codaSection, flightSection, heldSection } from './home-held.ts';
 import { scoreTable } from './home-model.ts';
 import { HOME_MOTION_CSS, takeEntrance } from './home-motion.ts';
@@ -61,16 +61,24 @@ export function homeTab(st: PodiumState, charts: ChartsData | null, opts: HomeOp
   const cues = cuesSection(st, opts.live, opts.redraw, opts.needs);
   const movements = movementsSection(opts.epics, projects?.links ?? []);
   const rehearsal = localReviewWidget(opts.local ?? null);
+  const held = heldSection(st, opts.live);
+  const flight = flightSection(st);
+  const ages = agesSection(st);
+  const prs = prsSection(st, charts);
+  const coda = codaSection(st, opts.redraw);
+  // What Jack needs to act on comes first (docs/design.md, "Placing a section"): cues, then open work, open PRs and what is blocked, then the views that only report.
   cues.classList.add('two-thirds');
-  movements.classList.add('two-thirds');
+  ages.classList.add('third');
+  prs.classList.add('third');
   rehearsal.classList.add('third');
+  movements.classList.add('two-thirds');
+  coda.classList.add('third');
   return h('div', { class: takeEntrance() ? 'home grid enter' : 'home grid' },
-    score ? scoreSection(score, pickedStream(st, opts.needs ?? [])) : h('p', { class: 'home-note', role: 'status' }, 'The 14-day score is missing: the charts data did not load.'),
     opts.projects.state === 'error' ? h('p', { class: 'home-note', role: 'alert' }, `Project names and notes could not be loaded (${opts.projects.message}). The rest of Home is current; reload to try again.`) : null,
     cues,
-    h('div', { class: 'third side' }, heldSection(st, opts.live), codaSection(st, opts.redraw), flightSection(st)),
-    movements,
-    rehearsal,
-    deck, cost,
-    gaugesSection(st, charts));
+    h('div', { class: 'third side' }, flight, held),
+    ages, prs, rehearsal,
+    score ? scoreSection(score, pickedStream(st, opts.needs ?? [])) : h('p', { class: 'home-note', role: 'status' }, 'The 14-day score is missing: the charts data did not load.'),
+    movements, coda,
+    deck, cost);
 }

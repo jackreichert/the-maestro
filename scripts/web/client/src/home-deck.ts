@@ -29,11 +29,6 @@ export const DECK_CSS = `
   .weeks { display: flex; justify-content: space-between; margin-top: var(--space-1); font-size: var(--text-xs); color: var(--text-muted); }
   .enter .perc-svg .day { animation: fade-up var(--dur-base) var(--ease-out) backwards; animation-delay: calc(var(--i, 0) * var(--stagger)); }
 
-  .gauges { display: grid; gap: var(--space-6) var(--gutter); }
-  @media (min-width: 768px) { .gauges { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  .gauge h3 { margin: 0 0 var(--space-1); font-size: var(--text-md); font-weight: var(--weight-semibold); }
-  .gauge h3 .n { font-weight: var(--weight-regular); color: var(--text-muted); }
-  .gauge .cap { margin: 0 0 var(--space-3); font-size: var(--text-sm); color: var(--text-secondary); }
   .bars { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr) 2.5rem; gap: var(--space-2) var(--space-3); align-items: center; margin: 0; padding: 0; list-style: none; font-size: var(--text-sm); }
   .bars li { display: contents; }
   .bars .track { height: 8px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
@@ -155,26 +150,25 @@ export function deckSection(st: PodiumState, charts: ChartsData | null, score: S
 
 const CI_LABEL: Record<CiKey, string> = { pass: 'Passing', pending: 'Pending', fail: 'Failing', none: 'No checks' };
 
-/** Continuo: open asks by age, and open PRs by CI state with where they are stuck. The board's own gauges, set in the concept's type. */
-export function gaugesSection(st: PodiumState, charts: ChartsData | null): HTMLElement {
+/** Continuo, first part: open asks by age, the board's own gauge set in the concept's type. */
+export function agesSection(st: PodiumState): HTMLElement {
   const bars = askAgeBars(st.asks);
   const top = Math.max(1, ...bars.map((b) => b.n));
+  return conceptSection('gauge continuo', { instrument: 'Continuo', title: 'Open asks by age', n: null, hint: 'Past 3 days is stale, shown in amber.' },
+    h('ul', { class: 'bars', role: 'list' }, ...bars.map((b) => h('li', { class: b.stale ? 'stale' : undefined },
+      h('span', {}, b.label), h('span', { class: 'track', 'aria-hidden': 'true' }, fill(b.n / top)), h('span', { class: 'v' }, String(b.n))))));
+}
+
+/** Continuo, second part: open PRs by CI state, with the review queue against its cap and where PRs are stuck. */
+export function prsSection(st: PodiumState, charts: ChartsData | null): HTMLElement {
   const g = prGauge(st.prs, charts);
   const keys: CiKey[] = ['pass', 'pending', 'fail', 'none'];
   const over = g.queue !== null && g.queue.count > g.queue.cap;
   const fact = (n: number, text: string, warn = false): HTMLElement => h('div', { class: warn ? 'warn' : undefined }, h('b', {}, String(n)), text);
-  return conceptSection('continuo', { instrument: 'Continuo', title: 'Open work', n: null },
-    h('div', { class: 'gauges' },
-      h('section', { class: 'gauge', 'aria-labelledby': 'g-age' },
-        h('h3', { id: 'g-age' }, 'Open asks by age'), h('p', { class: 'cap' }, 'Past 3 days is stale, shown in amber.'),
-        h('ul', { class: 'bars', role: 'list' }, ...bars.map((b) => h('li', { class: b.stale ? 'stale' : undefined },
-          h('span', {}, b.label), h('span', { class: 'track', 'aria-hidden': 'true' }, fill(b.n / top)), h('span', { class: 'v' }, String(b.n)))))),
-      h('section', { class: 'gauge', 'aria-labelledby': 'g-pr' },
-        h('h3', { id: 'g-pr' }, 'Open PRs ', h('span', { class: 'n' }, `· ${g.total}`)),
-        h('p', { class: 'cap' }, 'CI state across every stream. ', h('a', { href: formatFragment(OPEN_PRS) }, 'Open the PR board')),
-        h('div', { class: 'cibar', 'aria-hidden': 'true' }, ...keys.filter((k) => g.ci[k] > 0).map((k) => grow(`ci-${k}`, g.ci[k]))),
-        h('ul', { class: 'ci-legend', role: 'list' }, ...keys.map((k) => h('li', {}, h('i', { class: `ci-${k}`, 'aria-hidden': 'true' }), `${CI_LABEL[k]} ${g.ci[k]}`))),
-        h('div', { class: 'facts3' },
-          g.queue ? fact(g.queue.count, ` in your review queue, cap ${g.queue.cap}`, over) : null,
-          fact(g.threads, ' with open threads'), fact(g.conflicting, ' conflicting')))));
+  return conceptSection('gauge continuo', { instrument: 'Continuo', title: 'Open PRs', n: g.total, hint: h('span', {}, 'CI state across every stream. ', h('a', { href: formatFragment(OPEN_PRS) }, 'Open the PR board')) },
+    h('div', { class: 'cibar', 'aria-hidden': 'true' }, ...keys.filter((k) => g.ci[k] > 0).map((k) => grow(`ci-${k}`, g.ci[k]))),
+    h('ul', { class: 'ci-legend', role: 'list' }, ...keys.map((k) => h('li', {}, h('i', { class: `ci-${k}`, 'aria-hidden': 'true' }), `${CI_LABEL[k]} ${g.ci[k]}`))),
+    h('div', { class: 'facts3' },
+      g.queue ? fact(g.queue.count, ` in your review queue, cap ${g.queue.cap}`, over) : null,
+      fact(g.threads, ' with open threads'), fact(g.conflicting, ' conflicting')));
 }
