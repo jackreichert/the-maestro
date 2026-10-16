@@ -6,7 +6,7 @@ import { sanitizeCost } from '../src/contract.ts';
 import type { CostData, CostMetric } from '../src/types.ts';
 
 installDom();
-const { costSection, costValue } = await import('../src/cost-widget.ts');
+const { costSection, costValue, tempoOf } = await import('../src/cost-widget.ts');
 
 const series = (v: (number | null)[]): (number | null)[] => [...Array(14 - v.length).fill(null), ...v];
 const metric = (o: Partial<CostMetric> & { name: string }): CostMetric => ({ fmt: 'n', today: 100, median7: 100, vs7: 0, regression: false, limit: null, dir: null, status: '-', series: series([100, 100]), ...o });
@@ -32,21 +32,22 @@ test('a regression is named in words on its row and in the header, not by colour
   assert.match(line.querySelector('svg')?.getAttribute('aria-label') ?? '', /Read\/turn, last 14 days/);
 });
 
-test('the mix bar says whether each target is met, in text', () => {
+test('the model mix ring says in words whether each goal is met', () => {
   const el = draw(data())!;
-  assert.match(text(el.querySelector('.cost-mix-facts')), /Opus 57%, target at most 40%: Target missed.*Haiku 9%, target at least 15%: Target missed/);
-  assert.equal(el.querySelectorAll('.mix-bar span:not(.mix-target)').length, 3);
-  assert.ok(el.querySelector('.mix-bar .mix-target'), 'the Opus target is marked on the bar');
+  assert.match(text(el.querySelector('.cost-mix-facts')), /Opus 57%, goal at most 40%: Target missed.*Haiku 9%, goal at least 15%: Target missed/);
+  assert.equal(el.querySelectorAll('.donut circle.arc').length, 3);
+  assert.equal(el.querySelectorAll('.donut line.goal').length, 2, 'both goals are ticks on the ring');
+  assert.match(el.querySelector('.donut')?.getAttribute('aria-label') ?? '', /Opus 57%.*Goals: Opus at most 40%, Haiku at least 15%/);
+  assert.match(text(el.querySelector('.donut .c1')) + text(el.querySelector('.donut .c2')), /Opus 57%goal \u226440%/);
   const met = draw(data({ mix: { opus: 0.3, sonnet: 0.5, haiku: 0.2, opusMax: 0.4, haikuMin: 0.15 } }))!;
   assert.match(text(met.querySelector('.cost-mix-facts')), /Opus 30%.*On target.*Haiku 20%.*On target/);
   const none = draw(data({ mix: { opus: null, sonnet: null, haiku: null, opusMax: 0.4, haikuMin: Number.NaN } }))!;
-  assert.match(text(none.querySelector('.cost-mix-facts')), /Opus n\/a.*no data.*Haiku n\/a, target at least unset: no data/);
-  assert.match(text(draw(data({ stale: true }))!.querySelector('.sec-head')), /No data since 2026-10-12; regression check not run/);
+  assert.match(text(none.querySelector('.cost-mix-facts')), /Opus n\/a.*no data.*Haiku n\/a, goal at least unset: no data/);
 });
 
 test('an empty state shows its reason, a stale one says how to refresh, and no payload draws no section', () => {
   assert.match(text(draw(data({ state: 'empty', reason: 'The token table has no day to show yet.', metrics: [], mix: null, date: null }))), /no day to show yet/);
-  assert.match(text(draw(data({ stale: true })!)!.querySelector('[role=status]')), /newest day in the token table is 2026-10-12/);
+  assert.match(text(draw(data({ stale: true })!)!.querySelector('[role=status]')), /Last measured 2026-10-12\. There is no fresh measurement/);
   assert.equal(costSection(null), null);
 });
 
@@ -79,12 +80,12 @@ test('sanitizeCost drops a bad metric and a bad mix but keeps the rest, and refu
 test('the metronome reads today against the first daily maximum, and rests with a note when no metric has one', () => {
   const el = draw(data())!;
   const read = text(el.querySelector('.metro-read'));
-  assert.match(read, /156% of the limit/);
-  assert.match(read, /Read\/turn: 312\.0k of at most 200\.0k/);
-  assert.equal(el.querySelector<SVGElement>('.metro .pend')!.dataset['angle'], '42', 'pinned at the right end, not past it');
+  assert.match(read, /Tokens read per turn: 312\.0k, limit 200\.0k/);
+  assert.match(read, /156% of the limit, over it/);
+  assert.equal(el.querySelector<SVGElement>('.metro-wrap .metro .pend')!.dataset['angle'], '42', 'pinned at the right end, not past it');
   const none = draw(data({ metrics: [metric({ name: 'Turns' })], regressions: [] }))!;
   assert.match(text(none.querySelector('.metro-read')), /No limit set/);
-  assert.equal(none.querySelector<SVGElement>('.metro .pend')!.dataset['angle'], '-42');
+  assert.equal(none.querySelector<SVGElement>('.metro-wrap .metro .pend')!.dataset['angle'], '-42');
 });
 
 test('a metric with no 7-day median has no dynamic mark, and says so in words', () => {
@@ -93,4 +94,53 @@ test('a metric with no 7-day median has no dynamic mark, and says so in words', 
   assert.match(text(line), /no 7-day median/);
   assert.equal(line.querySelector('svg.hairpin'), null);
   assert.match(text(line.querySelector('.dyn-mark')), /no dynamic/);
+});
+
+test('a stale measurement says when it was last measured, is muted, and never swings the pendulum', () => {
+  const el = draw(data({ stale: true, date: '2026-09-30' }))!;
+  assert.ok(el.classList.contains('stale'), 'the section is muted');
+  assert.match(text(el.querySelector('.sec-head')), /Last measured 2026-09-30; no fresh measurement/);
+  const read = text(el.querySelector('.metro-read'));
+  assert.match(read, /Tokens read per turn: 312\.0k, limit 200\.0k/);
+  assert.match(read, /Last measured 2026-09-30\. No fresh measurement/);
+  assert.doesNotMatch(read, /% of the limit/, 'no live-looking percentage');
+  assert.equal(el.querySelector<SVGElement>('.metro-wrap .metro .pend')!.dataset['angle'], '-42', 'rests at the left');
+  assert.match(text(el.querySelector('.donut-date')), /Last measured 2026-09-30; not today's mix/);
+});
+
+test('a fresh measurement labels the day the mix is for', () => {
+  assert.match(text(draw(data())!.querySelector('.donut-date')), /Measured for 2026-10-12/);
+});
+
+const days = (totals: number[]) => totals.map((total, i) => ({ date: `2026-10-${String(i + 1).padStart(2, '0')}`, total, byStream: {}, ids: [] }));
+const chartsOf = (totals: number[]) => ({ throughput: days(totals) }) as never;
+
+test('the day\'s tempo is today against the median of the seven days before, and null with fewer than three', () => {
+  assert.deepEqual(tempoOf(chartsOf([10, 20, 30, 40, 50, 60, 70, 35])), { today: 35, median: 40, date: '2026-10-08' });
+  assert.deepEqual(tempoOf(chartsOf([4, 6, 8, 10])), { today: 10, median: 6, date: '2026-10-04' });
+  assert.equal(tempoOf(chartsOf([1, 2, 3])), null);
+  assert.equal(tempoOf(null), null);
+});
+
+test('the tempo pendulum swings right as the day fills, with a dynamics mark and an honest note on what is counted', () => {
+  const at = (today: number): { angle: string; text: string } => {
+    const s = costSection(data(), { today, median: 20, date: '2026-10-12' })!;
+    place(s);
+    return { angle: s.querySelector<SVGElement>('.tempo-wrap .metro .pend')!.dataset['angle'] ?? '', text: text(s.querySelector('.tempo-read')) };
+  };
+  const quiet = at(5);
+  const typical = at(20);
+  const busy = at(40);
+  assert.ok(Number(quiet.angle) < Number(typical.angle) && Number(typical.angle) < Number(busy.angle) + 1);
+  assert.equal(typical.angle, '0', 'a typical day is the centre');
+  assert.equal(busy.angle, '42', 'twice the median is full right');
+  assert.match(quiet.text, /5 shipped today.*pianissimo/);
+  assert.match(busy.text, /40 shipped today.*fortissimo/);
+  assert.match(busy.text, /merged PRs are not counted separately/);
+});
+
+test('no median means no mark and the pendulum at rest, said in words', () => {
+  const s = costSection(data(), null)!;
+  assert.match(text(s.querySelector('.tempo-read')), /No tempo yet/);
+  assert.equal(s.querySelector<SVGElement>('.tempo-wrap .metro .pend')!.dataset['angle'], '-42');
 });
