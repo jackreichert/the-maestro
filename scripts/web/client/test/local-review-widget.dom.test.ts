@@ -17,7 +17,12 @@ test('the widget counts the whole queue, shows only the top few, and every row l
   assert.match(el.querySelector('h2')!.textContent ?? '', /Waiting for local review.*7/);
   assert.equal(el.querySelectorAll('li').length, WIDGET_CAP);
   for (const a of el.querySelectorAll('a')) assert.equal(a.getAttribute('href'), '#tab=open-prs');
-  assert.match(el.querySelector('.all')!.textContent ?? '', /All 7 on the Open PRs tab/);
+  assert.match(el.querySelector('.rh-all')!.textContent ?? '', /All 7 on the Open PRs tab/);
+  // Each branch has a button, named for the branch, that goes to the full list.
+  const buttons = [...el.querySelectorAll('a.btn')];
+  assert.equal(buttons.length, WIDGET_CAP);
+  assert.match(buttons[0]!.getAttribute('aria-label') ?? '', /^Review feat\/0; opens the Open PRs tab$/);
+  assert.match(el.querySelector('.instrument')!.textContent ?? '', /Rehearsal/);
   assert.match(el.textContent ?? '', /Not reviewed yet/);
 });
 

@@ -7,7 +7,8 @@ import { sanitizeCharts, sanitizeState } from '../src/contract.ts';
 import type { ChartsData, PodiumState } from '../src/types.ts';
 
 installDom();
-const { homeTab } = await import('../src/home-tab.ts');
+const { HOME_TAB_CSS, homeTab } = await import('../src/home-tab.ts');
+const { CHROME_CSS } = await import('../src/home-chrome.ts');
 const { HOME_MOTION_CSS, armHomeEntrance, newlyShipped, resetHomeMotion, takeEntrance } = await import('../src/home-motion.ts');
 const read = (name: string): unknown => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
 const state = (): PodiumState => structuredClone(sanitizeState(read('state.json'))!.state);
@@ -28,12 +29,12 @@ test('the entrance plays on the first draw, survives a quick follow-up redraw, a
 test('an item that ships between two draws is marked just-shipped; the first draw marks nothing', () => {
   resetHomeMotion();
   const first = state();
-  assert.equal(draw(first).querySelectorAll('.just-shipped').length, 0);
+  assert.equal(draw(first).querySelectorAll('.crow.new').length, 0);
   const next = structuredClone(first);
   const added = { ...next.done[0]!, id: 'newly-shipped-id', text: 'Shipped a moment ago', closedAt: new Date().toISOString() };
   next.done.push(added);
   const el = draw(next);
-  const marked = [...el.querySelectorAll('.just-shipped')];
+  const marked = [...el.querySelectorAll('.crow.new')];
   assert.equal(marked.length, 1);
   assert.match(marked[0]!.textContent ?? '', /Shipped a moment ago/);
 });
@@ -51,15 +52,21 @@ test('newlyShipped reports only ids it has not seen', () => {
 test('every selector the entrance targets matches something in a drawn Home', () => {
   resetHomeMotion();
   const el = draw(state());
-  for (const sel of ['.score-note', '.asks > ask-card', 'ul.shipped > li', '.bars .fill', '.cibar span']) {
-    assert.ok(el.querySelector(sel), sel);
+  for (const sel of ['.staff-svg .note', '.qcue', '.crow', '.bars .fill', '.cibar span', '.mix-bar span']) {
+    assert.ok(el.querySelector(sel) || sel === '.mix-bar span', sel);
   }
-  assert.ok(HOME_MOTION_CSS.includes('.enter .asks > ask-card:nth-child(1)'));
+  // The staggered rows carry their place in the list, and the CSS reads it.
+  assert.equal(el.querySelector<HTMLElement>('.staff-svg .note:nth-of-type(3)')?.style.getPropertyValue('--i') !== undefined, true);
+  assert.match(HOME_MOTION_CSS, /\.enter \.staff-svg \.note \{[^}]*animation-delay: calc\(min\(var\(--i\)/);
 });
 
-test('the motion CSS never loops, never animates layout, and switches off under reduced motion', () => {
-  assert.doesNotMatch(HOME_MOTION_CSS, /infinite/);
-  const keyframes = [...HOME_MOTION_CSS.matchAll(/@keyframes [\w-]+ \{(.*)\}/g)].map((m) => m[1]!);
+test('nothing on Home loops: the baton pulses a set number of times, and the ambient beats are budgeted', () => {
+  assert.doesNotMatch(`${HOME_TAB_CSS}${CHROME_CSS}`, /infinite/);
+  assert.match(CHROME_CSS, /\.baton \.tip\.on\.pulse \{ animation: pulse var\(--dur-breathe\) ease-in-out 3; \}/);
+});
+
+test('the motion CSS never animates layout and switches off under reduced motion', () => {
+  const keyframes = [...`${HOME_MOTION_CSS}${HOME_TAB_CSS}`.matchAll(/@keyframes [\w-]+ \{(.*)\}/g)].map((m) => m[1]!);
   assert.ok(keyframes.length >= 3);
   for (const body of keyframes) assert.doesNotMatch(body, /\b(width|height|top|left|right|bottom|margin|padding|flex)/, body);
   assert.match(HOME_MOTION_CSS, /@media \(prefers-reduced-motion: reduce\)[^]*animation: none !important/);

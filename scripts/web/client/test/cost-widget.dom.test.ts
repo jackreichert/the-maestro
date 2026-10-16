@@ -22,8 +22,12 @@ const text = (el: Element | null): string => (el?.textContent ?? '').replace(/\s
 test('a regression is named in words on its row and in the header, not by colour alone', () => {
   const el = draw(data())!;
   assert.match(text(el.querySelector('.sec-head')), /1 regressed \(Read\/turn\)/);
-  const line = [...el.querySelectorAll('.cost-line')].find((l) => text(l).startsWith('Read/turn'))!;
-  assert.match(text(line), /312\.0k.*\+50% vs 7-day median.*at most 200\.0k.*Regression/);
+  const line = [...el.querySelectorAll('.dyn')].find((l) => text(l).startsWith('Read/turn'))!;
+  assert.match(text(line), /312\.0k.*median 208\.0k · \+50% vs 7-day median.*at most 200\.0k.*Regression/);
+  // Today over the median is a dynamic mark (ff: well above typical) with its gloss in words, and a hairpin that opens.
+  assert.match(text(line.querySelector('.dyn-mark')), /fortissimo: well above typical/);
+  assert.equal(line.querySelector('.dyn-mark > span[aria-hidden]')?.textContent, 'ff');
+  assert.ok(line.querySelector('svg.hairpin path'));
   assert.equal(line.querySelector('svg.spark.bad')?.getAttribute('role'), 'img');
   assert.match(line.querySelector('svg')?.getAttribute('aria-label') ?? '', /Read\/turn, last 14 days/);
 });
@@ -31,7 +35,8 @@ test('a regression is named in words on its row and in the header, not by colour
 test('the mix bar says whether each target is met, in text', () => {
   const el = draw(data())!;
   assert.match(text(el.querySelector('.cost-mix-facts')), /Opus 57%, target at most 40%: Target missed.*Haiku 9%, target at least 15%: Target missed/);
-  assert.equal(el.querySelectorAll('.cost-mix .seg-bar span').length, 3);
+  assert.equal(el.querySelectorAll('.mix-bar span:not(.mix-target)').length, 3);
+  assert.ok(el.querySelector('.mix-bar .mix-target'), 'the Opus target is marked on the bar');
   const met = draw(data({ mix: { opus: 0.3, sonnet: 0.5, haiku: 0.2, opusMax: 0.4, haikuMin: 0.15 } }))!;
   assert.match(text(met.querySelector('.cost-mix-facts')), /Opus 30%.*On target.*Haiku 20%.*On target/);
   const none = draw(data({ mix: { opus: null, sonnet: null, haiku: null, opusMax: 0.4, haikuMin: Number.NaN } }))!;
@@ -69,4 +74,23 @@ test('sanitizeCost drops a bad metric and a bad mix but keeps the rest, and refu
   assert.equal(r?.data.mix, null);
   assert.equal(sanitizeCost({ state: 'weird' }), null);
   assert.equal(sanitizeCost(null), null);
+});
+
+test('the metronome reads today against the first daily maximum, and rests with a note when no metric has one', () => {
+  const el = draw(data())!;
+  const read = text(el.querySelector('.metro-read'));
+  assert.match(read, /156% of the limit/);
+  assert.match(read, /Read\/turn: 312\.0k of at most 200\.0k/);
+  assert.equal(el.querySelector<SVGElement>('.metro .pend')!.dataset['angle'], '42', 'pinned at the right end, not past it');
+  const none = draw(data({ metrics: [metric({ name: 'Turns' })], regressions: [] }))!;
+  assert.match(text(none.querySelector('.metro-read')), /No limit set/);
+  assert.equal(none.querySelector<SVGElement>('.metro .pend')!.dataset['angle'], '-42');
+});
+
+test('a metric with no 7-day median has no dynamic mark, and says so in words', () => {
+  const el = draw(data({ metrics: [metric({ name: 'Turns', vs7: null, median7: null })], regressions: [] }))!;
+  const line = el.querySelector('.dyn')!;
+  assert.match(text(line), /no 7-day median/);
+  assert.equal(line.querySelector('svg.hairpin'), null);
+  assert.match(text(line.querySelector('.dyn-mark')), /no dynamic/);
 });
