@@ -56,6 +56,28 @@ const url = (n: number): string => `https://github.com/acme/app/pull/${n}`;
 const gated = (prs: OtherPr[], lines: string[], extra: Record<string, unknown> = {}) => buildOthersPrs({ ...opts(cacheWith(prs)), slackDir: slackDir(lines), maxAgeDays: 2, ...extra }, NOW);
 const staleOf = (out: ReturnType<typeof buildOthersPrs>): Record<number, boolean> => Object.fromEntries(out.prs.map((p) => [p.number, p.stale === true]));
 
+const numbers = (out: ReturnType<typeof buildOthersPrs>): number[] => out.prs.map((p) => p.number).sort((a, b) => a - b);
+
+test('a PR whose last ask is past the drop age leaves the tab, Stale included; the boundary is exact', () => {
+  const inside = gated([pr(1)], [`- 2026-10-12 08:11 ET **Pat F**: ${url(1)}`], { dropDays: 3 });
+  const past = gated([pr(1)], [`- 2026-10-12 08:09 ET **Pat F**: ${url(1)}`], { dropDays: 3 });
+  assert.deepEqual([numbers(inside), staleOf(inside)[1], numbers(past), past.total], [[1], true, [], 0], 'inside the drop age it stays (and is stale); past it, gone');
+});
+
+test('a re-up brings a dropped PR back; a PR never posted ages from its opening', () => {
+  const reup = gated([pr(1)], [`- 2026-10-01 08:09 ET **Pat F**: ${url(1)}`, '- 2026-10-15 07:00 ET ↳ **Pat F**: ping'], { dropDays: 3 });
+  assert.deepEqual(numbers(reup), [1]);
+  const never = gated([pr(1, { createdAt: '2026-10-11T12:10:00Z' }), pr(2, { createdAt: '2026-10-13T12:10:00Z' })], [], { dropDays: 3 });
+  assert.deepEqual(numbers(never), [2]);
+});
+
+test('a direct review request or an @-mention is never dropped; with no drop age nothing is', () => {
+  const old = '2026-10-01T12:10:00Z';
+  const out = gated([pr(1, { createdAt: old, requested: ['me-fake'] }), pr(2, { createdAt: old }), pr(3, { createdAt: old })], [`- 2026-10-01 09:00 ET **Pat F**: ${url(3)} ⏎ @Mina can you look`], { dropDays: 3, mentionNames: ['mina'] });
+  assert.deepEqual(numbers(out), [1, 3]);
+  assert.deepEqual(numbers(gated([pr(1, { createdAt: old })], [])), [1]);
+});
+
 test('Eastern times honour daylight saving', () => {
   assert.equal(new Date(etMs(2026, 10, 15, 8, 10)).toISOString(), '2026-10-15T12:10:00.000Z');
   assert.equal(new Date(etMs(2026, 12, 1, 8, 10)).toISOString(), '2026-12-01T13:10:00.000Z');

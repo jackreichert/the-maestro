@@ -18,6 +18,8 @@ const DAY_MS = 86_400_000;
 export interface OthersScopeOptions { statusDir: string; owners: readonly string[]; selfRepos: readonly string[]; self: string; guard?: Guard;
   /** A PR whose latest ask (Slack activity, or its own opened time when never posted) is older than this many days is marked stale, unless you are asked for review or @-mentioned. Absent means no cutoff. */
   maxAgeDays?: number;
+  /** A PR whose latest ask is older than this many days leaves the tab entirely (Stale included), with the same exemptions as the stale gate: a direct ask or an @-mention is never dropped. Absent means nothing is dropped. */
+  dropDays?: number;
   /** The folder of the slack-watch engineering notes (`<vault_root>/Projects/<container>/Slack`); absent means no Slack ask is known. */
   slackDir?: string;
   /** Names that count as @-mentioning you in Slack (`others_prs_mention_names`). */
@@ -63,22 +65,40 @@ function row(p: OtherPr, self: string, guard: Guard, now: Date, slack: ReadonlyM
  */
 function ask(p: OtherPr, youAsked: boolean, slack: ReadonlyMap<string, SlackActivity>, now: Date, cutoff: number | null): Pick<OthersPrRow, 'askedAt' | 'stale' | 'staleWhy'> {
   const s = slack.get(p.url.toLowerCase());
-  const at = s ? s.at : Date.parse(p.createdAt);
+  const at = latestAskAt(p, s);
   if (!Number.isFinite(at)) return {};
   const days = Math.round((now.getTime() - at) / DAY_MS);
-  const stale = cutoff !== null && at < cutoff && !youAsked && !s?.mentioned;
+  const stale = pastCutoff(at, cutoff, youAsked, s);
   const why = s ? (s.replied ? `last Slack reply ${days}d ago` : `Slack post ${days}d, no reply`) : `never posted, opened ${days}d ago`;
   return { askedAt: new Date(at).toISOString(), ...(stale ? { stale: true, staleWhy: why } : {}) };
+}
+
+/** When the PR was last asked about: its newest Slack post or reply, else the PR's opening time. NaN when neither is a date. */
+const latestAskAt = (p: OtherPr, s: SlackActivity | undefined): number => (s ? s.at : Date.parse(p.createdAt));
+
+/** The one rule both gates share: an ask older than the cutoff counts, unless you were asked for review or @-mentioned. */
+const pastCutoff = (at: number, cutoff: number | null, youAsked: boolean, s: SlackActivity | undefined): boolean =>
+  cutoff !== null && at < cutoff && !youAsked && !s?.mentioned;
+
+/** True when the PR's latest ask is past the drop cutoff and nobody asked you directly. Shares `pastCutoff` with the stale gate, so the two cannot disagree on the clock or the exemptions. */
+function dropped(p: OtherPr, self: string, slack: ReadonlyMap<string, SlackActivity>, cutoff: number | null): boolean {
+  const youAsked = self !== '' && p.requested.some((r) => r.toLowerCase() === self);
+  const s = slack.get(p.url.toLowerCase());
+  const at = latestAskAt(p, s);
+  return Number.isFinite(at) && pastCutoff(at, cutoff, youAsked, s);
 }
 
 export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData {
   const cache = readOthersCache(o.statusDir);
   const owners = new Set(o.owners.map((x) => x.toLowerCase()));
   const self = o.self.toLowerCase();
+  const slack = slackActivity(o.slackDir, o.mentionNames);
+  // Never earlier than the stale gate, so a dropped PR was always stale first.
+  const dropCutoff = o.dropDays === undefined ? null : now.getTime() - Math.max(o.dropDays, o.maxAgeDays ?? 0) * DAY_MS;
   const kept = (cache?.prs ?? [])
     .filter((p) => p.author.toLowerCase() !== self && owners.has((p.repo.split('/')[0] ?? '').toLowerCase()) && !isSelfReview(p.repo, o.selfRepos))
+    .filter((p) => !dropped(p, self, slack, dropCutoff))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const slack = slackActivity(o.slackDir, o.mentionNames);
   const cutoff = o.maxAgeDays === undefined ? null : now.getTime() - o.maxAgeDays * DAY_MS;
   const fetchedAt = cache?.fetchedAt ?? null;
   const stale = !fetchedAt || now.getTime() - fetchedAt.getTime() > PR_STALE_MS;
