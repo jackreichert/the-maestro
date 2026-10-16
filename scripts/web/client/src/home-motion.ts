@@ -4,12 +4,8 @@
  * The entrance is a class on the Home root for the first draw after arming and for redraws within a short settle window, so a quick follow-up render does not cut it short and a later live refresh (which rebuilds Home) does not replay it. takeEntrance and newlyShipped advance that state on purpose: each Home draw is the unit.
  */
 
-/** Cells on the score staff (one per chart day), and the rows the entrance staggers, so each stagger rule is written once here. */
-const DAYS = 14;
-const ROWS = 6;
-/** The stagger stops growing here, so the last day of the score is not 300 ms behind the first. */
+/** An item's entrance is delayed by its place in its list (the page sets --i on it), and the delay stops growing here, so the last day of the score is not 300 ms behind the first. */
 const MAX_STEPS = 8;
-const STEP_MS = 24;
 
 /** A redraw this soon after the entrance began (the projects load lands right after the first draw) replays it instead of cutting it short. */
 const SETTLE_MS = 700;
@@ -47,31 +43,21 @@ export function resetHomeMotion(): void {
   state = fresh();
 }
 
-const stagger = (selector: (n: number) => string, count: number): string =>
-  Array.from({ length: count }, (_, i) => `${selector(i + 1)} { animation-delay: ${Math.min(i, MAX_STEPS) * STEP_MS}ms; }`).join('\n  ');
-
 export const HOME_MOTION_CSS = `
-  /* Entrance. The note drops onto its line; rows rise; bars fill from the left. Each uses translate, scale and opacity only. */
-  .enter .score-note { animation: note-drop var(--dur-base) var(--ease-out) backwards; }
-  .enter .score-rest { animation: fade-up var(--dur-base) var(--ease-out) backwards; }
-  ${stagger((n) => `.enter .score-cell:nth-child(${n}) > *`, DAYS)}
-  .enter .asks > ask-card, .enter ul.shipped > li, .enter .ecard { animation: fade-up var(--dur-base) var(--ease-out) backwards; }
-  ${stagger((n) => `.enter .asks > ask-card:nth-child(${n}), .enter ul.shipped > li:nth-child(${n}), .enter ul.ecards > li:nth-child(${n}) .ecard`, ROWS)}
-  .enter .bars .fill, .enter .seg-bar span, .enter .cibar span { transform-origin: left center; animation: bar-fill var(--dur-slow) var(--ease-out) backwards; animation-delay: 120ms; }
+  /* Entrance. A note drops onto its line; rows rise; bars fill from the left. Each uses translate, scale and opacity only. */
+  .enter .staff-svg .note { animation: note-drop var(--dur-base) var(--ease-out) backwards; animation-delay: calc(min(var(--i), ${MAX_STEPS}) * var(--stagger)); }
+  .enter .crow, .enter .mvt { animation: fade-up var(--dur-base) var(--ease-out) backwards; animation-delay: calc(min(var(--i), ${MAX_STEPS}) * var(--stagger)); }
+  .enter .bars .fill, .enter .cibar span, .enter .qbar span, .enter .mix-bar span:not(.mix-target) { transform-origin: left center; animation: bar-fill var(--dur-slow) var(--ease-out) backwards; animation-delay: 120ms; }
   @keyframes note-drop { from { opacity: 0; translate: 0 -6px; } }
   @keyframes fade-up { from { opacity: 0; translate: 0 6px; } }
   @keyframes bar-fill { from { transform: scaleX(0); } }
 
-  /* A shipped item that arrived since the last draw lands with a small overshoot. */
-  ul.shipped > li.just-shipped { animation: arrive var(--dur-slow) var(--ease-spring) backwards; }
-  @keyframes arrive { from { opacity: 0; translate: 0 -8px; scale: 0.97; } }
-
-  /* Hover on a staff (Home's rows and a stream's big staff): its notes lift a little. A transition, so it never restarts the entrance. */
+  /* Hover on a staff: its notes lift a little. A transition, so it never restarts the entrance. */
   @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-    .score-note { transition: translate var(--dur-base) var(--ease-spring); }
-    .score-staff:hover .score-note { translate: 0 -2px; }
+    .staff-svg .note { transition: translate var(--dur-base) var(--ease-spring); }
+    .staff-svg:hover .note { translate: 0 -2px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .enter *, ul.shipped > li.just-shipped, .score-note { animation: none !important; transition: none !important; }
+    .enter *, .crow.new, .staff-svg .note { animation: none !important; transition: none !important; }
   }
 `;

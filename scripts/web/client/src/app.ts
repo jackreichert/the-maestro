@@ -14,8 +14,8 @@ import { findByKey, focusKeyOf, foldStates, keepAcross, restoreFolds } from './k
 import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
-import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
-import { DASHBOARD, OPEN_PRS, OTHERS_PRS, SCRIPTS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, parseStreamFilter, tabIds } from './tabs.ts';
+import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoGloss, tempoWord } from './glance.ts';
+import { DASHBOARD, OPEN_PRS, OTHERS_PRS, SCRIPTS, formatFragment, streamTabId, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, parseStreamFilter, tabIds } from './tabs.ts';
 import { OpenPrsStore } from './open-prs-store.ts';
 import { OthersPrsStore } from './others-prs-store.ts';
 import './others-prs.ts';
@@ -26,9 +26,12 @@ import { createDraftActions, loadDrafts } from './drafts-api.ts';
 import { createPoster } from './write-token.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
 import { armHomeEntrance } from './home-motion.ts';
-import { LOCAL_WIDGET_CSS, localReviewWidget, queueSize } from './local-review-widget.ts';
+import { queueSize } from './local-review-widget.ts';
+import { CHROME_CSS, baton, masthead, pickerOpen, streamPicker } from './home-chrome.ts';
+import { shouldPulse, startAmbience, sweepPlayhead } from './home-ambience.ts';
 import { streamScore, todayPanel } from './home-sections.ts';
 import { seriesClass } from './series.ts';
+import { streamVar } from './home-concept.ts';
 import type { ProjectsLoad } from './home-tab.ts';
 import { chipId, filteredView } from './filter-view.ts';
 import { needsItems, needsSig } from './needs-items.ts';
@@ -39,35 +42,17 @@ import type { AskBusyDetail, ChartsData, CostData, EpicsData, LocalReview, Podiu
 
 interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; cost: CostData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number; needsSig: string }
 
-const CSS = `${BOARD_CSS}${HOME_TAB_CSS}${LOCAL_WIDGET_CSS}
+const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .wrap { max-width: var(--grid-max); margin: 0 auto; padding-inline: var(--page-pad); }
 
   /* Off screen until it has focus, then the first thing on the page; fixed so no layout moves. */
   .skip { position: fixed; inset-block-start: -100px; inset-inline-start: var(--space-3); z-index: 10; padding: var(--space-2) var(--space-4); border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); font-weight: var(--weight-semibold); text-decoration: none; }
   .skip:focus-visible { inset-block-start: var(--space-3); outline: 2px solid var(--focus); outline-offset: 2px; }
 
-  header.topbar { position: sticky; top: 0; z-index: 20; background: var(--material-bar); -webkit-backdrop-filter: var(--material-blur); backdrop-filter: var(--material-blur); border-bottom: var(--hairline); }
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { header.topbar { background: var(--surface-page); } }
-  header.topbar .bar { display: flex; align-items: center; gap: var(--space-5); min-height: 60px; }
-  h1.wordmark a { display: inline-flex; align-items: center; gap: var(--space-2); color: inherit; text-decoration: none; border-radius: var(--radius-xs); }
-  h1.wordmark { margin: 0; display: inline-flex; align-items: center; gap: var(--space-2); flex: none; font-family: var(--font-display); font-size: 1.75rem; line-height: 1; font-weight: var(--weight-regular); letter-spacing: -0.01em; white-space: nowrap; }
-  /* The baton wordmark: the stick is ink, and its tip takes the accent only while something needs you. */
-  .baton { width: 20px; height: 20px; margin-right: 6px; vertical-align: -4px; color: var(--text-primary); overflow: visible; }
-  .baton .stick { transform-box: view-box; transform-origin: 9.4px 22.6px; }
-  .baton .tip { fill: var(--text-muted); }
-  .baton .tip.on { fill: var(--accent); }
-  @media (hover: hover) { h1:hover .baton .stick { animation: downbeat calc(var(--dur-base) * 1.6) var(--ease-out); } }
-  @keyframes downbeat { 40% { transform: rotate(-8deg); } }
-  .date { font-size: var(--text-sm); color: var(--text-secondary); }
-  .date .short, .fresh .short-hide { display: inline; }
-  .date .short { display: none; }
-  @media (max-width: 480px) {
-    .top { flex-wrap: nowrap; }
-    .date .long, .fresh .short-hide { display: none; }
-    .date .short { display: inline; }
-    .scope { margin-top: var(--space-4); }
-    [role=tabpanel] { padding-top: var(--space-5); }
-  }
+  ${CHROME_CSS}
+  .source { margin: var(--space-2) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
+  .fresh .short-hide { display: inline; }
+  @media (max-width: 480px) { .fresh .short-hide { display: none; } [role=tabpanel] { padding-top: var(--space-5); } }
   .fresh {
     display: inline-flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-3); border-radius: var(--radius-pill);
     background: var(--surface-1); box-shadow: var(--shadow-1); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary);
@@ -81,79 +66,49 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}${LOCAL_WIDGET_CSS}
   .fresh.stale .dot { border-color: var(--warning); background: var(--warning); }
   .dot.tick { animation: tick calc(var(--dur-base) * 2.7) var(--ease-out); }
   @keyframes tick { 30% { opacity: 0.35; } }
-  .scope { margin: var(--space-5) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
-  .scope span { vertical-align: baseline; }
-  .scope { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); }
-  .scope .date { font-size: var(--text-md); color: var(--text-secondary); }
-  button.tempo {
-    font: var(--text-sm) / var(--leading-sm) var(--font-sans); letter-spacing: 0.01em; color: var(--text-secondary);
-    background: var(--surface-1); border: var(--hairline-strong); padding: 5px var(--space-3); border-radius: var(--radius-pill); cursor: pointer;
-    transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
-  }
-  button.tempo i { font-family: var(--font-serif); font-size: var(--text-md); font-style: italic; }
-  @media (hover: hover) { button.tempo:hover { color: var(--text-primary); border-color: var(--text-muted); } }
-  .tempo-rule { margin: var(--space-2) 0 0; max-width: 62ch; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
-  .tempo-rule[hidden] { display: none; }
-  .tempo-rule i { font-family: var(--font-serif); font-size: 1.04em; }
-  .tempo-rule i.now { color: var(--text-primary); }
   .blk { color: var(--critical); font-size: var(--text-sm); }
-  .source { margin: var(--space-2) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
 
-  /* The headline count line is set in the display face: large numerals read first, words recede. One weight, so the
-     count is marked by ink, not bold. A display size on the text line height keeps the header's measured height. */
-  .cue { margin: var(--space-4) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-4); padding: 0; list-style: none; font-family: var(--font-display); font-size: clamp(2.25rem, 4.4vw, 3.75rem); line-height: 1.08; letter-spacing: -0.02em; color: var(--text-muted); }
-  .cue li { display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap; color: var(--text-secondary); }
-  .cue li:not(:last-child)::after { content: '·' / ''; margin-left: var(--space-3); color: var(--text-muted); }
+  /* The counts: a glyph and a number before each word, the way the concept sets them. The tiles are still buttons that filter the board. */
+  .cue { margin: var(--space-3) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-5); padding: 0; list-style: none; color: var(--text-secondary); }
+  .cue li { display: inline-flex; align-items: baseline; white-space: nowrap; }
   button.tile {
-    font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; cursor: pointer;
-    display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap;
+    font: inherit; color: inherit; background: none; border: 0; cursor: pointer;
+    display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap; min-height: 32px; align-self: center;
     padding: 0 var(--space-2); margin: 0 calc(-1 * var(--space-2)); border-radius: var(--radius-sm);
     transition: background-color var(--dur-fast) var(--ease-out);
   }
   @media (hover: hover) { button.tile:hover { background: var(--accent-soft); } }
   button.tile[aria-pressed=true] { background: var(--accent-soft); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.2em; }
+  button.tile .g { font-size: 0.7em; }
+  .tone-accent .g { color: var(--accent); } .tone-critical .g { color: var(--critical); } .tone-success .g { color: var(--success); } .tone-warning .g { color: var(--warning); }
   .filter-bar { margin: 0 0 var(--space-4); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
-  .cue .n { font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; color: var(--text-primary); }
-  .cue .zero, .cue .zero .n { color: var(--text-muted); font-weight: var(--weight-regular); }
-  .cue .tone-accent:not(.zero) .n { color: var(--accent); }
-  .cue .tone-critical:not(.zero) .n { color: var(--critical); }
-  .cue .tone-success:not(.zero) .n { color: var(--success); }
-  @media (max-width: 640px) { .cue { font-size: var(--text-2xl); line-height: var(--leading-xl); gap: var(--space-1) var(--space-4); } }
+  .cue .n { font-family: var(--font-mono); font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; color: var(--text-primary); }
+  .cue .zero, .cue .zero .n { color: var(--text-muted); }
+  .tempo-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-4); }
+  button.tempo { font: inherit; font-family: var(--font-display); font-style: italic; font-size: var(--text-2xl); line-height: var(--leading-2xl); color: var(--text-primary); background: none; border: 0; padding: 0 var(--space-2); margin: 0 calc(-1 * var(--space-2)); border-radius: var(--radius-sm); cursor: pointer; text-decoration: underline dotted var(--text-muted); text-underline-offset: 0.18em; text-decoration-thickness: 1px; }
+  @media (hover: hover) { button.tempo:hover { background: var(--surface-2); } }
+  .tempo-gloss { margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
+  .tempo-rule { margin: var(--space-2) 0 0; max-width: 62ch; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
+  .tempo-rule[hidden] { display: none; }
+  .tempo-rule i { font-family: var(--font-display); font-size: 1.04em; }
+  .tempo-rule i.now { color: var(--text-primary); }
+  .stream-title .tempo-line { margin-left: var(--space-2); }
 
-  .tabbar { flex: 1; min-width: 0; background: none; border: 0; }
-  [role=tablist] { display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
-  [role=tablist]::-webkit-scrollbar { display: none; }
-  .more-end [role=tablist] { mask-image: linear-gradient(to right, black calc(100% - 56px), transparent); }
-  .more-start [role=tablist] { mask-image: linear-gradient(to right, transparent, black 56px); }
-  .more-start.more-end [role=tablist] { mask-image: linear-gradient(to right, transparent, black 56px, black calc(100% - 56px), transparent); }
-  [role=tab] {
-    position: relative; flex: none; display: inline-flex; align-items: center; gap: var(--space-2); min-height: 36px;
-    padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer;
-    font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-secondary); white-space: nowrap;
-    transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
-  }
-  @media (hover: hover) { [role=tab]:hover { color: var(--text-primary); background: var(--surface-2); } }
-  [role=tab]:focus-visible { outline-offset: 2px; }
-  [role=tab][aria-selected=true] { color: var(--text-primary); background: var(--surface-1); box-shadow: var(--shadow-1); }
-  .nav-sep { width: 1px; height: 20px; background: var(--border); margin: 0 var(--space-2); flex: none; }
-  .stream-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-  .s1 { background: var(--series-1); } .s2 { background: var(--series-2); } .s3 { background: var(--series-3); } .s4 { background: var(--series-4); }
-  .s5 { background: var(--series-5); } .s6 { background: var(--series-6); } .s7 { background: var(--series-7); } .s8 { background: var(--series-8); }
-  .so { background: var(--series-other); }
-  .count { font-size: var(--text-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
-  [role=tab][aria-selected=true] .count { color: var(--text-secondary); }
   .badge { min-width: 20px; min-height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xs); line-height: 20px; font-weight: var(--weight-semibold); text-align: center; font-variant-numeric: tabular-nums; }
-  .cue-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 400px); gap: var(--space-6) var(--space-7); align-items: start; padding-bottom: var(--space-6); border-bottom: var(--hairline); margin-bottom: var(--space-7); }
+  .lead-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 400px); gap: var(--space-6) var(--space-7); align-items: start; padding-bottom: var(--space-6); border-bottom: var(--hairline); margin-bottom: var(--space-7); }
   .lede { margin: var(--space-4) 0 0; max-width: 62ch; font-size: var(--text-lg); line-height: var(--leading-lg); color: var(--text-secondary); }
   .lede strong { color: var(--text-primary); font-weight: var(--weight-semibold); }
   .stream-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-3); }
   .stream-title h2 { margin: 0; display: inline-flex; align-items: center; gap: var(--space-3); font-size: var(--text-xl); font-weight: var(--weight-semibold); letter-spacing: -0.012em; }
   .stream-title .projects-line { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
   .stream-page { display: grid; gap: var(--space-7); }
+  .s1 { background: var(--series-1); } .s2 { background: var(--series-2); } .s3 { background: var(--series-3); } .s4 { background: var(--series-4); }
+  .s5 { background: var(--series-5); } .s6 { background: var(--series-6); } .s7 { background: var(--series-7); } .s8 { background: var(--series-8); }
+  .so { background: var(--series-other); }
   .stream-title .mark { width: 12px; height: 12px; border-radius: 3px; }
   /* Side by side, the priorities panel is one compact line per priority and takes the height it needs, top-aligned beside the headline. */
-  @media (min-width: 901px) { .cue-grid > priority-list { align-self: start; } }
-  @media (max-width: 900px) { .cue-grid { grid-template-columns: minmax(0, 1fr); } header.topbar .bar { gap: var(--space-3); } }
+  @media (min-width: 901px) { .lead-grid > priority-list { align-self: start; } }
+  @media (max-width: 900px) { .lead-grid { grid-template-columns: minmax(0, 1fr); } }
 
   @media (forced-colors: active) {
     [role=tab][aria-selected=true]::after { forced-color-adjust: none; background: Highlight; height: 4px; bottom: 0; }
@@ -178,9 +133,9 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}${LOCAL_WIDGET_CSS}
   table.counts tbody th { font-weight: var(--weight-medium); }
   table.counts .z { color: var(--text-muted); }
 
-  .fine { margin: var(--space-7) 0 0; display: flex; justify-content: center; align-items: center; gap: var(--space-2); color: var(--text-muted); }
-  .fine .barline { fill: var(--border-strong); }
-  .fine i { font-family: var(--font-serif); font-size: var(--text-md); letter-spacing: 0.01em; }
+  .fine { margin: var(--space-8) 0 0; display: flex; justify-content: flex-end; align-items: center; gap: var(--space-3); color: var(--text-secondary); }
+  .fine .barline { fill: currentColor; width: 10px; height: 24px; color: var(--ink); }
+  .fine i { font-family: var(--font-display); font-size: var(--text-2xl); }
   @media (forced-colors: active) { .fine .barline { fill: CanvasText; } }
   .wide { margin-top: var(--space-7); display: grid; gap: var(--space-6); }
   .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: var(--space-4); }
@@ -198,7 +153,7 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}${LOCAL_WIDGET_CSS}
   /* Offsets match the header's real metrics at rest (brand row, scope line, cue line, tab bar), so nothing jumps on load. */
   .sk-head { padding-block: 43px 0; }
   .sk-scope { display: block; margin-top: 47px; }
-  .sk-scope + .staff { margin-top: 14px; }
+  .sk-scope + .sk-staff { margin-top: 14px; }
   .sk-tabs { margin-top: 29px; border-bottom: var(--hairline); padding-block: 15px; }
   .sk-tabs .wrap { display: flex; gap: var(--space-6); }
   .sk-panel { padding-block: var(--space-6); }
@@ -209,17 +164,17 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}${LOCAL_WIDGET_CSS}
   .sk-id { width: 36px; height: 16px; flex: none; }
   .sk-line { height: 12px; }
   /* Five hairlines 6 px apart (the cue line's height) and a note head that glides along the middle space. */
-  .staff { position: relative; display: block; height: 25px; width: min(560px, 90%); margin-top: var(--space-5); }
-  .staff-line { position: absolute; left: 0; right: 0; height: 1px; background: var(--border-strong); opacity: 0.45; }
-  .staff-line:nth-child(2) { top: 6px; }
-  .staff-line:nth-child(3) { top: 12px; }
-  .staff-line:nth-child(4) { top: 18px; }
-  .staff-line:nth-child(5) { top: 24px; }
+  .sk-staff { position: relative; display: block; height: 25px; width: min(560px, 90%); margin-top: var(--space-5); }
+  .sk-staff-line { position: absolute; left: 0; right: 0; height: 1px; background: var(--border-strong); opacity: 0.45; }
+  .sk-staff-line:nth-child(2) { top: 6px; }
+  .sk-staff-line:nth-child(3) { top: 12px; }
+  .sk-staff-line:nth-child(4) { top: 18px; }
+  .sk-staff-line:nth-child(5) { top: 24px; }
   .glide { position: absolute; inset: 0; animation: glide var(--dur-breathe) var(--ease-in-out) infinite alternate; }
-  .note { position: absolute; left: 0; top: 12.5px; width: 9px; height: 6px; border-radius: 50%; background: var(--text-muted); transform: rotate(-20deg); }
+  .sk-note { position: absolute; left: 0; top: 12.5px; width: 9px; height: 6px; border-radius: 50%; background: var(--text-muted); transform: rotate(-20deg); }
   @keyframes glide { to { transform: translateX(calc(100% - 9px)); } }
   @media (prefers-reduced-motion: reduce) { .glide { animation: none; } }
-  @media (forced-colors: active) { .staff-line, .note { forced-color-adjust: none; background: CanvasText; } }
+  @media (forced-colors: active) { .sk-staff-line, .sk-note { forced-color-adjust: none; background: CanvasText; } }
   .sk-stack { display: grid; gap: var(--space-4); align-content: start; }
 
   .problem { max-width: 60ch; margin: var(--space-8) auto; padding: var(--space-6); background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); }
@@ -251,6 +206,7 @@ export class PodiumApp extends HTMLElement {
   #tick: number | undefined;
   #tabsObserver: ResizeObserver | null = null;
   #tempoOpen = false;
+  #stopAmbience: (() => void) | null = null;
   // The last home base each stream tab got, so a redraw shows it at once while the fresh one loads.
   readonly #homes = new Map<string, StreamHome>();
   // The Open PRs tab's table and refresh state live here, not in its element, so a live redraw does not lose a refresh in flight.
@@ -321,6 +277,8 @@ export class PodiumApp extends HTMLElement {
       this.#filter = parseFilter(location.hash);
       this.#stream = this.#filter === 'asks' ? parseStreamFilter(location.hash) : null;
       this.#safeRender();
+      // A few small gestures from the score (a note hops, the pendulum ticks), paused while an answer is being typed or the stream menu is open, and spent after a dozen.
+      this.#stopAmbience = startAmbience(this.#root, () => typingAnAnswer() || pickerOpen());
       // The data is loaded once; re-say its age every minute so a page left open shows when it has gone stale.
       this.#tick = window.setInterval(() => this.#updateFreshness(), 60_000);
       if (this.#live) {   // sample data has no server to follow
@@ -357,6 +315,8 @@ export class PodiumApp extends HTMLElement {
     for (const off of this.#unfollow.splice(0)) off();
     this.#liveUpdates = null;
     this.#tabsObserver?.disconnect();
+    this.#stopAmbience?.();
+    this.#stopAmbience = null;
   }
 
   /** Follow the server: the event stream, or polling when there is none. Only ever with data from a real server. */
@@ -496,9 +456,10 @@ export class PodiumApp extends HTMLElement {
   #render(): void {
     const st = this.#state;
     if (!st) return;
-    const ids = this.#ids();
+    // The streams live in the picker; the tab list holds the views, and the open stream's own tab while one is open, so the panel always has a tab to name it.
+    const ids = this.#ids().filter((id) => isAllStreams(id) || id === this.#active);
     const count = <T extends { stream: string }>(xs: T[], id: string): number => (isAllStreams(id) ? xs.length : xs.filter((x) => x.stream === tabStream(id)).length);
-    const tabs = ids.flatMap((id, i) => {
+    const tabs = ids.map((id) => {
       const on = id === this.#active;
       const stream = tabStream(id);
       const n = isAllStreams(id) ? 0 : count(st.asks, id);
@@ -506,9 +467,9 @@ export class PodiumApp extends HTMLElement {
       const label = id === DASHBOARD ? 'Home' : id === OPEN_PRS ? 'Open PRs' : id === OTHERS_PRS ? 'Others\' PRs' : id === SCRIPTS ? 'Scripts' : stream ?? id;
       const tab = h('button', {
         type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
-        tabindex: on ? '0' : '-1',
+        tabindex: on ? '0' : '-1', class: stream ? streamVar(stream) : undefined,
       },
-      stream ? h('span', { class: `stream-dot ${seriesClass(stream)}`, 'aria-hidden': 'true' }) : null,
+      stream ? h('span', { class: 'sw', 'aria-hidden': 'true' }) : null,
       label,
       prs > 0 ? h('span', { class: 'count' }, String(prs)) : null,
       id === OTHERS_PRS && this.#waitingDrafts('review') > 0 ? h('span', { class: 'count' }, String(this.#waitingDrafts('review')), h('span', { class: 'vh' }, ' awaiting')) : null,
@@ -522,19 +483,20 @@ export class PodiumApp extends HTMLElement {
         e.preventDefault();
         this.#select(next, true);
       });
-      const sep = i === 3 ? h('span', { class: 'nav-sep', 'aria-hidden': 'true' }) : null;
-      return [tab, sep];
+      return tab;
     });
     const stream = tabStream(this.#active);
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap page' },
       this.#active === OPEN_PRS || this.#active === OTHERS_PRS || this.#active === SCRIPTS ? null : this.#pageHead(st, stream),
       this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OPEN_PRS ? this.#openPrs(st) : this.#active === OTHERS_PRS ? this.#othersPrs() : this.#active === SCRIPTS ? this.#scripts() : this.#board(st, stream ?? ''),
       fine());
-    const tablist = h('div', { role: 'tablist', 'aria-label': 'Podium' }, ...tabs);
+    const tablist = h('div', { role: 'tablist', 'aria-label': 'Views' }, ...tabs);
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Podium' }, tablist);
-    this.#root.replaceChildren(this.#skipLink(panel), this.#topbar(st, tabbar), h('main', {}, panel));
+    this.#root.replaceChildren(this.#skipLink(panel), this.#titlePage(st), this.#tabRow(st, tabbar), h('main', {}, panel));
     this.#watchTabOverflow(tabbar, tablist);
     showCue(this.#waiting(st));
+    // The playhead sweeps the staves once as Home appears (the same render that plays its entrance).
+    if (this.#active === DASHBOARD && this.#root.querySelector('.home.enter')) sweepPlayhead(this.#root);
   }
 
   /**
@@ -577,49 +539,64 @@ export class PodiumApp extends HTMLElement {
 
   get #live(): boolean { return this.#sources.state === 'server' && this.#sources.charts === 'server'; }
 
-  #topbar(st: PodiumState, nav: HTMLElement): HTMLElement {
+  /** The title page: the wordmark (a link Home on every tab), today's date, the data's freshness and Refresh. */
+  #titlePage(st: PodiumState): HTMLElement {
     const note = this.#live && this.#dropped === 0 ? '' : describeSources(this.#sources.state, this.#sources.charts, this.#dropped, st.generatedAt);
-    return h('header', { class: 'topbar' },
-      h('div', { class: 'wrap bar' },
-        h('h1', { class: 'wordmark' }, this.#homeLink(st)),
-        nav,
-        this.#freshness(st),
-        this.#link()),
-      note ? h('p', { class: 'source wrap' }, note) : null);
+    const waiting = this.#waiting(st);
+    const head = masthead({
+      home: this.#homeLink(st, waiting),
+      status: [this.#freshness(st), this.#link()],
+      live: this.#live,
+      refresh: async () => { await this.#liveUpdates?.refresh(); },
+    });
+    if (note) head.append(h('p', { class: 'source' }, note));
+    return head;
+  }
+
+  /** The sticky bar under the title page: the views as tabs, and the stream picker beside them. */
+  #tabRow(st: PodiumState, nav: HTMLElement): HTMLElement {
+    const open = tabStream(this.#active);
+    const voices = [{ stream: null, name: 'All streams', n: st.asks.length }, ...st.streams.map((s) => ({ stream: s, name: s, n: st.asks.filter((a) => a.stream === s).length }))];
+    const pick = streamPicker({ voices, current: open, pick: (stream) => this.#select(stream === null ? DASHBOARD : streamTabId(stream), true) });
+    return h('div', { class: 'tabbar-wrap' }, h('div', { class: 'wrap tabbar-row' }, nav, pick));
   }
 
   /** The wordmark is a real link to Home, on every tab; it shares the global focus ring. */
-  #homeLink(st: PodiumState): HTMLElement {
-    const a = h('a', { class: 'wordmark-link', href: formatFragment(DASHBOARD), title: 'Podium home' }, baton(this.#waiting(st) > 0), 'Podium');
+  #homeLink(st: PodiumState, waiting: number): HTMLElement {
+    const a = h('a', { class: 'wordmark-link', href: formatFragment(DASHBOARD), title: 'Podium home' },
+      baton(waiting > 0, shouldPulse(waiting)),
+      h('span', { class: 'name' }, h('span', { class: 'word' }, 'Podium'), h('span', { class: 'scope' }, longDate(st.today) || shortDate(st.today))));
     a.addEventListener('click', (e) => { e.preventDefault(); this.#select(DASHBOARD, true); });
     return a;
   }
 
   /** The cue line for Home and a stream tab. Open PRs draws its own. Counts follow the open tab. */
   #pageHead(st: PodiumState, stream: string | null): HTMLElement {
-    const scope = stream === null ? 'All streams' : stream;
     const buckets = scoped(st, stream);
-    const { tempo, rule } = this.#tempo({ asks: buckets.asks.length, blocked: buckets.blocked.length, working: buckets.working.length }, stream === null ? scope : null);
+    const { tempo, rule, gloss } = this.#tempo({ asks: buckets.asks.length, blocked: buckets.blocked.length, working: buckets.working.length });
     const parts = cueParts(buckets, this.#needsFor(st, stream).length);
+    // A glyph before each count, as the score marks them: a dot for a cue, a triangle for a held part, a tick for shipped, a half moon for in flight.
+    const GLYPH: Record<CueKey, [string, string]> = { asks: ['●', 'accent'], blocked: ['▲', 'warning'], done: ['✓', 'success'], working: ['◐', 'neutral'] };
     const cue = parts.map((p) => {
+      const [glyph, tone] = GLYPH[p.key];
       const tile = h('button', { type: 'button', class: 'tile', id: tileId(p.key), 'data-key': p.key, 'aria-pressed': String(p.key === this.#filter) },
-        h('span', { class: 'n' }, String(p.n)), ' ', p.label);
+        h('span', { class: 'g', 'aria-hidden': 'true' }, glyph), h('span', { class: 'n' }, String(p.n)), p.label);
       tile.addEventListener('click', () => this.#setFilter(p.key === this.#filter ? null : p.key, p.key));
-      return h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, tile);
+      return h('li', { class: `tone-${tone}${p.n === 0 ? ' zero' : ''}` }, tile);
     });
     const oldest = Math.max(0, ...buckets.asks.map((a) => a.ageDays));
     const stale = buckets.asks.filter((a) => a.ageDays > 3).length;
     const oneWay = buckets.asks.filter((a) => a.door === 'one-way').length;
     const queued = st.queued.filter((q) => stream === null || q.stream === stream).length;
-    const lead = h('div', {},
-      stream ? h('div', { class: 'stream-title' }, h('h2', { id: 'scope' }, h('span', { class: `mark ${seriesClass(stream)}`, 'aria-hidden': 'true' }), stream), tempo,
+    const lead = h('div', { class: 'cue-line' },
+      stream ? h('div', { class: 'stream-title' }, h('h2', { id: 'scope' }, h('span', { class: `mark ${seriesClass(stream)}`, 'aria-hidden': 'true' }), stream),
         this.#projectNames(stream) ? h('span', { class: 'projects-line' }, this.#projectNames(stream)) : null) : null,
-      stream ? null : h('p', { class: 'scope' }, h('span', { class: 'date' }, longDate(st.today) || shortDate(st.today)), tempo),
-      h('ul', { class: 'cue', role: 'list', 'aria-labelledby': 'scope' }, ...cue),
+      h('div', { class: 'tempo-line' }, tempo, gloss),
+      h('ul', stream ? { class: 'cue', role: 'list', 'aria-labelledby': 'scope' } : { class: 'cue', role: 'list', 'aria-label': 'All streams' }, ...cue),
       rule,
       buckets.asks.length ? h('p', { class: 'lede' }, 'The oldest ask has waited ', h('strong', {}, `${oldest} ${oldest === 1 ? 'day' : 'days'}`), stale ? `, and ${stale} ${stale === 1 ? 'is' : 'are'} past the 3 day mark` : '', '. ', oneWay ? `${oneWay} ${oneWay === 1 ? 'is a one-way door' : 'are one-way doors'}. ` : '', `${queued} ${queued === 1 ? 'task is' : 'tasks are'} queued behind your answers.`) : null);
     if (this.#filter) return lead;
-    return h('section', { class: 'cue-grid' }, lead, stream === null ? this.#priorities(st) : todayPanel(st.priorities.state === 'ok' ? st.priorities.items : [], this.#projects.state === 'ok' ? this.#projects.data : null, stream));
+    return h('section', { class: 'lead-grid' }, lead, stream === null ? this.#priorities(st) : todayPanel(st.priorities.state === 'ok' ? st.priorities.items : [], this.#projects.state === 'ok' ? this.#projects.data : null, stream));
   }
 
   /** The project names a stream's rows cover, as one mono line; empty until the projects payload has loaded or when it lists none. */
@@ -639,20 +616,20 @@ export class PodiumApp extends HTMLElement {
     return priorities;
   }
 
-  /** The tempo word for the scope's counts, as a button that opens the rule behind it in place (no tooltip, no modal). */
-  #tempo(counts: { asks: number; blocked: number; working: number }, scope: string | null): { tempo: HTMLElement; rule: HTMLElement } {
+  /** The tempo word for the scope's counts, as a button that opens the rule behind it in place (no tooltip, no modal), with a one-line gloss beside it. */
+  #tempo(counts: { asks: number; blocked: number; working: number }): { tempo: HTMLElement; rule: HTMLElement; gloss: HTMLElement } {
     const t = tempoWord(counts);
     // The rule, with each tempo word in the score's italic and the one in force now set in primary ink.
     const scale = TEMPO_SCALE.flatMap((x, i) => [i > 0 ? '; ' : '', h('i', { lang: x.lang, class: x.word === t.word ? 'now' : undefined }, x.word), `, ${x.meaning}`]);
     const rule = h('p', { class: 'tempo-rule', id: 'tempo-rule', hidden: !this.#tempoOpen }, TEMPO_LEAD, ...scale, '.');
     const tempo = h('button', { type: 'button', class: 'tempo', 'aria-expanded': String(this.#tempoOpen), 'aria-controls': 'tempo-rule' },
-      scope === null ? null : h('span', { id: 'scope' }, scope), scope === null ? null : h('span', { 'aria-hidden': 'true' }, ' · '), h('i', { lang: t.lang }, t.word), h('span', { class: 'vh' }, ', what the tempo means'));
+      h('i', { lang: t.lang }, t.word), h('span', { class: 'vh' }, ', what the tempo means'));
     tempo.addEventListener('click', () => {
       this.#tempoOpen = !this.#tempoOpen;
       tempo.setAttribute('aria-expanded', String(this.#tempoOpen));
       rule.hidden = !this.#tempoOpen;
     });
-    return { tempo, rule };
+    return { tempo, rule, gloss: h('p', { class: 'tempo-gloss' }, tempoGloss(t.word)) };
   }
 
   /** The data-source pill: sample data, or live with its update time, flagged once the data is past STALE_MINUTES. */
@@ -825,9 +802,7 @@ export class PodiumApp extends HTMLElement {
 
   /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */
   #home(st: PodiumState): Node {
-    return h('div', { class: 'home-plus' },
-      homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects, epics: this.#epics, cost: this.#cost, needs: this.#needs(st), redraw: () => this.#redrawKeepingFocus() }),
-      localReviewWidget(this.#local));
+    return homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects, epics: this.#epics, cost: this.#cost, local: this.#local, needs: this.#needs(st), redraw: () => this.#redrawKeepingFocus() });
   }
 }
 
@@ -840,18 +815,6 @@ function fine(): HTMLElement {
     h('i', { lang: 'it' }, 'Fine'),
     s('svg', { class: 'barline', viewBox: '0 0 10 20', width: '10', height: '20', 'aria-hidden': 'true', focusable: 'false' },
       s('rect', { x: '0', y: '0', width: '1.5', height: '20' }), s('rect', { x: '5', y: '0', width: '4', height: '20' })));
-}
-
-/**
- * The wordmark's baton, drawn with presentation attributes only (no style attribute, so the CSP holds). Its tip is a
- * tiny cue of its own: accent while asks need you, muted when none do. Decorative: the h1's text names the page.
- */
-function baton(cue: boolean): SVGSVGElement {
-  return s('svg', { class: 'baton', viewBox: '4 4 24 24', 'aria-hidden': 'true', focusable: 'false' },
-    s('g', { class: 'stick' },
-      s('path', { d: 'M7.9 21.3 23.5 7.5 24.5 8.5 10.7 24.1Z', fill: 'currentColor' }),
-      s('ellipse', { cx: '9.4', cy: '22.6', rx: '4.4', ry: '2.5', transform: 'rotate(-45 9.4 22.6)', fill: 'currentColor' }),
-      s('circle', { class: `tip${cue ? ' on' : ''}`, cx: '24', cy: '8', r: cue ? '3.4' : '1.8' })));
 }
 
 /**
@@ -907,9 +870,9 @@ function skeleton(): HTMLElement {
 
 /** The cue line's placeholder: a five-line staff with one note head gliding along it while the board loads. */
 function staff(): HTMLElement {
-  return h('span', { class: 'staff', 'aria-hidden': 'true' },
-    ...[0, 1, 2, 3, 4].map(() => h('span', { class: 'staff-line' })),
-    h('span', { class: 'glide' }, h('span', { class: 'note' })));
+  return h('span', { class: 'sk-staff', 'aria-hidden': 'true' },
+    ...[0, 1, 2, 3, 4].map(() => h('span', { class: 'sk-staff-line' })),
+    h('span', { class: 'glide' }, h('span', { class: 'sk-note' })));
 }
 
 /** The error state: what failed, what to do, the detail, and a way to retry. */

@@ -26,12 +26,14 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .fade { position: sticky; bottom: 0; block-size: 2rem; margin-block-start: -2rem; pointer-events: none; opacity: 0; background: linear-gradient(to bottom, transparent, var(--surface-page)); transition: opacity var(--dur-fast) var(--ease-out); }
   .region[data-more] .fade { opacity: 1; }
   .bar { position: sticky; top: 0; z-index: 1; background: var(--surface-page); display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-2); padding-bottom: var(--space-2); border-bottom: var(--hairline-strong); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
-  .bar h2 { margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-semibold); color: var(--text-secondary); }
+  .ttl { display: grid; }
+  .instrument { font-family: var(--font-display); font-style: italic; font-size: var(--text-lg); line-height: var(--leading-lg); color: var(--text-secondary); }
+  .bar h2 { margin: 0; font-size: var(--text-xl); line-height: var(--leading-xl); font-weight: var(--weight-semibold); letter-spacing: var(--tracking-tight); color: var(--text-primary); }
   .cap { font-variant-numeric: tabular-nums; }
   .warn { color: var(--warning); }
   ol.priorities { list-style: none; margin: 0; padding: 0; counter-reset: p; }
   ol.priorities li { counter-increment: p; display: grid; grid-template-columns: 2em minmax(0, 1fr) auto; align-items: start; gap: 0 var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
-  ol.priorities li::before { content: counter(p, upper-roman); font-family: var(--font-serif); font-size: 1.25rem; line-height: 1.3; color: var(--text-muted); }
+  ol.priorities li::before { content: counter(p, lower-roman) '.'; font-family: var(--font-display); font-style: italic; font-size: 1.25rem; line-height: 1.3; color: var(--text-muted); }
   /* Compact: one line per priority, the stream's tag (a link to its tab). The priority's text and epics live on that tab; the text stays here for assistive tech. */
   ol.priorities li { padding: var(--space-1) 0; align-items: center; }
   ol.priorities li::before { font-size: 1.05rem; line-height: 1.5; }
@@ -218,7 +220,7 @@ export class PriorityList extends HTMLElement {
     const blocked = addBlockedReason(items.length, this.#max);
     const frag: Node[] = [];
     frag.push(h('div', { class: 'bar' },
-      h('h2', {}, 'Today\'s priorities'),
+      h('div', { class: 'ttl' }, h('span', { class: 'instrument', 'aria-hidden': 'true' }, 'Liner notes'), h('h2', {}, 'Today\'s priorities')),
       h('span', { class: 'cap', id: 'pl-count' }, h('span', { class: 'vh' }, 'Priorities: '), c.label),
       c.over ? h('span', { class: 'warn' }, `Over the cap of ${this.#max}: you can reorder and remove, not add.`) : null));
     if (items.length === 0) frag.push(h('p', { class: 'empty' }, note || 'No priorities set for today.'));

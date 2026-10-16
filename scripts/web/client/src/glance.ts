@@ -126,6 +126,17 @@ export const TEMPO_SCALE: { word: Tempo['word']; lang: Tempo['lang']; meaning: s
   { word: 'Presto', lang: 'it', meaning: 'six or more, or three blocked' },
 ];
 
+/** The tempo word in a short sentence, shown beside it so the word is never the only explanation. */
+export function tempoGloss(word: Tempo['word']): string {
+  switch (word) {
+    case 'Tacet': return 'Nothing is waiting on you.';
+    case 'Adagio': return 'Only work in flight; nothing waits on you.';
+    case 'Andante': return 'One or two things are waiting on you.';
+    case 'Allegro': return 'Three to five things are waiting on you.';
+    case 'Presto': return 'Six or more are waiting, or three are blocked.';
+  }
+}
+
 /** The opening of the tempo disclosure, before the scale. */
 export const TEMPO_LEAD = 'Tempo reads how much is waiting on you: ';
 

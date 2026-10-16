@@ -23,43 +23,59 @@ const draw = (st: PodiumState, c: ChartsData | null, p: ProjectsLoad): HTMLEleme
 const sec = (el: HTMLElement, name: string): Element => [...el.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent?.startsWith(name))!;
 const text = (el: Element | null | undefined): string => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
-test('Home reads top to bottom as score, needs you, blocked and in flight, shipped today, and every section is named by its heading', () => {
+test('Home reads top to bottom as the score, the cues, the held and shipped work, the epics, the deck and the cost, and every section is named by its heading', () => {
   const el = draw(state(), charts(), { state: 'ok', data: projects() });
-  const names = [...el.querySelectorAll('section > .sec-head h2, section > h2')].map((x) => text(x).replace(/[\s,\d]+$/, ''));
-  assert.ok(names.indexOf('Needs you') > -1 && names.indexOf('Shipped today') > names.indexOf('Needs you'), names.join('|'));
+  const names = [...el.querySelectorAll('section > .sec-head h2')].map((x) => text(x).replace(/[\s,\d]+$/, ''));
+  const at = (n: string): number => names.indexOf(n);
+  assert.deepEqual(['The score', 'Cues', 'Fermata: blocked', 'Coda: shipped today', 'In flight', 'Epics', 'Waiting for local review', 'The deck: shipped and asked per day', 'Open work'].map((n) => at(n) > -1), Array(9).fill(true), names.join('|'));
+  assert.ok(at('The score') < at('Cues') && at('Cues') < at('Fermata: blocked') && at('Fermata: blocked') < at('Coda: shipped today') && at('Coda: shipped today') < at('Epics') && at('Epics') < at('The deck: shipped and asked per day') && at('The deck: shipped and asked per day') < at('Open work'), names.join('|'));
   for (const s of el.querySelectorAll('section[aria-labelledby]')) assert.ok(el.querySelector(`#${s.getAttribute('aria-labelledby')}`), 'each region is named by its heading');
+  // The instrument name above each heading is decoration: the heading is what names the region.
+  assert.deepEqual([...el.querySelectorAll('.sec-title .instrument')].every((i) => i.getAttribute('aria-hidden') === 'true'), true);
 });
 
 test('the score has a row per stream with a state word, and a missing charts payload says so instead of a blank', () => {
   const el = draw(state(), charts(), { state: 'ok', data: projects() });
-  assert.ok(el.querySelectorAll('.score-line:not(.hd)').length >= 2, 'one row per stream');
+  assert.ok(el.querySelectorAll('.staff-row').length >= 2, 'one staff per stream');
+  assert.ok(el.querySelector('.staff-row svg.staff-svg line.sl'), 'each staff has its five lines');
   assert.match(text(el), /waiting on you/);
+  assert.match(text(el.querySelector('table.vh caption')), /Tasks finished per stream per day/);
   const none = draw(state(), null, { state: 'ok', data: projects() });
   assert.match(text(none.querySelector('[role=status]')), /14-day score is missing/);
-  assert.ok(sec(none, 'Needs you').querySelector('ask-card'), 'asks do not wait on the charts');
+  assert.ok(sec(none, 'Cues').querySelector('ask-card'), 'asks do not wait on the charts');
 });
 
 test('a failed projects load is an alert in place and the board is still drawn', () => {
   const el = draw(state(), charts(), { state: 'error', message: 'HTTP 500' });
   assert.match(text(el.querySelector('[role=alert]')), /Project names and notes could not be loaded \(HTTP 500\)/);
-  assert.ok(sec(el, 'Needs you').querySelector('ask-card'));
+  assert.ok(sec(el, 'Cues').querySelector('ask-card'));
 });
 
 test('while projects load nothing is announced as an error and the asks are drawn', () => {
   const el = draw(state(), charts(), { state: 'loading' });
   assert.equal(el.querySelector('[role=alert]'), null);
-  assert.ok(sec(el, 'Needs you').querySelector('ask-card'));
+  assert.ok(sec(el, 'Cues').querySelector('ask-card'));
 });
 
-test('the order control is a pressed-state toggle that asks the caller to redraw', () => {
+test('the order control is a labelled select that asks the caller to redraw', () => {
   const el = draw(state(), charts(), { state: 'ok', data: projects() });
-  const oneway = el.querySelector<HTMLButtonElement>('[data-ctl=order-oneway]')!;
-  assert.equal(oneway.getAttribute('aria-pressed'), 'false');
-  assert.equal(el.querySelector('[data-ctl=order-oldest]')!.getAttribute('aria-pressed'), 'true');
+  const order = el.querySelector<HTMLSelectElement>('select[data-ctl=order]')!;
+  assert.equal(el.querySelector(`label[for=${order.id}]`)?.textContent?.startsWith('Order'), true, 'the select has a visible label');
+  assert.deepEqual([...order.options].map((o) => o.value), ['oldest', 'oneway', 'stream']);
+  assert.equal(order.value, 'oldest');
   const before = redraws;
-  oneway.click();
+  order.value = 'oneway';
+  order.dispatchEvent(new Event('change'));
   assert.equal(homeUi.order, 'oneway');
   assert.equal(redraws, before + 1);
+});
+
+test('each cue carries a rehearsal letter in its stream colour, A first', () => {
+  const el = draw(state(), charts(), { state: 'ok', data: projects() });
+  const marks = [...sec(el, 'Cues').querySelectorAll('.qcue .rmark')].map((m) => m.textContent);
+  assert.deepEqual(marks, ['A', 'B', 'C', 'D', 'E', 'F'].slice(0, marks.length));
+  assert.ok(marks.length > 1);
+  assert.match([...sec(el, 'Cues').querySelectorAll('.qcue')][0]!.className, /\bsc-s/);
 });
 
 test('a stream chip narrows the asks to that stream', () => {
@@ -68,7 +84,7 @@ test('a stream chip narrows the asks to that stream', () => {
   homeUi.order = 'oldest'; homeUi.stream = stream; homeUi.allAsks = false; homeUi.allShipped = false;
   const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, redraw: () => {} })).el;
   assert.equal(el.querySelector(`[data-ctl=chip-${stream}]`)!.getAttribute('aria-pressed'), 'true');
-  const shown = sec(el, 'Needs you').querySelectorAll('ask-card').length;
+  const shown = sec(el, 'Cues').querySelectorAll('ask-card').length;
   assert.equal(shown, Math.min(6, st.asks.filter((a) => a.stream === stream).length));
 });
 
@@ -81,7 +97,7 @@ test('PRs ready to merge and reviews waiting for an OK are rows in Needs you, wi
   const st = state();
   homeUi.order = 'oldest'; homeUi.stream = null; homeUi.allAsks = false; homeUi.allShipped = false;
   const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, needs: needsOf(st.asks[0]!.stream), redraw: () => {} })).el;
-  const needs = sec(el, 'Needs you');
+  const needs = sec(el, 'Cues');
   assert.match(text(needs.querySelector('h2')), new RegExp(`${st.asks.length + 2}$`));
   const rows = [...needs.querySelectorAll('ul.needs-items > li')];
   assert.deepEqual(rows.map((r) => r.getAttribute('data-kind')), ['ready to merge', 'approve review']);
@@ -101,7 +117,7 @@ test('the stream chips count and filter the new rows too', () => {
   homeUi.order = 'oldest'; homeUi.stream = 'Elsewhere'; homeUi.allAsks = false; homeUi.allShipped = false;
   st.streams = [...st.streams, 'Elsewhere'];
   const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, needs: needsOf(stream), redraw: () => {} })).el;
-  const needs = sec(el, 'Needs you');
+  const needs = sec(el, 'Cues');
   assert.equal(needs.querySelectorAll('ask-card').length, 0);
   assert.deepEqual([...needs.querySelectorAll('ul.needs-items > li')].map((r) => r.getAttribute('data-kind')), ['approve review']);
   assert.match(text(needs.querySelector('[data-ctl=chip-Elsewhere]')), /Elsewhere 1/);
@@ -113,8 +129,8 @@ test('with no asks, rows for PRs and reviews replace the empty sentence', () => 
   st.asks = [];
   homeUi.order = 'oldest'; homeUi.stream = null; homeUi.allAsks = false; homeUi.allShipped = false;
   const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, needs: needsOf('x'), redraw: () => {} })).el;
-  assert.doesNotMatch(text(sec(el, 'Needs you')), /Nothing needs you right now/);
-  assert.equal(sec(el, 'Needs you').querySelectorAll('ul.needs-items > li').length, 2);
+  assert.doesNotMatch(text(sec(el, 'Cues')), /Nothing needs you right now/);
+  assert.equal(sec(el, 'Cues').querySelectorAll('ul.needs-items > li').length, 2);
 });
 
 test('the gauges say how many asks are open and how many PRs are open, with words and not colour alone', () => {
@@ -129,9 +145,8 @@ test('the Stream order groups the asks by stream and the choice survives a redra
   homeUi.order = 'stream'; homeUi.stream = null; homeUi.allAsks = true; homeUi.allShipped = false;
   const draw2 = (): HTMLElement => place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, redraw: () => {} })).el;
   for (const el of [draw2(), draw2()]) {
-    assert.equal(el.querySelector('[data-ctl=order-stream]')!.getAttribute('aria-pressed'), 'true');
-    assert.equal(el.querySelector('[data-ctl=order-oldest]')!.getAttribute('aria-pressed'), 'false');
-    const shown = [...sec(el, 'Needs you').querySelectorAll('ask-card')].map((c) => (c as unknown as { ask: { stream: string } }).ask.stream);
+    assert.equal(el.querySelector<HTMLSelectElement>('select[data-ctl=order]')!.value, 'stream');
+    const shown = [...sec(el, 'Cues').querySelectorAll('ask-card')].map((c) => (c as unknown as { ask: { stream: string } }).ask.stream);
     assert.equal(shown.length, st.asks.length);
     assert.deepEqual(shown, [...shown].sort((x, y) => x.localeCompare(y)));
   }
@@ -148,4 +163,14 @@ test('a stream tab shows its library link, a quiet "No library yet." when it has
   assert.ok(!panel(projects(), 'acme-widgets').querySelector('[aria-label=Notes]')!.textContent!.includes('library'), 'the library link is not repeated in Notes');
   assert.equal(text(panel(projects(), 'ops').querySelector('.library-none')), 'No library yet.');
   assert.equal(panel(null, 'ops').querySelector('.library-none, [aria-label=Library]'), null);
+});
+
+test('a stream choice nothing waits on any more narrows nothing: no staff is dimmed', () => {
+  const st = state();
+  const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, redraw: () => {} })).el;
+  homeUi.stream = 'no-such-stream';
+  const stale = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, redraw: () => {} })).el;
+  homeUi.stream = null;
+  assert.equal(stale.querySelectorAll('.staff-row.dim').length, 0);
+  assert.equal(el.querySelectorAll('.staff-row.dim').length, 0);
 });
