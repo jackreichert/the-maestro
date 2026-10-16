@@ -3,6 +3,7 @@
  * JSON the page needs. Links are data ({ label, url }), never HTML, and every URL is built here from the page settings, so
  * the client never makes one out of ledger text. No file, clock or process access; the caller passes the inputs.
  */
+import { isScriptId } from '../scripts/registry.ts';
 import { askRefs, keysIn, noteEnv, pairTwins, prFlagNames, stackParent, streamOrder, ticketNoteRef, trackerRef } from '../status-page/render.ts';
 import type { BoardStatus, FooterData, Item, PageConfig, PageInput, Pr, Ref } from '../status-page/render.ts';
 import { askBy, askClass, askDoor, autoDefault, byLabel, hasAskFields, TEXT_MAX } from '../journal/ask-fields.ts';
@@ -33,6 +34,8 @@ export interface AskLinks { note?: LinkData; tracker: LinkData[]; prs: LinkData[
 export interface AskCard {
   id: string; stream: string; needed: string; context: string; ageDays: number; date: string; ts?: string; links: AskLinks;
   recommend?: string; door?: Door; default?: string; by?: string; class?: AskClass; paste?: string;
+  /** The registered script a run-this ask was raised for (`journal.ts script add`): its id, linked to its entry on the Scripts tab. */
+  script?: string;
   /** An ask written with the template (journal.ts ask): what is blocked, the context bullets, the options with their costs and the links as data. Absent on an older free-text ask, which renders in the legacy layout. `needed` is then the whole one-line question. */
   sections?: AskSections;
   /** What the writer checked before asking (the row's `searched`), when it says. */
@@ -201,7 +204,7 @@ function askCard(config: PageConfig, a: Item, prs: Pr[], ticket: string | undefi
   const { needed, context } = sections ? { needed: a.text.replace(/\s+/g, ' ').trim(), context: '' } : splitAskBody(a.text);
   return {
     id: a.id, stream, needed, context: askMarkdown(linkAskRefs(context, noteEnv(config, a, ticket))), ageDays: askAgeDays(a, now, config.tz), date: a.date, ...(a.ts ? { ts: a.ts } : {}),
-    ...decisionFields(a), ...(typeof a.paste === 'string' && a.paste ? { paste: a.paste } : {}),
+    ...decisionFields(a), ...(typeof a.paste === 'string' && a.paste ? { paste: a.paste } : {}), ...(isScriptId(a.script) ? { script: a.script } : {}),
     ...(sections ? { sections } : {}), ...(typeof a.searched === 'string' && a.searched.trim() ? { searched: a.searched.trim().slice(0, TEXT_MAX) } : {}),
     links: { ...(refs.note ? { note: link(refs.note) } : {}), tracker: refs.tracker.map(link), prs: withPullUrls(a.text, refs.prs).map(link) },
   };
