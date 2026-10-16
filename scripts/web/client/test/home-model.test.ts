@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { AGE_LABELS, ageChart, askAgeBars, byStreamName, doneSpans, epicCards, orderAsks, prGauge, queuedByStream, rowFacts, rowOrder, scoreTable, streamState, weeksChart } from '../src/home-model.ts';
+import { AGE_LABELS, ageChart, askAgeBars, byStreamName, doneSpans, epicCards, orderAsks, orderNeedsYou, prGauge, queuedByStream, rowFacts, rowOrder, scoreTable, streamState, weeksChart } from '../src/home-model.ts';
 import { sanitizeCharts, sanitizeProjects, sanitizeState } from '../src/contract.ts';
 import type { ChartsData, PodiumState, ProjectRow, ProjectsData } from '../src/types.ts';
 
@@ -103,6 +103,16 @@ test('orderAsks: oldest first, or one-way doors first with oldest first inside e
   const a = [{ id: 'a', ageDays: 1, ts: '2026-10-12', door: 'one-way' }, { id: 'b', ageDays: 5, ts: '2026-10-08', door: 'two-way' }, { id: 'c', ageDays: 3, ts: '2026-10-10', door: 'one-way' }];
   assert.deepEqual(orderAsks(a, 'oldest').map((x) => x.id), ['b', 'c', 'a']);
   assert.deepEqual(orderAsks(a, 'oneway').map((x) => x.id), ['c', 'a', 'b']);
+});
+
+test('orderNeedsYou: one-way doors first overall, today priorities inside each door group, then oldest', () => {
+  const ask = (id: string, stream: string, ageDays: number, door: string) => ({ id, stream, ageDays, ts: `2026-10-${String(20 - ageDays).padStart(2, '0')}`, door, links: { tracker: [], note: null } });
+  const asks = [ask('a', 'Beta', 9, 'two-way'), ask('b', 'Beta', 2, 'one-way'), ask('c', 'Alpha', 1, 'one-way'), ask('d', 'Alpha', 7, 'two-way'), ask('e', 'Gamma', 5, 'one-way'), ask('f', 'Alpha', 3, 'one-way')];
+  const pri = [{ text: 'Ship alpha', stream: 'Alpha' }, { text: 'Ship beta', stream: 'Beta' }];
+  const ids = (o: 'oldest' | 'oneway' | 'stream') => orderNeedsYou(asks as never, o, pri).map((x) => x.id);
+  assert.deepEqual(ids('oneway'), ['f', 'c', 'b', 'e', 'd', 'a']);
+  assert.deepEqual(ids('oldest'), ['d', 'f', 'c', 'a', 'b', 'e']);
+  assert.deepEqual(orderNeedsYou(asks as never, 'stream', [...pri].reverse()).map((x) => x.id), ['d', 'f', 'c', 'a', 'b', 'e']);
 });
 
 test('askAgeBars: four buckets, the last two flagged stale', () => {

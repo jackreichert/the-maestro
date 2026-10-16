@@ -135,18 +135,21 @@ const run = (vault: string, ...args: string[]) => spawnSync(process.execPath, [S
 });
 
 test('roll writes GUIDANCE.md, prints it, and prime shows it next session', () => {
+    // The guidance expires by the wall clock, so the roll is dated today and the stalled item four days earlier.
+    const day = (offset: number): string => new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
+    const today = day(0);
     const { vault, dir } = vaultWith([
-        { id: 'aaaa', ts: '2026-10-08T10:00:00Z', date: '2026-10-08', kind: 'wip', stream: 's', text: 'ancient job', tokens: '90k' },
-        { id: 'bbbb', ts: '2026-10-12T10:00:00Z', date: '2026-10-12', kind: 'wip', stream: 's', text: 'today job' },
+        { id: 'aaaa', ts: `${day(4)}T10:00:00Z`, date: day(4), kind: 'wip', stream: 's', text: 'ancient job', tokens: '90k' },
+        { id: 'bbbb', ts: `${today}T10:00:00Z`, date: today, kind: 'wip', stream: 's', text: 'today job' },
     ]);
-    const roll = run(vault, 'roll', '--date', '2026-10-12', '--fast', '--allow-unmarked');
+    const roll = run(vault, 'roll', '--date', today, '--fast', '--allow-unmarked');
     assert.equal(roll.status, 0, roll.stderr);
-    assert.match(roll.stdout, /Guidance from the 2026-10-12 roll:/);
+    assert.match(roll.stdout, new RegExp(`Guidance from the ${today} roll:`));
     assert.match(roll.stdout, /Stalled \(1\): aaaa ancient job/);
     const saved = readFileSync(join(dir, GUIDANCE_FILE), 'utf8');
     assert.match(saved, /Do first: aaaa ancient job/);
-    const prime = run(vault, 'prime', '--no-update-check', '--allow-unmarked', '--date', '2026-10-12');
-    assert.match(prime.stdout, /Guidance from the 2026-10-12 roll:/);
+    const prime = run(vault, 'prime', '--no-update-check', '--allow-unmarked', '--date', today);
+    assert.match(prime.stdout, new RegExp(`Guidance from the ${today} roll:`));
 });
 
 test('roll --dry-run prints the guidance and writes no file', () => {

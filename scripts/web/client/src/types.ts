@@ -25,6 +25,8 @@ export interface AskCard {
   class?: string;
   /** A run-this ask: the block file to run, shown and never read by the page. */
   paste?: string;
+  /** The registered script this run-this ask was raised for: its id, linked to the Scripts tab. */
+  script?: string;
   /** An ask written with the template; absent on an older free-text ask (legacy layout). `needed` is then the whole one-line question. */
   sections?: AskSections;
   /** What the writer checked before asking. */

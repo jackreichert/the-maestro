@@ -1,10 +1,10 @@
 /** Woodwinds: the cues. The asks that wait on you, each marked with a rehearsal letter, filterable by stream and sortable; the real ask cards answer in place. */
 import { h } from './dom.ts';
 import './ask-card.ts';
-import { byPriority, todaysPriorities } from './glance.ts';
+import { todaysPriorities } from './glance.ts';
 import { flyNote } from './home-ambience.ts';
 import { conceptSection, streamVar, tacet } from './home-concept.ts';
-import { byStreamName, orderAsks } from './home-model.ts';
+import { orderNeedsYou } from './home-model.ts';
 import type { AskOrder } from './home-model.ts';
 import { homeUi } from './home-sections.ts';
 import { scopedItems } from './needs-items.ts';
@@ -66,10 +66,7 @@ export function cuesSection(st: PodiumState, live: boolean, redraw: () => void, 
   const shownExtra = picked ? scopedItems(extra, picked) : extra;
   const set = (patch: Partial<typeof homeUi>): void => { Object.assign(homeUi, patch); redraw(); };
 
-  const ranked = (() => {
-    const xs = byPriority(orderAsks(shown, homeUi.order === 'stream' ? 'oldest' : homeUi.order), todaysPriorities(st));
-    return homeUi.order === 'stream' ? byStreamName(xs) : xs;
-  })();
+  const ranked = orderNeedsYou(shown, homeUi.order, todaysPriorities(st));
   const cap = homeUi.allAsks ? Number.POSITIVE_INFINITY : CUE_CAP;
   const cards = ranked.map((a, i) => {
     const card = h('ask-card', {});

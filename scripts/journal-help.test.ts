@@ -151,7 +151,9 @@ test('a flag first still names the command: -h roll and --help roll print roll u
 
 test('every --flag in the table is read by journal code through arg(), has() or parseList()', () => {
     const dir = new URL('./lib/journal/', import.meta.url).pathname;
-    const files = [SCRIPT, ...readdirSync(dir).filter((f) => f.endsWith('.ts')).filter((f) => f !== 'help.ts').map((f) => join(dir, f))];
+    // `script` is dispatched from journal.ts into lib/scripts/cli.ts, which reads its own flags.
+    const scriptsDir = new URL('./lib/scripts/', import.meta.url).pathname;
+    const files = [SCRIPT, ...readdirSync(dir).filter((f) => f.endsWith('.ts')).filter((f) => f !== 'help.ts').map((f) => join(dir, f)), join(scriptsDir, 'cli.ts')];
     const code = files.map((f) => readFileSync(f, 'utf8')).join('\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     // A flag is read when journal code calls an accessor with its name, scans argv for the literal `--name`, or names it in a list
     // of flags it forwards or validates (`['port', 'status-dir']`, the ask rules). help.ts is left out so the table cannot vouch for itself.
