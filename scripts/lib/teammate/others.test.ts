@@ -20,7 +20,7 @@ const dir = (): string => mkdtempSync(join(tmpdir(), 'others-test-'));
 test('the search is scoped to the owners and never runs without one', () => {
   assert.equal(othersSearch([]), null);
   assert.equal(othersSearch(['bad owner', 'x;y']), null);
-  assert.match(othersSearch(['acme', 'beta']) ?? '', /^is:pr is:open draft:false archived:false -author:@me user:acme user:beta$/);
+  assert.match(othersSearch(['acme', 'beta']) ?? '', /^is:pr is:open archived:false -author:@me user:acme user:beta$/);
 });
 
 test('the author\'s display name is kept when GitHub gives one, and a blank one is not', () => {
@@ -28,18 +28,27 @@ test('the author\'s display name is kept when GitHub gives one, and a blank one 
   assert.deepEqual(named.map((p) => [p.author, p.authorName]), [['pat-fake', 'Pat Example'], ['kim-fake', undefined]]);
 });
 
-test('own PRs, bots, drafts, self-review repos and other owners are left out; newest activity leads', () => {
+test('own PRs, bots, self-review repos and other owners are left out; newest activity leads', () => {
   const out = reduceOthers([
     node({ number: 1 }),
     node({ number: 2, author: { login: 'ME-fake', __typename: 'User' } }),
     node({ number: 3, author: { login: 'dependabot[bot]', __typename: 'Bot' } }),
-    node({ number: 4, isDraft: true }),
     node({ number: 5, repository: { nameWithOwner: 'acme/solo' } }),
     node({ number: 6, repository: { nameWithOwner: 'other/app' } }),
     node({ number: 7, updatedAt: '2026-10-05T00:00:00Z' }),
     node({ number: 8, author: null }),
   ] as never, SCOPE);
   assert.deepEqual(out.map((p) => p.number), [7, 1]);
+});
+
+test('drafts are kept and flagged, with checks, mergeability, labels, your review and the head time', () => {
+  const me = { login: 'ME-fake' };
+  const [d, p] = reduceOthers([node({ number: 4, isDraft: true }), node({
+    number: 5, mergeable: 'CONFLICTING', labels: { nodes: [{ name: 'wip' }, null] }, commits: { nodes: [{ commit: { committedDate: '2026-10-03T00:00:00Z', statusCheckRollup: { state: 'FAILURE' } } }] },
+    reviews: { nodes: [{ author: me, state: 'COMMENTED', submittedAt: '2026-10-02T00:00:00Z' }, { author: me, state: 'PENDING', submittedAt: '2026-10-04T00:00:00Z' }, { author: { login: 'kim-fake' }, state: 'APPROVED', submittedAt: '2026-10-05T00:00:00Z' }] },
+  })] as never, SCOPE);
+  assert.equal(d?.isDraft, true);
+  assert.deepEqual([p?.isDraft, p?.ci, p?.mergeable, p?.labels, p?.yourReview, p?.headAt, p?.reviewCount], [false, 'FAILURE', 'CONFLICTING', ['wip'], { state: 'COMMENTED', at: '2026-10-02T00:00:00Z' }, '2026-10-03T00:00:00Z', 2]);
 });
 
 test('requested reviewers, decision and open threads (Copilot ones counted apart) are read from the node', () => {

@@ -24,6 +24,12 @@ export interface OtherPr {
   decision: string | null;
   /** Unresolved review threads, and how many of them Copilot opened. */
   unresolved: number; copilotThreads: number;
+  /** What the sub-tabs sort by; absent in a cache written before they existed (then read as clean). `ci` is the head commit's check rollup state. */
+  isDraft?: boolean; ci?: string; mergeable?: string; labels?: string[];
+  /** The user's latest submitted review (state, when), and when the head commit was made, so a review the author has not pushed after reads as waiting. */
+  yourReview?: { state: string; at: string }; headAt?: string;
+  /** Submitted reviews by anyone (of the last 30), so a PR nobody has looked at reads as not yet asked for review. */
+  reviewCount?: number;
 }
 export interface OthersCache { fetchedAt: Date | null; failure?: string; prs: OtherPr[] }
 export interface OthersScope { owners: readonly string[]; selfRepos: readonly string[]; self: string }
@@ -31,7 +37,10 @@ export interface OthersScope { owners: readonly string[]; selfRepos: readonly st
 interface Login { login?: string; __typename?: string; name?: string | null }
 interface Node {
   number?: number; title?: string; url?: string; isDraft?: boolean; createdAt?: string; updatedAt?: string; baseRefName?: string; headRefName?: string;
-  reviewDecision?: string | null; author?: Login | null; repository?: { nameWithOwner?: string };
+  reviewDecision?: string | null; mergeable?: string; author?: Login | null;
+  labels?: { nodes?: ({ name?: string } | null)[] };
+  reviews?: { nodes?: ({ author?: Login | null; state?: string; submittedAt?: string } | null)[] };
+  commits?: { nodes?: ({ commit?: { committedDate?: string; statusCheckRollup?: { state?: string } | null } } | null)[] }; repository?: { nameWithOwner?: string };
   reviewRequests?: { nodes?: ({ requestedReviewer?: { login?: string } | null } | null)[] };
   reviewThreads?: { nodes?: ({ isResolved?: boolean; comments?: { nodes?: ({ author?: Login | null } | null)[] } } | null)[] };
 }
@@ -39,11 +48,14 @@ interface Node {
 /** The search for other people's open, ready PRs in the owners; null for no owner, so there is never an unscoped search. */
 export function othersSearch(owners: readonly string[]): string | null {
   const safe = owners.filter((o) => /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(o));
-  return safe.length ? `is:pr is:open draft:false archived:false -author:@me ${safe.map((o) => `user:${o}`).join(' ')}` : null;
+  return safe.length ? `is:pr is:open archived:false -author:@me ${safe.map((o) => `user:${o}`).join(' ')}` : null;
 }
 
 export const othersQuery = (search: string): string => `query($after: String) { search(query: "${search}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
-  number title url isDraft createdAt updatedAt baseRefName headRefName reviewDecision author { login __typename ... on User { name } } repository { nameWithOwner }
+  number title url isDraft createdAt updatedAt baseRefName headRefName reviewDecision mergeable author { login __typename ... on User { name } } repository { nameWithOwner }
+  labels(first: 10) { nodes { name } }
+  reviews(last: 30) { nodes { author { login } state submittedAt } }
+  commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
   reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
   reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } } }
 } } } }`;
@@ -57,15 +69,21 @@ export function reduceOthers(nodes: readonly Node[], scope: OthersScope): OtherP
   for (const n of nodes) {
     const repo = n.repository?.nameWithOwner;
     const author = n.author?.login;
-    if (!repo || !author || typeof n.number !== 'number' || !n.url || n.isDraft !== false) continue;
+    if (!repo || !author || typeof n.number !== 'number' || !n.url || typeof n.isDraft !== 'boolean') continue;
     if (isBotAuthor(n.author) || (self !== '' && author.toLowerCase() === self) || isSelfReview(repo, scope.selfRepos)) continue;
     if (!scope.owners.some((o) => o.toLowerCase() === repo.split('/')[0]?.toLowerCase())) continue;
+    const mine = (n.reviews?.nodes ?? []).filter((r) => r && r.state && r.state !== 'PENDING' && r.submittedAt && self !== '' && (r.author?.login ?? '').toLowerCase() === self).sort((a, b) => (a?.submittedAt ?? '').localeCompare(b?.submittedAt ?? '')).pop();
+    const head = n.commits?.nodes?.[0]?.commit;
     const open = (n.reviewThreads?.nodes ?? []).filter((t) => t && t.isResolved === false);
     out.push({
       repo, number: n.number, title: n.title ?? '', url: n.url, author, ...(n.author?.name?.trim() ? { authorName: n.author.name.trim().slice(0, 80) } : {}), base: n.baseRefName ?? '', head: n.headRefName ?? '',
       createdAt: n.createdAt ?? '', updatedAt: n.updatedAt ?? n.createdAt ?? '',
       requested: (n.reviewRequests?.nodes ?? []).map((r) => r?.requestedReviewer?.login).filter((l): l is string => !!l),
       decision: n.reviewDecision ?? null, unresolved: open.length, copilotThreads: open.filter((t) => isCopilot(t?.comments?.nodes?.[0]?.author)).length,
+      isDraft: n.isDraft, ...(head?.statusCheckRollup?.state ? { ci: head.statusCheckRollup.state } : {}), ...(n.mergeable ? { mergeable: n.mergeable } : {}),
+      labels: (n.labels?.nodes ?? []).map((l) => l?.name ?? '').filter(Boolean).slice(0, 10),
+      ...(mine?.state && mine.submittedAt ? { yourReview: { state: mine.state, at: mine.submittedAt } } : {}), ...(head?.committedDate ? { headAt: head.committedDate } : {}),
+      reviewCount: (n.reviews?.nodes ?? []).filter((r) => r && r.state && r.state !== 'PENDING').length,
     });
   }
   return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -80,7 +98,7 @@ export function fetchOthers(scope: OthersScope, run?: Run): OtherPr[] {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isOther = (v: unknown): v is OtherPr => isObj(v)
   && ['repo', 'title', 'url', 'author', 'base', 'head', 'createdAt', 'updatedAt'].every((k) => typeof v[k] === 'string')
-  && (v.authorName === undefined || typeof v.authorName === 'string') && typeof v.number === 'number' && Number.isSafeInteger(v.number) && typeof v.unresolved === 'number' && typeof v.copilotThreads === 'number'
+  && (v.authorName === undefined || typeof v.authorName === 'string') && typeof v.number === 'number' && Number.isSafeInteger(v.number) && typeof v.unresolved === 'number' && typeof v.copilotThreads === 'number' && (v.reviewCount === undefined || typeof v.reviewCount === 'number') && (v.isDraft === undefined || typeof v.isDraft === 'boolean') && (v.labels === undefined || (Array.isArray(v.labels) && v.labels.every((l) => typeof l === 'string')))
   && (v.decision === null || typeof v.decision === 'string') && Array.isArray(v.requested) && v.requested.every((r) => typeof r === 'string');
 
 /** The cached set; null when there is no cache or it is not shaped like one (a damaged file must not crash the page). */
