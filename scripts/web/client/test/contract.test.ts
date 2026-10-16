@@ -144,9 +144,9 @@ test('describeSources says Live only when both endpoints are live, and names whi
 
 test('an ask may carry decision fields and a paste path, and a wrongly typed one drops the row', () => {
   const good = state();
-  Object.assign(good.asks[0], { recommend: 'yes', door: 'two-way', default: 'ship', by: '2026-10-09', class: 'expedite', paste: '/tmp/fake.sh' });
+  Object.assign(good.asks[0], { recommend: 'yes', door: 'two-way', default: 'ship', by: '2026-10-09', class: 'expedite', paste: '/tmp/fake.sh', script: 'sc-0123abcd' });
   assert.equal(sanitizeState(good)?.dropped, 0);
-  for (const [field, value] of [['recommend', 7], ['default', {}], ['by', 3], ['paste', []], ['door', 'sideways'], ['class', 'urgent']] as const) {
+  for (const [field, value] of [['recommend', 7], ['default', {}], ['by', 3], ['paste', []], ['script', 3], ['door', 'sideways'], ['class', 'urgent']] as const) {
     const bad = state();
     bad.asks[0][field] = value;
     assert.equal(sanitizeState(bad)?.state.asks.length, 2, field);

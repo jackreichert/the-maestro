@@ -1,4 +1,5 @@
 import { BASE_CSS, UI_CSS, h, refLink, s, shadow, streamTag } from './dom.ts';
+import { SCRIPTS, formatFragment } from './tabs.ts';
 import { canSkip, createAnswerer } from './answer-api.ts';
 import type { AnswerRequest } from './answer-api.ts';
 import { askState } from './ask-state.ts';
@@ -239,6 +240,7 @@ export class AskCardElement extends HTMLElement {
       decisionFields(a),
       structured.length ? null : (a.context ? context(a.context, `${uid}-c`) : null),
       a.paste ? h('p', { class: 'paste' }, this.#locked ? 'Run this block, then answer with what it printed: ' : 'Review the block, then run it here. It is read from: ', h('code', {}, a.paste)) : null,
+      a.script && !this.#locked ? h('p', { class: 'paste' }, h('a', { class: 'script-link', href: `${formatFragment(SCRIPTS)}&script=${encodeURIComponent(a.script)}` }, 'Open this script on the Scripts tab'), ' to read what it does and why we need it.') : null,
       panel,
       stale ? h('p', { class: 'stale-note' }, `Waiting ${a.ageDays} days: past the ${STALE_DAYS} day mark.`) : null,
       structured.length ? null : (links.length ? h('ul', { class: 'links', role: 'list', 'aria-label': 'Links' }, ...links.map((r) => h('li', {}, refLink(r)))) : null),
