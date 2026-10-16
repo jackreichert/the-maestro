@@ -22,6 +22,7 @@ import { briefUnknown, forestBasis, judgeBrief, noteIndex } from './brief.ts';
 import type { BriefRead } from './brief.ts';
 import type { Doc, Docs } from './docs.ts';
 import { buildHandover } from './handover.ts';
+import { buildDone } from './done.ts';
 import type { EpicSummary, Ref, SharedItem, StreamHome, TicketRow, Unknown } from './types.ts';
 import type { SharedDoc } from '../journal/shared.ts';
 
@@ -88,7 +89,7 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
   const cfg = inp.homes.streams[stream];
   const base = (over: Partial<StreamHome>): StreamHome => finish({
     stream, generatedAt: now.toISOString(), seq: '', mapping: { source: 'auto', configFound: Boolean(cfg) }, epics: [], loose: [], left: { inProgress: [], blocked: [], notStarted: [], truncated: 0 },
-    doneMeans: [], links: [], projects: [], shared: [], sharedMore: 0, history: null, unknowns, freshness: { tickets: '', prs: prState(inp), tracker: null }, ...over,
+    doneMeans: [], done: { sources: [], fix: null }, links: [], projects: [], shared: [], sharedMore: 0, history: null, unknowns, freshness: { tickets: '', prs: prState(inp), tracker: null }, ...over,
   });
   if (!inp.vault) {
     unknowns.push({ kind: 'no-vault', text: 'No vault root is configured, so no tickets are read. Set vault_root (VAULT_ROOT) and restart the web server.' });
@@ -161,6 +162,11 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
     links: rail, ...sharedItems(inp, projects),
     projects: projects.map((project) => buildHandover({ project, tickets: inp.vault?.tickets.filter((t) => t.project === project) ?? [], docs: docs.get(project) ?? [], ledger: inp.ledger, prs: inp.prs, page, ...(inp.readNote ? { readNote: inp.readNote } : {}) })),
     doneMeans: epicIds.flatMap((id) => { const t = forest.byId.get(id) as Ticket; const text = section(t.body, /^## What done looks like\s*$/i); return text?.trim() ? [{ epic: id, text: clip(text, DONE_MEANS_MAX) }] : []; }),
+    done: buildDone({
+      stream, vaultName: page.vaultName,
+      epics: epics.map((e) => ({ id: e.id, status: e.status, closed: e.closed, total: e.total, body: (forest.byId.get(e.id) as Ticket).body, ref: e.note })),
+      projects: projects.map((project) => ({ project, text: inp.readNote?.(`Projects/${project}/CONTEXT.md`) ?? null })),
+    }),
     unknowns: unknowns.length > UNKNOWN_CAP ? [...unknowns.slice(0, UNKNOWN_CAP), { kind: 'config-invalid' as const, text: `${unknowns.length - UNKNOWN_CAP} more unknowns are not shown.` }] : unknowns,
     freshness: { tickets: inp.vault.newestMtime ? new Date(inp.vault.newestMtime).toISOString() : '', prs: prState(inp), tracker: null },
   });
