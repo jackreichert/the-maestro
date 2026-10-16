@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildOthersPrs, etMs } from './others-prs.ts';
+import { buildOthersPrs } from './others-prs.ts';
+import { etMs } from './slack-activity.ts';
 import { writeOthersCache } from '../teammate/others.ts';
 import type { OtherPr } from '../teammate/others.ts';
 
