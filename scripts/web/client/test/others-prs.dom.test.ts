@@ -276,3 +276,13 @@ test('a queued draft shows its Approve button on the tab, in the sub-tab the Hom
   assert.deepEqual(approves().sort(), ['dr-00000001:Approve', 'dr-00000009:Approve']);
   cleanup();
 });
+
+test('the waiting-drafts note names the sub-tab classify really puts the PR in, including Stale', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { updatedAt: '2026-09-01T00:00:00Z', staleWhy: 'no activity for 40 days' } as Partial<OthersPrRow>)]), loaded: true }, drafts: drafts([draft(1)]) });
+  const note = root.querySelector('[data-note="waiting-drafts"]');
+  const tabName = (note?.textContent ?? '').match(/in the (.+?) tab/)?.[1];
+  (note?.querySelector('button') as HTMLButtonElement).click();
+  assert.equal(root.querySelector('button.tab[aria-selected="true"]')?.textContent?.replace(/ \(\d+\)$/, ''), tabName);
+  assert.match(root.querySelector('li.pr')?.textContent ?? '', /Draft ready/);
+  cleanup();
+});

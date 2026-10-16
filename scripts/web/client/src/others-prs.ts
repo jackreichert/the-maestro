@@ -156,13 +156,18 @@ export class OthersPrs extends HTMLElement {
     return [tabs, panel];
   }
 
-  /** When review drafts wait in a sub-tab other than the open one, say so and offer the jump: they are not under Ready for approval. */
+  /** When review drafts wait in a sub-tab other than the open one, say so and offer the jump to the one that holds the most (per `classify`: a stale PR keeps its draft in Stale). */
   #waitingNote(prs: OthersPrRow[], byPr: Map<string, DraftRow[]>): Node[] {
-    const n = prs.filter((p) => (byPr.get(key(p.repo, p.number)) ?? []).some(waiting)).length;
-    if (!n || this.#tab === 'in-review') return [];
-    const b = h('button', { type: 'button', class: 'secondary' }, `Show ${n === 1 ? 'it' : 'them'} (In review)`);
-    b.addEventListener('click', () => this.#select('in-review', true));
-    return [h('p', { class: 'status', 'data-note': 'waiting-drafts' }, `${n} drafted ${n === 1 ? 'review waits' : 'reviews wait'} for your Approve in the In review tab. `, b)];
+    const by = new Map<SubTab, number>();
+    for (const p of prs) if ((byPr.get(key(p.repo, p.number)) ?? []).some(waiting)) { const t = classify(p, true).tab; by.set(t, (by.get(t) ?? 0) + 1); }
+    const elsewhere = [...by].filter(([t]) => t !== this.#tab).sort((x, y) => y[1] - x[1]);
+    const top = elsewhere[0];
+    if (!top) return [];
+    const [tab, n] = top;
+    const label = SUBTABS.find((t) => t.id === tab)?.label ?? tab;
+    const b = h('button', { type: 'button', class: 'secondary' }, `Show ${n === 1 ? 'it' : 'them'} (${label})`);
+    b.addEventListener('click', () => this.#select(tab, true));
+    return [h('p', { class: 'status', 'data-note': 'waiting-drafts' }, `${n} drafted ${n === 1 ? 'review waits' : 'reviews wait'} for your Approve in the ${label} tab. `, b)];
   }
 
   #select(id: SubTab, focus = false): void {
