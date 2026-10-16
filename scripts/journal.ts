@@ -2219,13 +2219,17 @@ function cmdClaim() {
     if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
     const scope = claimScope(arg('worktree') || arg('branch'));
     const claim = { repo, desk, pid, host: hostname(), time: now(), scope, branch: arg('branch') || undefined, why: arg('why') || undefined };
+    // The ledger row is scanned before the lock is taken: a refused row must not leave a held lock (and the secret) on disk.
+    const claimRow = { id: newId(readLedger()), ts: claim.time, date: today(), kind: 'claim', repo, scope, stream: desk, desk, branch: claim.branch, text: `claim ${claimKey(repo, scope)} for ${desk}${claim.why ? `: ${claim.why}` : ''}`, ...usage };
+    const problems = rowScanProblems(claimRow);
+    if (problems.length) die(`refused: the ledger is durable and shared, and a field looks like it holds a secret or PHI. Nothing was written.\n${[...new Set(problems)].map((p) => `  ${p}`).join('\n')}`);
     if (dryRun) { console.log('[dry-run]', dryRunJson(claim)); return; }
     const taken = acquireRepoClaim(claimsDir, repo, scope, claim);
     if (taken.status !== 'taken') {
         console.error(`${claimKey(repo, scope)} is already claimed by ${describeClaim(taken.held)}${taken.status === 'conflict' ? ` (claim ${taken.key} conflicts: a whole-repo claim, with no --worktree or --branch, conflicts with every claim on the repo)` : ''}.${taken.held && claimStaleness(taken.held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
         process.exit(1);
     }
-    append({ id: newId(readLedger()), ts: claim.time, date: today(), kind: 'claim', repo, scope, stream: desk, desk, branch: claim.branch, text: `claim ${claimKey(repo, scope)} for ${desk}${claim.why ? `: ${claim.why}` : ''}`, ...usage });
+    append(claimRow);
     if (!dryRun) render(true);
     console.log(`claim  ${claimKey(repo, scope)}  ${desk}`);
 }

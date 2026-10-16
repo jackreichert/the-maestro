@@ -97,3 +97,27 @@ test('verify warns about an old row that carries a shape, by id, field and rule,
     assert.match(r.out, /\[old1\] text: looks like PHI \(ssn\)/);
     assert.ok(!r.out.includes(SHAPES.ssn as string));
 });
+
+test('flags that become ledger fields (--model, --tokens; --window is cut to 12 characters by the window id) are scanned, not skipped as machine fields', () => {
+    const f = fixture();
+    const cases: string[][] = [
+        ['note', 'clean', '--model', SHAPES['aws-key'] as string, '--used', 'skill:x'],
+        ['note', 'clean', ...MARK, '--tokens', SHAPES.ssn as string],
+    ];
+    for (const args of cases) {
+        const r = f.run(...args);
+        assert.equal(r.code, 1, `${args.join(' ')}: ${r.err}`);
+        assert.equal(f.rows(), '');
+    }
+});
+
+test('claim with a secret-shaped --desk or --why is refused before any lock is taken', () => {
+    const f = fixture();
+    for (const flag of [['--desk', SHAPES['aws-key'] as string], ['--desk', 'night', '--why', `key ${SHAPES['aws-key']}`]]) {
+        const r = f.run('claim', 'some-repo', ...flag, ...MARK);
+        assert.equal(r.code, 1, r.err);
+        assert.ok(!(r.out + r.err).includes(SHAPES['aws-key'] as string));
+    }
+    assert.ok(!existsSync(join(f.vault, 'Projects', 'test-proj', 'Claims')) || readdirSync(join(f.vault, 'Projects', 'test-proj', 'Claims')).length === 0, 'no lock left behind');
+    assert.equal(f.rows(), '');
+});

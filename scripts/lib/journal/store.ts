@@ -9,8 +9,11 @@ import { describeFindings, scanFields } from '../secret-scan.ts';
 /** A row refused because a field has the shape of a credential or of patient data. The message names fields and rules, never the text. */
 export class LedgerScanError extends Error {}
 
-/** Fields that hold ids, times, tags and hashes the program wrote, not prose a person or an agent typed. */
-const MACHINE_FIELDS = new Set(['id', 'ts', 'date', 'kind', 'window', 'model', 'used', 'tokens', 'pageSha', 'sha256', 'verifiedAt']);
+/**
+ * Fields the program itself generates (ids, times, the row kind, hashes). `model`, `window`, `used` and `tokens` are NOT here: they come from
+ * flags and the environment, so a secret passed in one would otherwise ride into the ledger unscanned.
+ */
+const MACHINE_FIELDS = new Set(['id', 'ts', 'date', 'kind', 'pageSha', 'sha256', 'verifiedAt']);
 
 /**
  * Every reason to refuse `row`: each prose field (strings, and lists of strings joined) goes through the shared secret and PHI scanner.
