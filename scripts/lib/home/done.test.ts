@@ -38,7 +38,7 @@ test('a project CONTEXT section counts as a source and an epic that is closed do
 test('with nothing written the stream gets the file to add it to, and no invented goal', () => {
   const d = buildDone({ ...base, epics: [epic()], projects: [{ project: 'acme', text: '# Project\n\n## Now\n' }, { project: 'ops', text: null }] });
   assert.deepEqual(d.sources, []);
-  assert.match(d.fix ?? '', /Projects\/acme\/CONTEXT\.md or Projects\/ops\/CONTEXT\.md or the FAKE-1 epic ticket/);
+  assert.match(d.fix ?? '', /No definition of done for acme-widgets yet\. .*Projects\/acme\/CONTEXT\.md, or to an open epic's ticket/);
 });
 
 test('long lists are capped and say how many are not listed', () => {

@@ -44,11 +44,11 @@ test('with nothing written it names the file to add it to and draws no card', ()
   assert.match(el.querySelector('.done-empty')?.textContent ?? '', /Projects\/acme\/CONTEXT\.md/);
 });
 
-test('more than three definitions are paged, and the heading counts all of them', () => {
-  const el = draw(Array.from({ length: 5 }, (_, i) => src({ name: `FAKE-${i + 1}` })));
+test('more than five definitions are paged, and the heading counts all of them', () => {
+  const el = draw(Array.from({ length: 7 }, (_, i) => src({ name: `FAKE-${i + 1}` })));
   const cards = [...el.querySelectorAll('.done-card')] as HTMLElement[];
-  assert.equal(cards.length, 5);
-  assert.equal(cards.filter((c) => !c.hidden).length, 3);
-  assert.match(el.querySelector('h2')?.textContent ?? '', /5/);
+  assert.equal(cards.length, 7);
+  assert.equal(cards.filter((c) => !c.hidden).length, 5);
+  assert.match(el.querySelector('h2')?.textContent ?? '', /7/);
   assert.match(el.querySelector('.pg-status')?.textContent ?? '', /Page 1 of 2/);
 });

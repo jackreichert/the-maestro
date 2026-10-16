@@ -30,9 +30,10 @@ export interface DoneInput {
   vaultName: string | undefined;
 }
 
-const HEADING = /^## What done looks like\s*$/i;
+/** The heading every definition of done sits under; the stream home reads it here and nowhere else. */
+export const DONE_HEADING = /^## What done looks like\s*$/i;
 const ITEM_MAX = 12;
-const TEXT_MAX = 200;
+const TEXT_MAX = 400;
 const PROSE_MAX = 400;
 const SOURCE_MAX = 8;
 
@@ -41,7 +42,7 @@ const clip = (s: string, n: number): string => { const t = s.replace(/[\u0000-\u
 /** The lines under the done heading, up to the next `## `. Null when the heading is absent or empty. */
 function doneLines(body: string): string[] | null {
   const lines = body.replace(/\r\n?/g, '\n').split('\n');
-  const at = lines.findIndex((l) => HEADING.test(l));
+  const at = lines.findIndex((l) => DONE_HEADING.test(l));
   if (at === -1) return null;
   const rest = lines.slice(at + 1);
   const end = rest.findIndex((l) => /^## /.test(l));
@@ -85,7 +86,7 @@ export function buildDone(inp: DoneInput): StreamDone {
     if (lines) sources.push(source('project', p.project, ref, lines));
   }
   if (sources.length) return { sources: sources.slice(0, SOURCE_MAX), fix: null };
-  const where = [...inp.projects.map((p) => `Projects/${p.project}/CONTEXT.md`), ...inp.epics.filter((e) => e.status !== 'closed').map((e) => `the ${e.id} epic ticket`)];
-  const target = where.length ? where.slice(0, 3).join(' or ') : 'a project note or an epic ticket for this stream';
-  return { sources: [], fix: `Nothing written says what done looks like for ${inp.stream}. Add a "## What done looks like" section to ${target}.` };
+  const first = inp.projects[0];
+  const target = first ? `Projects/${first.project}/CONTEXT.md, or to an open epic's ticket` : 'a project note or an epic ticket for this stream';
+  return { sources: [], fix: `No definition of done for ${inp.stream} yet. Add a "## What done looks like" section to ${target}.` };
 }

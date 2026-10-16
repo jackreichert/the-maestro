@@ -8,7 +8,7 @@ import { sectionHead } from './home-concept.ts';
 import { pagedRows } from './pager.ts';
 import type { DoneCriterion, DoneSource, StreamHome } from './types.ts';
 
-export const DONE_PAGE = 3;
+export const DONE_PAGE = 5;
 
 export const DONE_CSS = `
   .done-top { width: min(760px, 100%); margin-inline: auto; }
@@ -33,11 +33,11 @@ export const DONE_CSS = `
   .done-card .dc-more { margin: var(--space-2) 0 0; font-size: var(--text-xs); color: var(--text-muted); }
   .fine { font-family: var(--font-display); font-style: italic; font-size: var(--text-md); color: var(--text-primary); white-space: nowrap; }
   .fine .bar { font-style: normal; letter-spacing: -0.1em; }
-  .done-empty { margin: 0; text-align: center; font-size: var(--text-sm); color: var(--text-muted); }
+  .done-empty { margin: 0 auto; max-width: 60ch; text-align: center; font-size: var(--text-sm); color: var(--text-muted); }
 `;
 
 const progressWords = (p: NonNullable<DoneSource['progress']>): string =>
-  p.unit === 'checked' ? `${p.done} of ${p.total} checked` : `${p.done} of ${p.total} tickets closed`;
+  p.unit === 'checked' ? `${p.done} of ${p.total} checked` : `${p.done} of ${p.total} ${p.total === 1 ? 'ticket' : 'tickets'} closed`;
 
 function criterion(c: DoneCriterion): HTMLElement {
   const mark = c.checked === null ? '•' : c.checked ? '✓' : '○';
@@ -59,7 +59,7 @@ function card(s: DoneSource): HTMLElement {
     h('div', { class: 'dc-head' },
       h('span', { class: 'dc-name' }, refLink({ label: s.name, ...(s.ref.url ? { url: s.ref.url } : {}) })),
       h('span', { class: 'dc-kind' }, s.kind === 'epic' ? 'epic' : 'project note'),
-      s.finished ? h('span', { class: 'fine' }, h('i', { lang: 'it' }, 'Fine'), ' ', h('span', { class: 'bar', 'aria-hidden': 'true' }, '❙❙'), h('span', { class: 'vh' }, ': met')) : null,
+      s.finished ? h('span', { class: 'fine' }, h('i', { lang: 'it' }, 'Fine'), ' ', h('span', { class: 'bar', 'aria-hidden': 'true' }, '❙❙'), h('span', { class: 'vh' }, ', met')) : null,
       p ? h('span', { class: 'dc-count' }, progressWords(p)) : null),
     p ? h('div', { class: 'dc-bar', 'aria-hidden': 'true' }, bar(pct)) : null,
     s.prose ? h('p', { class: 'dc-prose' }, s.prose) : null,
