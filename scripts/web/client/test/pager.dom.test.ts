@@ -68,3 +68,20 @@ test('the page is kept by key across a redraw, and clamped when the list shrinks
   assert.equal(pagedRows(gone, { key: 'c', size: 6, label: 'Things' }), null);
   assert.deepEqual(visible(gone), [1, 2, 3, 4], 'when it fits again, everything shows');
 });
+
+test('a row type that sets its own display is still hidden: the pager css carries a [hidden] rule', async () => {
+  const { PAGER_CSS } = await import('../src/pager-css.ts');
+  assert.match(PAGER_CSS, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
+});
+
+test('the status is one message, a noun can name the rows, and a note follows the page', () => {
+  PAGES.clear();
+  const rs = rows(14);
+  const nav = pagedRows(rs, { key: 'd', size: 6, label: 'Things', noun: 'asks', note: (v) => (v.page === 1 ? '2 are urgent on other pages' : '') })!;
+  assert.equal(status(nav), 'Page 1 of 3 (1\u20136 of 14 asks)');
+  assert.equal(nav.querySelectorAll('.pg-status').length, 1);
+  assert.equal(nav.querySelector('.pg-status')?.getAttribute('role'), 'status');
+  assert.equal(nav.querySelector('.pg-note')?.textContent, '2 are urgent on other pages');
+  (nav.querySelector('[data-dir=next]') as HTMLButtonElement).click();
+  assert.equal(nav.querySelector('.pg-note')?.textContent, '');
+});

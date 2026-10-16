@@ -145,7 +145,7 @@ export class OthersPrs extends HTMLElement {
     const ul = h('ul', { class: 'prs', role: 'list', 'aria-label': 'Open teammate PRs' }, ...plan.shown.map((x) => this.#row(x.p, byPr.get(key(x.p.repo, x.p.number)) ?? [], tab, x.reasons)));
     const said = `${plan.total} in ${label}${plan.view.pages > 1 ? `, page ${plan.view.page} of ${plan.view.pages}` : ''}`;
     if (this.#announce.textContent !== said) this.#announce.textContent = said;
-    const nav = pager(plan.view, { label, key: `others:${tab}`, go: (page, dir) => {
+    const nav = pager(plan.view, { label, key: `others:${tab}`, quiet: true, go: (page, dir) => {
       this.#pages[tab] = page;
       this.#focusPager = dir;
       this.#render();

@@ -47,11 +47,12 @@ test('Home is one grid whose children are placed as thirds or two thirds', () =>
 test('Cues are paged six to a page: a pager replaces Show all, and the cue letters follow the whole list', () => {
   const st = state();
   const base = st.asks[0]!;
-  st.asks = Array.from({ length: 9 }, (_, i) => ({ ...base, id: `ask${i}`, ageDays: 9 - i }));
+  st.asks = Array.from({ length: 9 }, (_, i) => ({ ...base, id: `ask${i}`, ageDays: 9 - i, door: i === 8 ? 'one-way' as const : 'two-way' as const }));
   const el = draw(st, charts(), { state: 'ok', data: projects() });
   const cues = sec(el, 'Cues');
+  assert.equal(text(cues.querySelector('nav.pager .pg-note')), '1 one-way door on other pages');
   assert.equal(cues.querySelectorAll('.qcue:not([hidden])').length, 6);
-  assert.equal(text(cues.querySelector('nav.pager .pg-status')), 'Page 1 of 2 (1\u20136 of 9)');
+  assert.equal(text(cues.querySelector('nav.pager .pg-status')), 'Page 1 of 2 (1\u20136 of 9 asks)');
   assert.equal(cues.querySelector('[data-ctl=more-asks]'), null, 'no Show all');
   (cues.querySelector('nav.pager [data-dir=next]') as HTMLButtonElement).click();
   const shown = [...cues.querySelectorAll('.qcue:not([hidden])')];

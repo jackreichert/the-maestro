@@ -96,7 +96,11 @@ export function cuesSection(st: PodiumState, live: boolean, redraw: () => void, 
       byStream.length > 1 ? h('ul', { class: 'chips-row', role: 'list', 'aria-label': 'Filter cues by stream' }, chip(null, total), ...byStream.map((x) => chip(x.s, x.n))) : null,
       cards.length > 1 ? h('label', { class: 'select-field', for: 'cue-order' }, 'Order', select) : null)
     : null;
-  const more = pagedRows(cards.map((c) => c.cue), { key: CUE_KEY, size: CUE_PAGE, label: 'Cues' });
+  const more = pagedRows(cards.map((c) => c.cue), {
+    key: CUE_KEY, size: CUE_PAGE, label: 'Cues', noun: 'asks',
+    // A page hides asks, and the order is the reader's choice, so say when a one-way door is waiting on another page.
+    note: (v) => { const off = ranked.filter((a, i) => a.door === 'one-way' && (i < v.from - 1 || i >= v.to)).length; return off ? `${off} one-way ${off === 1 ? 'door' : 'doors'} on other pages` : ''; },
+  });
   const hint = live
     ? 'Questions your agents are waiting on. Open a cue to see its context and the recommendation, then send an answer, take the recommendation, or skip a two-way door. It is saved to the ledger and leaves on the next update. Cues tied to the first priority of the day come first; PRs ready to merge and reviews waiting for your OK follow.'
     : 'Sample data: cues open read-only. Answering needs the Podium server.';
