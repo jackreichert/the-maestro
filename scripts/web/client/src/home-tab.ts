@@ -65,7 +65,7 @@ export function homeTab(st: PodiumState, charts: ChartsData | null, opts: HomeOp
   const ages = agesSection(st);
   const prs = prsSection(st, charts);
   const coda = codaSection(st, opts.redraw);
-  // What Jack needs to act on comes first (docs/design.md, "Placing a section"): cues, then open work, open PRs and what is blocked, then the views that only report.
+  // What needs acting on comes first (docs/design.md, "Placing a section"): cues, then open work, open PRs and what is blocked, then the views that only report.
   cues.classList.add('two-thirds');
   ages.classList.add('third');
   prs.classList.add('third');
