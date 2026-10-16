@@ -36,7 +36,7 @@ export type Target =
 
 /** One inline comment of a review: a line on the RIGHT side of the diff of the head commit. */
 export interface ReviewComment { path: string; line: number; text: string; severity: 'blocking' | 'suggestion' }
-/** The inline half of a review draft. `compliment` is the opening the text must start with: a specific thing done well, never generic. */
+/** The inline half of a review draft. `compliment` is the specific thing done well that the text must carry (a review may open with its context lines before it), never generic. */
 export interface ReviewBundle { compliment: string; comments: ReviewComment[] }
 export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES';
 /** What the review says to GitHub: it requests changes when a comment still blocks, and approves otherwise. Derived, never stored, so an edit cannot leave it stale. */
@@ -161,7 +161,7 @@ function reviewProblem(d: NewDraft): string | null {
   const r = d.review as ReviewBundle;
   if (typeof r !== 'object' || r === null || typeof r.compliment !== 'string' || !Array.isArray(r.comments)) return 'Bad review.';
   if (d.source !== 'review') return 'Only a review comment can be a review.';
-  if (!r.compliment.trim() || !d.text.startsWith(r.compliment)) return 'A review must open with its compliment.';
+  if (!r.compliment.trim() || !d.text.includes(r.compliment)) return 'A review must carry its compliment.';
   if (!Array.isArray(r.comments) || r.comments.length > MAX_COMMENTS) return `A review has at most ${MAX_COMMENTS} inline comments.`;
   for (const c of r.comments) {
     if (!['blocking', 'suggestion'].includes(c.severity)) return 'Bad inline severity.';
