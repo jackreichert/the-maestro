@@ -6,6 +6,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { agentPrompt, briefPaths, briefText, libraryBlock } from './lib/journal/brief.ts';
+import { planSectionProblems } from './lib/journal/plan-sections.ts';
 
 process.env.MAESTRO_LOCAL_CONFIG = '';
 /** A scripts dir whose journal.ts, pr-open.ts and brief-block.ts are the real ones; library-brief.ts is the given stub, or absent when none is given. */
@@ -19,7 +20,9 @@ function shelfWith(libraryStub?: string | typeof REAL): string {
 }
 // Most tests are about claims and grants, not the library: they run on a shelf with no library-brief.ts. The real one is exercised in the "fails open" tests below.
 const SCRIPT = shelfWith();
-const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.ts'];
+const MARK_BASE = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.ts'];
+// Most tests are about claims and grants, not the plan: they declare a 1-point change. The plan-section tests use MARK_BASE.
+const MARK = [...MARK_BASE, '--one-point'];
 const FILLED = '## Standing brief block, filled\n\n- `<user git emails>` → `dev@example.com`\n- `<tracker key example>` → FAKE-1\n';
 
 let vault: string;
@@ -529,4 +532,50 @@ test('briefText carries a Retro section with the item id and the given journal c
     assert.ok(t.includes('node /x/journal.ts --project p agent-retro ab12 --lesson "code: '));
     assert.ok(t.indexOf('## Retro') < t.indexOf('## Standing rules'));
     assert.match(briefText({ id: 'cd34', text: 'o', library: 'l', standing: 's', writer: false, reportPath: '/r' }), /\njournal\.ts agent-retro cd34 /);
+});
+
+const PLAN = [
+    '## Invariants', 'Every writer brief carries a plan; a refused brief leaves no file and no claim.', '',
+    '## Prior art', '- scripts/lib/journal/brief.ts: reused, the details are appended as given.', '- sibling adapter: not reused, different input.', '',
+    '**Prep refactor:** none',
+].join('\n');
+
+test('a writer brief without the plan sections is refused before the claim, and names what is missing', () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    const none = run(['brief', id, '--out-dir', outDir, ...MARK_BASE]);
+    assert.equal(none.code, 1);
+    assert.match(none.err, /"Invariants".*"Prior art".*"Prep refactor"/);
+    assert.match(none.err, /--one-point/);
+    const details = join(outDir, 'partial.md');
+    writeFileSync(details, '## Invariants\nx holds\n\n## Prior art\n- brief.ts: reused\n');
+    const partial = run(['brief', id, '--details-file', details, '--out-dir', outDir, ...MARK_BASE]);
+    assert.equal(partial.code, 1);
+    assert.match(partial.err, /no "Prep refactor" section/);
+    assert.equal(existsSync(briefPaths(outDir, id).brief), false);
+    assert.equal(existsSync(lock('repo-a')), false);
+    assert.equal(rows().some((x) => x.kind === 'brief' || x.kind === 'claim'), false);
+});
+
+test('a writer brief with the plan sections goes out; --one-point and read-only skip the check', () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    const details = join(outDir, 'plan.md');
+    writeFileSync(details, PLAN);
+    assert.equal(run(['brief', id, '--details-file', details, '--out-dir', outDir, ...MARK_BASE]).code, 0);
+    assert.doesNotMatch(readFileSync(briefPaths(outDir, id).brief, 'utf8'), /Declared a 1-point/);
+    const small = start('tiny', '--repo', 'repo-b', '--stream', 'Alpha');
+    assert.equal(run(['brief', small, '--out-dir', outDir, ...MARK_BASE, '--one-point']).code, 0);
+    assert.match(readFileSync(briefPaths(outDir, small).brief, 'utf8'), /Declared a 1-point, one-file change/);
+    const scout = start('look', '--repo', 'repo-c', '--stream', 'Alpha');
+    assert.equal(run(['brief', scout, '--read-only', '--out-dir', outDir, ...MARK_BASE]).code, 0);
+});
+
+test('planSectionProblems: heading and bold-label forms pass; empty, placeholder and "nothing read" do not', () => {
+    assert.deepEqual(planSectionProblems(PLAN), []);
+    assert.deepEqual(planSectionProblems('**Invariants:** a holds\n**Prior art:** read core helper, reused\n**Prep refactor:** extract parse()'), []);
+    assert.deepEqual(planSectionProblems('Invariants: a\nPrior art: b\nPrep refactor: none'), [], 'plain labels');
+    assert.equal(planSectionProblems(undefined).length, 3);
+    assert.match(planSectionProblems('## Invariants\nok\n## Prior art\nTBD\n## Prep refactor\nnone').join(), /"Prior art" is empty or a placeholder/);
+    assert.match(planSectionProblems('## Invariants\nok\n## Prior art\nnone\n## Prep refactor\nnone').join(), /says nothing was read/);
+    assert.match(planSectionProblems('## Invariants\nok\n## Prior art\nread x\n## Prep refactor\n\n## Scope\nfoo').join(), /"Prep refactor" is empty/);
+    assert.deepEqual(planSectionProblems('The prior art of this is old.\nInvariants are good.').length, 3, 'prose mentioning a label is not a section');
 });

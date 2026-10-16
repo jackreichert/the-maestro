@@ -24,6 +24,8 @@ export interface BriefInput {
     details?: string;
     /** What must be true for the work to count as done, set by the dispatcher before the agent starts. */
     doneWhen?: string;
+    /** A declared 1-point, one-file change: the planning sections were skipped on purpose, and the brief says so. */
+    onePoint?: boolean;
     /** Whether this brief's agent writes to the repo (and so holds the repo claim). */
     writer: boolean;
     reportPath: string;
@@ -68,6 +70,7 @@ export function briefText(b: BriefInput): string {
     const facts = [
         `Ledger item ${b.id}${b.stream ? ` (stream ${b.stream})` : ''}${b.ticket ? `, ticket ${b.ticket}` : ''}.`,
         b.repo ? `Repo: ${b.repo}${b.workingDir ? `, working directory ${b.workingDir}` : ''}. ${b.writer ? 'You hold the repo claim: you are its one writer.' : 'Read-only: no claim is held.'}` : 'No repo named.',
+        ...(b.writer && b.onePoint ? ['Declared a 1-point, one-file change: no Invariants, Prior art or Prep refactor sections. If the work turns out larger, stop and say so.'] : []),
     ];
     const sections = [
         `# Brief ${b.id}`,

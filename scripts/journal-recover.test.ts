@@ -107,7 +107,7 @@ test('brief records the worktree and branch it was given, and recover shows the 
     const out = mkdtempSync(join(tmpdir(), 'recover-out-'));
     const wt = liveWorktree('feat/FAKE-5-brief');
     const id = start('brief me', '--repo', 'repo-a', '--stream', 'Alpha');
-    const b = run(['brief', id, '--out-dir', out, '--worktree', wt, '--next', 'start with the tests', ...MARK]);
+    const b = run(['brief', id, '--out-dir', out, '--worktree', wt, '--next', 'start with the tests', '--one-point', ...MARK]);
     assert.equal(b.code, 0, b.err);
     const row = rows().find((r) => r.kind === 'brief');
     assert.equal(row?.worktree, wt);

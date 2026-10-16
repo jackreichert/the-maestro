@@ -106,7 +106,7 @@
  *   journal.ts next <id> "<step>" [--worktree w] [--branch b]   record what an open item does next (and, optionally, where its work lives); `recover` reads it
  *   journal.ts tracker-import <file|-> [--source jira] [--status-dir <dir>]   normalise a fetched tracker search result (issues assigned to the user), scan its titles, and write <status dir>/tracker-items.json for `next`; prints what it wrote, withheld and skipped
  *   journal.ts recover <id>                       print a re-dispatch prompt for an open item: its brief path, the worktree's git status and last commits (or that the worktree is missing), the ticket, the library pages, the recorded next step
- *   journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--next "<step>"] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
+ *   journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--next "<step>"] [--read-only] [--details-file f] [--one-point] [--done-when "<criteria>"] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
  *   journal.ts backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.ts backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
  *   journal.ts maintain --today YYYY-MM-DD [--container <dir>] [--budget N]   the model-free half of roll for an unattended caller: archive each of the last 7 days before --today that still owes one, then the same worktree sweep as roll (records branch-sweep), under a lock; ends with one maintain-result JSON line, exit 1 if a step failed. Triage, reports and asks stay in roll
@@ -202,6 +202,7 @@ import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, 
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
 import { briefPaths, briefText, agentPrompt, libraryBlock } from './lib/journal/brief.ts';
+import { planSectionProblems, PLAN_SECTIONS } from './lib/journal/plan-sections.ts';
 import { recoveryFromFlags, recoverPrompt } from './lib/journal/recover.ts';
 import { scriptsDir } from './brief-block.ts';
 import { guidanceLines, writeGuidance, readGuidance } from './lib/journal/guidance.ts';
@@ -2397,7 +2398,7 @@ function libraryFor(repo: string | undefined, words: string, scripts: string): s
 }
 
 function cmdBrief(): void {
-    const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--next "<step>"] [--as holder] [--pid n] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
+    const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--next "<step>"] [--as holder] [--pid n] [--read-only] [--details-file f] [--one-point] [--done-when "<criteria>"] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
     const entries = readLedger();
     const target = itemNamedByArg(fold(entries).items);
     if (!target) die(`No item with that id.\n${BRIEF_USAGE}`);
@@ -2420,10 +2421,16 @@ function cmdBrief(): void {
     const detailsFile = arg('details-file');
     if (detailsFile) { try { details = readFileSync(resolve(detailsFile), 'utf8'); } catch (e) { die(`--details-file ${detailsFile} could not be read: ${errorMessage(e)}`); } }
 
+    // A writer brief is a build brief: its plan carries invariants, prior art and a prep-refactor line, or it is a declared 1-point, one-file change.
+    if (writer && !has('one-point')) {
+        const missing = planSectionProblems(details);
+        if (missing.length) die(`No brief was written: a build brief's details (--details-file) need ${PLAN_SECTIONS.map((n) => `"${n}"`).join(', ')} (see reference/brief.md#the-build-plan); ${missing.join('; ')}. A 1-point, one-file change passes --one-point instead.`);
+    }
+
     const outDir = resolve(arg('out-dir') || (SCRIPTS_SHELF_DIR ? join(SCRIPTS_SHELF_DIR, 'scratch', 'briefs') : join(vault, 'Projects', project, 'Dispatch')));
     const paths = briefPaths(outDir, target.id as string, writer);
     const workingDir = repo && CONTAINER_ROOT ? join(CONTAINER_ROOT, repo) : undefined;
-    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library, standing: block.stdout, details, doneWhen: arg('done-when') || undefined, writer, reportPath: paths.report, journal: `node ${join(scripts, 'journal.ts')} --project ${project}` });
+    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library, standing: block.stdout, details, doneWhen: arg('done-when') || undefined, onePoint: has('one-point'), writer, reportPath: paths.report, journal: `node ${join(scripts, 'journal.ts')} --project ${project}` });
     const why = `brief ${target.id}`;
     const holder = writer ? (arg('as') || desk) : undefined;
     const pid = arg('pid') ? Number(arg('pid')) : null;
