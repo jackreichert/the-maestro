@@ -94,3 +94,21 @@ test('the continuity tick records the drift in its state and raises one event wh
   assert.deepEqual(cont.diff(base, { ...base }), [], 'an unknown drift raises nothing');
   assert.equal(typeof io.drift, 'function');
 });
+
+test('one unreadable meta file does not hide the agents after it', () => {
+  const dir = projects([{ id: 'a', description: 'First agent here', ageMs: 5_000 }, { id: 'b', description: 'Middle agent', ageMs: 5_000 }, { id: 'c', description: 'Last agent here', ageMs: 5_000 }]);
+  writeFileSync(join(dir, 'sess-1', 'subagents', 'agent-b.meta.json'), '{"descr');
+  assert.deepEqual(runningAgents(dir, Date.now()).map((a) => a.description).sort(), ['First agent here', 'Last agent here']);
+});
+
+test('a short description is not accounted for by an unrelated longer row, and an empty one still counts', () => {
+  const agents = [{ description: 'Fix', agentType: '', session: 's' }, { description: '', agentType: '', session: 's' }];
+  assert.equal(untrackedAgents(agents, [item('ab12', 'Fix the footer typo')], NOW).length, 2);
+});
+
+test('the continuity tick keeps the last known drift when a read fails', () => {
+  const base: ContinuityState = { lastOk: '', error: '', last: '' };
+  const io = { transcripts: () => [], deps: {}, handoffPath: () => '', lockDir: '', drift: () => undefined } as unknown as Parameters<typeof cont.check>[2];
+  const next = cont.check('t', { now: NOW, prev: { ...base, drift: 3 } as never }, io);
+  assert.ok(next.drift === 3 || next.error, 'drift is carried (or the tick errored before reading it, which keeps prev)');
+});

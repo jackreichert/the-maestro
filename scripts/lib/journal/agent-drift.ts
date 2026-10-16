@@ -17,6 +17,8 @@ import type { LedgerItem } from '../ledger-core.ts';
 /** A subagent transcript written to within this long ago is running. */
 export const RUNNING_WINDOW_MS = 120_000;
 /** A row closed this recently still accounts for an agent that has not stopped writing yet. */
+/** Shortest text that can account for another by containment. */
+const MIN_MATCH = 8;
 const CLOSED_GRACE_MS = 10 * 60_000;
 /** Only sessions whose directory changed within this long are searched, so a year of old sessions is never listed. */
 const SESSION_RECENT_MS = 24 * 3_600_000;
@@ -35,15 +37,20 @@ export function runningAgents(projectsDir: string, now: number, opts: { session?
   const out: RunningAgent[] = [];
   for (const session of sessions) {
     const dir = join(projectsDir, session, 'subagents');
+    let files: string[] = [];
     try {
       if (!opts.session && now - statSync(join(projectsDir, session)).mtimeMs > SESSION_RECENT_MS) continue;
-      for (const f of readdirSync(dir)) {
+      files = readdirSync(dir);
+    } catch { continue; /* no subagents folder: that session has nothing countable */ }
+    for (const f of files) {
+      // Per file: one meta file still being written must not hide the agents after it.
+      try {
         if (!f.endsWith('.jsonl') || now - statSync(join(dir, f)).mtimeMs > withinMs) continue;
         const meta = JSON.parse(readFileSync(join(dir, f.replace(/\.jsonl$/, '.meta.json')), 'utf8')) as { description?: unknown; agentType?: unknown; spawnDepth?: unknown };
         if (meta.spawnDepth !== undefined && meta.spawnDepth !== 1) continue;
         out.push({ description: typeof meta.description === 'string' ? meta.description : '', agentType: typeof meta.agentType === 'string' ? meta.agentType : '', session });
-      }
-    } catch { /* no subagents folder, or a meta file still being written: that session has nothing countable */ }
+      } catch { /* an unreadable meta file: skip this agent only */ }
+    }
   }
   return out;
 }
@@ -52,13 +59,18 @@ export function runningAgents(projectsDir: string, now: number, opts: { session?
 export function untrackedAgents(agents: readonly RunningAgent[], items: readonly LedgerItem[], now: number): RunningAgent[] {
   const tracking = items.filter((i) => i.kind === 'wip' && (!i.closedBy || now - Date.parse(String(i.closedBy.ts)) < CLOSED_GRACE_MS) && (i.closedBy || !i.queued));
   return agents.filter((a) => {
-    const d = words(a.description);
-    if (!d) return false;
+    const d = words(a.description) || '(no description)';
     return !tracking.some((i) => {
       const t = words(String(i.text ?? ''));
-      return (i.id && d.split(' ').includes(i.id.toLowerCase())) || contains(t, d) || (t.length >= 8 && contains(d, t));
+      // The length rule applies both ways: a one-word description ("fix") is not accounted for by any row that happens to contain it.
+      return (i.id && d.split(' ').includes(i.id.toLowerCase())) || (d.length >= MIN_MATCH && contains(t, d)) || (t.length >= MIN_MATCH && contains(d, t));
     });
   });
+}
+
+/** How many running agents no row accounts for. The footer passes its session; the continuity tick, which has none, searches every recent session. */
+export function untrackedCount(projectsDir: string, items: readonly LedgerItem[], now: number, session?: string): number {
+  return untrackedAgents(runningAgents(projectsDir, now, { session }), items, now).length;
 }
 
 /** Which of the maestro Agent hooks are missing from a Claude settings file: `agent-dispatch.ts` (PreToolUse) and `agent-return.ts` (SubagentStop). A file that cannot be read reports both. Never returns any of the file's content. */

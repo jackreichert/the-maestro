@@ -13,7 +13,7 @@ import { ensureContinuity, raiseDecisionsFromText, withContinuityLock } from '..
 import { LOOP_USED, liveTranscripts } from '../lib/continuous-roll.ts';
 import { realDeps } from '../hooks/precompact.ts';
 import { CLAUDE_PROJECTS_DIR } from '../local-config.ts';
-import { runningAgents, untrackedAgents } from '../lib/journal/agent-drift.ts';
+import { untrackedCount } from '../lib/journal/agent-drift.ts';
 import { fold } from '../lib/ledger-core.ts';
 import type { ContinuityDeps } from '../lib/continuity.ts';
 import type { CheckContext, WatchEvent } from '../lib/types.ts';
@@ -56,7 +56,7 @@ export function realIo(): ContinuityIo {
 
 /** The untracked-agent count, or undefined when the transcripts or the ledger cannot be read (an unknown is not a zero). */
 function driftCount(readLedger: ContinuityDeps['readLedger'], now: number): number | undefined {
-  try { return untrackedAgents(runningAgents(CLAUDE_PROJECTS_DIR, now), fold(readLedger(), null).items, now).length; } catch { return undefined; }
+  try { return untrackedCount(CLAUDE_PROJECTS_DIR, fold(readLedger(), null).items, now); } catch { return undefined; }
 }
 
 const firstLine = (e: unknown): string => (e instanceof Error ? e.message : String(e)).split('\n')[0] || 'unknown error';
@@ -76,7 +76,8 @@ export function check(target: string, ctx: Pick<CheckContext, 'now' | 'prev'>, i
     if (!ran.ran) return prev;
     const r = ran.value;
     const drift = io.drift?.(ctx.now);
-    const seen = drift === undefined ? {} : { drift };
+    // An unknown count keeps the last known one, so a standing mismatch is not re-raised as new when the next read succeeds.
+    const seen = drift === undefined ? (prev.drift === undefined ? {} : { drift: prev.drift }) : { drift };
     if (r.failed.length) return { ...prev, ...seen, error: r.failed.join('; ').slice(0, 300) };
     return { lastOk: new Date(ctx.now).toISOString(), error: '', last: `${r.handoff.reason}, snapshot copied ${r.snapshot?.copied ?? 0}, decisions raised ${r.raised}${drift ? `, ${drift} untracked agent${drift === 1 ? '' : 's'}` : ''}`, ...seen };
   } catch (e) {

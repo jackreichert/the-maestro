@@ -271,7 +271,7 @@ import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-p
 import { toolCommand } from './lib/tool-bin.ts';
 import { correctedCommand, inferStreamForRepo, isPlaceholder, modelOfAgentType } from './lib/journal/start-hints.ts';
 import { briefLinkRow, briefOf, briefTextProblem, briefsDir, linkableBrief, readBriefStdin, saveBrief } from './lib/journal/brief-link.ts';
-import { driftLine, missingAgentHooks, runningAgents, untrackedAgents } from './lib/journal/agent-drift.ts';
+import { driftLine, missingAgentHooks, untrackedCount } from './lib/journal/agent-drift.ts';
 import { dryRunJson, printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -1413,9 +1413,8 @@ function ownSessionId(): string | undefined {
 function ledgerDrift(): string {
     try {
         const nowMs = Date.now();
-        const agents = runningAgents(CLAUDE_PROJECTS_DIR, nowMs, { session: process.env.CLAUDE_CODE_SESSION_ID || undefined });
-        const untracked = untrackedAgents(agents, fold(readLedger()).items, nowMs);
-        return driftLine(untracked.length, untracked.length ? missingAgentHooks(CLAUDE_SETTINGS_PATH) : []);
+        const untracked = untrackedCount(CLAUDE_PROJECTS_DIR, fold(readLedger()).items, nowMs, process.env.CLAUDE_CODE_SESSION_ID || undefined);
+        return driftLine(untracked, untracked ? missingAgentHooks(CLAUDE_SETTINGS_PATH) : []);
     } catch { return ''; }
 }
 
