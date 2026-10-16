@@ -311,7 +311,7 @@ export class OpenPrs extends HTMLElement {
     const repos = new Set(all.map((p) => p.repo)).size;
     const oldest = units.filter((u) => unitMove(u) === 'yours').map((u) => u.lead).sort((a, b) => (b.ageDays ?? 0) - (a.ageDays ?? 0))[0];
     const short = (repo: string): string => repo.split('/')[1] ?? repo;
-    return h('section', { class: 'grid cue' },
+    return h('section', { class: 'grid pair cue' },
       h('div', { class: 'two-thirds' },
         h('span', { class: 'kicker' }, 'Open pull requests'),
         line,

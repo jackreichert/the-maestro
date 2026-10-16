@@ -599,7 +599,7 @@ export class PodiumApp extends HTMLElement {
     lead.classList.add('two-thirds');
     const side = stream === null ? this.#priorities(st) : todayPanel(st.priorities.state === 'ok' ? st.priorities.items : [], this.#projects.state === 'ok' ? this.#projects.data : null, stream);
     side.classList.add('third');
-    return h('section', { class: 'grid lead-grid' }, lead, side);
+    return h('section', { class: 'grid pair lead-grid' }, lead, side);
   }
 
   /** The project names a stream's rows cover, as one mono line; empty until the projects payload has loaded or when it lists none. */
@@ -868,7 +868,7 @@ function skeleton(): HTMLElement {
     h('div', { class: 'wrap sk-head', 'aria-hidden': 'true' }, line('150px'), h('span', { class: 'sk-scope' }, line('96px')), staff()),
     h('div', { class: 'sk-tabs', 'aria-hidden': 'true' }, h('div', { class: 'wrap' }, line('72px'), line('104px'), line('56px'))),
     h('div', { class: 'wrap sk-panel', 'aria-hidden': 'true' },
-      h('div', { class: 'grid board' },
+      h('div', { class: 'grid pair board' },
         h('div', { class: 'sk-stack two-thirds' }, line('120px'), h('span', { class: 'sk-hint' }, line('340px')), rows(['62%', '48%', '55%', '40%']), line('96px'), rows(['44%'])),
         h('div', { class: 'sk-stack third' }, line('110px'), rows(['80%', '66%', '72%'])))));
 }

@@ -9,6 +9,10 @@ export const GRID_CSS = `
   @media (min-width: 768px) {
     .grid > .half, .grid > .third { grid-column: span 6; }
   }
+  /* A page of one main column and one side column (.pair) stacks until the thirds fit; a lone half-width side column would be an orphan. */
+  @media (max-width: 1099px) {
+    .grid.pair > .third { grid-column: 1 / -1; }
+  }
   @media (min-width: 1100px) {
     .grid > .third { grid-column: span 4; }
     .grid > .two-thirds { grid-column: span 8; }
