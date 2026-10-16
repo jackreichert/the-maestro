@@ -4,7 +4,7 @@
  * the deck beside the cost). Draws what home-model works out.
  */
 import { AMBIENCE_CSS } from './home-ambience.ts';
-import { COST_CSS, costSection, tempoOf } from './cost-widget.ts';
+import { COST_CSS, costSections, tempoOf } from './cost-widget.ts';
 import { h } from './dom.ts';
 import { CONCEPT_CSS } from './home-concept.ts';
 import { CUES_CSS, cuesSection, pickedStream } from './home-cues.ts';
@@ -53,10 +53,11 @@ export const HOME_TAB_CSS = `
 export function homeTab(st: PodiumState, charts: ChartsData | null, opts: HomeOptions): HTMLElement {
   const projects = opts.projects.state === 'ok' ? opts.projects.data : null;
   const score = charts && charts.days.length > 0 && st.streams.length > 0 ? scoreTable(st, charts, projects) : null;
-  const cost = costSection(opts.cost ?? null, tempoOf(charts));
+  const cost = costSections(opts.cost ?? null, tempoOf(charts));
   const deck = deckSection(st, charts, score);
   // Without a cost payload (an old server, sample data) the deck takes the row.
   if (!cost) deck.classList.replace('half', 'full');
+  // Cost is split so no widget towers over its neighbour: the metrics beside the deck, then tempo, model mix and experiments as a row of thirds.
   const cues = cuesSection(st, opts.live, opts.redraw, opts.needs);
   const movements = movementsSection(opts.epics, projects?.links ?? []);
   const rehearsal = localReviewWidget(opts.local ?? null);
@@ -80,5 +81,5 @@ export function homeTab(st: PodiumState, charts: ChartsData | null, opts: HomeOp
     h('div', { class: 'third side' }, held, flight),
     ages, prs, rehearsal,
     movements, coda,
-    deck, cost);
+    deck, cost?.cost ?? null, ...(cost?.rest ?? []));
 }

@@ -6,7 +6,16 @@ import { sanitizeCost } from '../src/contract.ts';
 import type { CostData, CostMetric } from '../src/types.ts';
 
 installDom();
-const { costSection, costValue, tempoOf } = await import('../src/cost-widget.ts');
+const { costSections, costValue, tempoOf } = await import('../src/cost-widget.ts');
+
+/** Every Cost widget in one container, so a test can look across them as the page would. */
+const costSection = (c: CostData | null, t: Parameters<typeof costSections>[1] = null): HTMLElement | null => {
+  const s = costSections(c, t);
+  if (!s) return null;
+  const box = document.createElement('div');
+  box.append(s.cost, ...s.rest);
+  return box;
+};
 
 const series = (v: (number | null)[]): (number | null)[] => [...Array(14 - v.length).fill(null), ...v];
 const metric = (o: Partial<CostMetric> & { name: string }): CostMetric => ({ fmt: 'n', today: 100, median7: 100, vs7: 0, regression: false, limit: null, dir: null, status: '-', series: series([100, 100]), ...o });
@@ -98,7 +107,7 @@ test('a metric with no 7-day median has no dynamic mark, and says so in words', 
 
 test('a stale measurement says when it was last measured, is muted, and never swings the pendulum', () => {
   const el = draw(data({ stale: true, date: '2026-09-30' }))!;
-  assert.ok(el.classList.contains('stale'), 'the section is muted');
+  assert.ok(el.firstElementChild!.classList.contains('stale'), 'the section is muted');
   assert.match(text(el.querySelector('.sec-head')), /Last measured 2026-09-30; no fresh measurement/);
   const read = text(el.querySelector('.metro-read'));
   assert.match(read, /Tokens read per turn: 312\.0k, limit 200\.0k/);
@@ -164,4 +173,20 @@ test('ring shares that add up to more than a whole never draw a negative arc', (
 
 test('a stale limit line carries its date in the primary text', () => {
   assert.match(text(draw(data({ stale: true, date: '2026-09-30' }))!.querySelector('.metro-read .plain')), /measured 2026-09-30/);
+});
+
+test('Cost is split into separate widgets, each with its own heading, and none of them is the whole thing', () => {
+  const s = costSections(data({ today: null }), null)!;
+  const titles = [s.cost, ...s.rest].map((w) => text(w.querySelector('h2')));
+  assert.deepEqual(titles, ['Cost', 'Tempo', 'Model mix', 'Experiments']);
+  assert.ok(s.cost.querySelector('.dyn') && !s.cost.querySelector('.donut, .metro, .cost-reg'), 'Cost keeps only the metrics');
+  assert.ok(s.rest[0]!.querySelector('.tempo-wrap') && s.rest[0]!.querySelector('.metro-wrap'), 'Tempo holds the tempo and the daily limit');
+  assert.ok(s.rest[1]!.querySelector('.donut') && s.rest[2]!.querySelector('.cost-reg'));
+  assert.deepEqual(s.rest.map((w) => w.classList.contains('third')), [true, true, true]);
+});
+
+test('with no measurement only the Cost widget is drawn, and a stale reading mutes every widget', () => {
+  assert.equal(costSections(data({ state: 'empty', reason: 'none', metrics: [], mix: null, date: null }))!.rest.length, 0);
+  const stale = costSections(data({ stale: true }))!;
+  assert.ok([stale.cost, ...stale.rest].every((w) => w.classList.contains('stale')));
 });
