@@ -242,7 +242,7 @@ const OWNERSHIP_RULES: Rule<[OwnCtx], boolean>[] = [
 /** The user's author emails: the configured list, else the repo's own user.email. */
 const emailCache = new WeakMap<Git, string[]>();
 const emailsFor = (g: Git, ctx: SweepContext): string[] => {
-  if (ctx.emails.length) return ctx.emails;
+  if (ctx.emails.length) return ctx.emails.filter(Boolean);
   let e = emailCache.get(g);
   if (!e) { e = [g('config', 'user.email').out].filter(Boolean); emailCache.set(g, e); }
   return e;
@@ -281,7 +281,7 @@ function mergedPrs(repo: string, ctx: SweepContext): PrInfo[] {
     const end = Date.parse(day(Date.now())); const start = end - (ctx.prDays ?? 180) * 864e5;
     const byNumber = new Map<number, PrInfo>();
     for (const p of mergedWindow(repo, ctx, start, end)) byNumber.set(p.number, p);
-    ctx.prCache.set(repo, [...byNumber.values()]);
+    ctx.prCache.set(repo, [...byNumber.values()].sort((a, b) => a.number - b.number));
   }
   return ctx.prCache.get(repo) as PrInfo[];
 }
@@ -891,8 +891,9 @@ function runAsync(bin: string, args: string[], cwd?: string): Promise<{ code: nu
 
 /**
  * `mergedPrs` for a repo that many slices share, with the fortnights asked of gh at once (a page of merged PRs is slow to
- * search, and a big repo needs several in sequence). The windows are the same days `mergedWindow` splits into and are joined
- * in date order, so this is the list a serial scan would have fetched. A failed call throws.
+ * search, and a big repo needs several in sequence). Each fortnight splits on a full page as `mergedWindow` does. Both paths
+ * return the PRs de-duplicated and sorted by number, so the same set reads in the same order whichever path fetched it.
+ * A failed call throws. It starts up to a dozen gh processes for one repo, at most for the few repos that are sliced.
  */
 export async function mergedPrsParallel(repo: string, prDays: number): Promise<PrInfo[]> {
   const window = async (from: number, to: number): Promise<PrInfo[]> => {
@@ -909,16 +910,16 @@ export async function mergedPrsParallel(repo: string, prDays: number): Promise<P
   for (let from = start; from <= end; from += 14 * 864e5) spans.push([from, Math.min(from + 13 * 864e5, end)]);
   const byNumber = new Map<number, PrInfo>();
   for (const p of (await Promise.all(spans.map(([from, to]) => window(from, to)))).flat()) byNumber.set(p.number, p);
-  return [...byNumber.values()];
+  return [...byNumber.values()].sort((a, b) => a.number - b.number);
 }
 
 /** A counting semaphore: `limit(fn)` runs `fn` once fewer than `n` calls are in flight, first come first served. */
 function limiter(n: number): <T>(fn: () => Promise<T>) => Promise<T> {
   let active = 0; const waiting: (() => void)[] = [];
   return async <T>(fn: () => Promise<T>): Promise<T> => {
-    if (active >= n) await new Promise<void>((go) => waiting.push(go));
-    active++;
-    try { return await fn(); } finally { active--; waiting.shift()?.(); }
+    if (active >= n) await new Promise<void>((go) => waiting.push(go)); // the slot is handed over by the releaser, still counted
+    else active++;
+    try { return await fn(); } finally { const next = waiting.shift(); if (next) next(); else active--; }
   };
 }
 
@@ -939,8 +940,8 @@ export async function scanAll(repos: string[], ctx: SweepContext, childArgs: str
   const dir = mkdtempSync(join(tmpdir(), 'branch-sweep-'));
   const scans: RepoScan[] = new Array(repos.length);
   try {
-    await Promise.all(order.map(async ({ p, i }) => {
-      const slices = Math.min(MAX_SHARDS, Math.max(1, Math.ceil(branchCount(p) / SHARD_BRANCHES)));
+    await Promise.all(order.map(async ({ p, i, n }) => {
+      const slices = Math.min(MAX_SHARDS, Math.max(1, Math.ceil(n / SHARD_BRANCHES)));
       const fetched = ctx.fetch ? limit(async () => (await git(p, 'remote', 'get-url', 'origin')).code === 0 && (await git(p, 'fetch', '--prune', 'origin')).code !== 0) : Promise.resolve(false); // no origin: the scan says so itself
       // Slices of one repo would each ask gh for the same merged-PR list: ask once (while the fetch runs), hand every slice the answer.
       const asked = slices < 2 ? Promise.resolve([] as string[]) : mergedPrsParallel(p, ctx.prDays).then((list) => {
