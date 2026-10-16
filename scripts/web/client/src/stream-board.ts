@@ -1,4 +1,5 @@
 import { BASE_CSS, UI_CSS, h, refLink, shadow, streamTag } from './dom.ts';
+import { pagedRows } from './pager.ts';
 import './ask-card.ts';
 import './md-fragment.ts';
 import { fragmentFor } from './contract.ts';
@@ -92,15 +93,18 @@ export function itemRows<T extends WorkItem>(xs: T[], ctx: RowContext): HTMLElem
   }));
 }
 
+/** Asks on one page of a Needs-you list. */
+export const ASK_PAGE = 6;
+
 /**
- * Asks as one row each, oldest first unless `order` says otherwise; `showStream` tags each row with its stream (the overview mixes streams). With a
- * `cap`, only the oldest `cap` rows show until "Show all N" reveals the rest, so the sections below stay in view.
+ * Asks as one row each, oldest first unless `order` says otherwise; `showStream` tags each row with its stream (the overview mixes streams).
+ * Returns the list and, past one page, its pager as one body for a section. A long list is paged (`ASK_PAGE` to a page, the page kept under `pageKey`), so the sections below stay in view.
  */
-export function askCards(asks: AskCard[], live: boolean, showStream: boolean, cap = Number.POSITIVE_INFINITY, order: (xs: AskCard[]) => AskCard[] = oldestFirst): AskList | null {
+export function askCards(asks: AskCard[], live: boolean, showStream: boolean, pageKey: string, order: (xs: AskCard[]) => AskCard[] = oldestFirst): DocumentFragment | null {
   if (asks.length === 0) return null;
   const id = `asks${++sectionSeq}`;
-  const cards = order(asks).map((a, i) => {
-    const card = h('ask-card', { role: 'listitem', hidden: i >= cap });
+  const cards = order(asks).map((a) => {
+    const card = h('ask-card', { role: 'listitem' });
     card.showStream = showStream;
     card.locked = !live;
     card.ask = a;
@@ -109,25 +113,11 @@ export function askCards(asks: AskCard[], live: boolean, showStream: boolean, ca
   const list = h('div', { class: 'asks', role: 'list', id }, ...cards);
   // One answer form open at a time: opening an ask folds the others in this list (their drafts stay).
   list.addEventListener('ask-open', (e) => { for (const c of cards) if (c !== e.target) c.fold(); });
-  const hidden = cards.slice(cap);
-  if (hidden.length === 0) return { list, more: null };
-  // One name in both states (APG disclosure): aria-expanded carries the state, and the chevron turns to show it.
-  const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', 'aria-controls': id },
-    `Show all ${asks.length}`, h('span', { class: 'vh' }, ' asks'), h('span', { class: 'chev', 'aria-hidden': 'true' }));
-  const label = (open: boolean): void => { more.setAttribute('aria-expanded', String(open)); };
-  let open = false;
-  more.addEventListener('click', () => {
-    open = !open;
-    for (const c of hidden) c.hidden = !open;
-    label(open);
-    // Revealing moves focus to the first ask that was hidden, so a keyboard user lands on the new rows, not past them.
-    if (open) hidden[0]?.focusToggle();
-  });
-  return { list, more };
+  const more = pagedRows(cards, { key: pageKey, size: ASK_PAGE, label: 'Needs you' });
+  const block = document.createDocumentFragment();
+  block.append(list, ...(more ? [more] : []));
+  return block;
 }
-
-/** The asks list, and the Show all control when the list is capped (it sits at the right of the section heading). */
-export interface AskList { list: HTMLElement; more: HTMLElement | null }
 
 /** True on Apple platforms, where the send shortcut is shown with the Command key. */
 const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -200,7 +190,7 @@ export class StreamBoard extends HTMLElement {
     this.#filled = true;
     const home = this.#home;
     const groups = home ? leftGroups(home) : null;
-    const left = home && groups ? leftBody(groups) : null;
+    const left = home && groups ? leftBody(groups, home.stream) : null;
     slots.stand.replaceChildren(...(home ? [section({ title: 'Where it stands', n: 0, tone: 'neutral', empty: '' }, epicStrip(home))] : []));
     slots.left.replaceChildren(...(home && groups && left ? [section({ title: leftHeading(groups, home.epics), n: 0, tone: 'neutral', empty: '' }, left)] : []));
     const rail = home ? railBody(home, window.matchMedia('(min-width: 960px)').matches) : null;
@@ -245,7 +235,7 @@ export class StreamBoard extends HTMLElement {
     this.#filled = false;
     this.#root.replaceChildren(slots.stand, h('div', { class: 'grid pair board' },
       h('div', { class: 'col two-thirds' },
-        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false, Number.POSITIVE_INFINITY, (xs) => byPriority(oldestFirst(xs), todaysPriorities(st)))?.list ?? null),
+        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false, `asks:${stream}`, (xs) => byPriority(oldestFirst(xs), todaysPriorities(st)))),
         slots.left,
         shown(prs.length, () => section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: '' }, prList(prs))),
         shown(selfPrs.length, () => section({ title: 'Maestro PRs (self-review)', n: selfPrs.length, tone: 'neutral', empty: '' }, prList(selfPrs))),

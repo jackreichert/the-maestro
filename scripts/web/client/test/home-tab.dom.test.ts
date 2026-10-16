@@ -10,6 +10,7 @@ import type { ProjectsLoad } from '../src/home-tab.ts';
 installDom();
 const { homeTab } = await import('../src/home-tab.ts');
 const homeSections = await import('../src/home-sections.ts');
+const { PAGES } = await import('../src/pager.ts');
 const { homeUi } = homeSections;
 const read = (name: string): unknown => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
 const state = (): PodiumState => structuredClone(sanitizeState(read('state.json'))!.state);
@@ -17,7 +18,7 @@ const charts = (): ChartsData => structuredClone(sanitizeCharts(read('charts.jso
 const projects = (): ProjectsData => structuredClone(sanitizeProjects(read('projects.json'))!.data);
 let redraws = 0;
 const draw = (st: PodiumState, c: ChartsData | null, p: ProjectsLoad): HTMLElement => {
-  homeUi.order = 'oldest'; homeUi.stream = null; homeUi.allAsks = false; homeUi.allShipped = false;
+  homeUi.order = 'oldest'; homeUi.stream = null; PAGES.clear();
   return place(homeTab(st, c, { live: false, projects: p, epics: null, redraw: () => { redraws += 1; } })).el;
 };
 const sec = (el: HTMLElement, name: string): Element => [...el.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent?.startsWith(name))!;
@@ -41,6 +42,31 @@ test('Home is one grid whose children are placed as thirds or two thirds', () =>
   assert.ok(home.classList.contains('grid'));
   assert.ok(home.querySelector(':scope > section.two-thirds'), 'the cues take two thirds');
   assert.ok(home.querySelectorAll(':scope > .third').length >= 3, 'the side column and the gauges sit in thirds');
+});
+
+test('Cues are paged six to a page: a pager replaces Show all, and the cue letters follow the whole list', () => {
+  const st = state();
+  const base = st.asks[0]!;
+  st.asks = Array.from({ length: 9 }, (_, i) => ({ ...base, id: `ask${i}`, ageDays: 9 - i, door: i === 8 ? 'one-way' as const : 'two-way' as const }));
+  const el = draw(st, charts(), { state: 'ok', data: projects() });
+  const cues = sec(el, 'Cues');
+  assert.equal(text(cues.querySelector('nav.pager .pg-note')), '1 one-way door on other pages');
+  assert.equal(cues.querySelectorAll('.qcue:not([hidden])').length, 6);
+  assert.equal(text(cues.querySelector('nav.pager .pg-status')), 'Page 1 of 2 (1\u20136 of 9 asks)');
+  assert.equal(cues.querySelector('[data-ctl=more-asks]'), null, 'no Show all');
+  (cues.querySelector('nav.pager [data-dir=next]') as HTMLButtonElement).click();
+  const shown = [...cues.querySelectorAll('.qcue:not([hidden])')];
+  assert.deepEqual([shown.length, text(shown[0]?.querySelector('.rmark'))], [3, 'G'], 'the seventh cue is rehearsal letter G');
+});
+
+test('Coda is paged six to a page too', () => {
+  const st = state();
+  const base = st.done[0]!;
+  st.done = Array.from({ length: 8 }, (_, i) => ({ ...base, id: `done${i}`, closedAt: new Date(Date.UTC(2026, 9, 6, 9, 0, i)).toISOString() }));
+  const el = draw(st, charts(), { state: 'ok', data: projects() });
+  const coda = sec(el, 'Coda');
+  assert.equal(coda.querySelectorAll('.crow:not([hidden])').length, 6);
+  assert.equal(text(coda.querySelector('nav.pager .pg-status')), 'Page 1 of 2 (1\u20136 of 8)');
 });
 
 test('the score has a row per stream with a state word, and a missing charts payload says so instead of a blank', () => {
@@ -90,7 +116,7 @@ test('each cue carries a rehearsal letter in its stream colour, A first', () => 
 test('a stream chip narrows the asks to that stream', () => {
   const st = state();
   const stream = st.asks[0]!.stream;
-  homeUi.order = 'oldest'; homeUi.stream = stream; homeUi.allAsks = false; homeUi.allShipped = false;
+  homeUi.order = 'oldest'; homeUi.stream = stream; PAGES.clear();
   const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, redraw: () => {} })).el;
   assert.equal(el.querySelector(`[data-ctl=chip-${stream}]`)!.getAttribute('aria-pressed'), 'true');
   const shown = sec(el, 'Cues').querySelectorAll('ask-card').length;
@@ -104,7 +130,7 @@ const needsOf = (stream: string): import('../src/needs-items.ts').NeedsItem[] =>
 
 test('PRs ready to merge and reviews waiting for an OK are rows in Needs you, with a kind badge in words, a link, and the count includes them', () => {
   const st = state();
-  homeUi.order = 'oldest'; homeUi.stream = null; homeUi.allAsks = false; homeUi.allShipped = false;
+  homeUi.order = 'oldest'; homeUi.stream = null; PAGES.clear();
   const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, needs: needsOf(st.asks[0]!.stream), redraw: () => {} })).el;
   const needs = sec(el, 'Cues');
   assert.match(text(needs.querySelector('h2')), new RegExp(`${st.asks.length + 2}$`));
@@ -123,7 +149,7 @@ test('PRs ready to merge and reviews waiting for an OK are rows in Needs you, wi
 test('the stream chips count and filter the new rows too', () => {
   const st = state();
   const stream = st.asks[0]!.stream;
-  homeUi.order = 'oldest'; homeUi.stream = 'Elsewhere'; homeUi.allAsks = false; homeUi.allShipped = false;
+  homeUi.order = 'oldest'; homeUi.stream = 'Elsewhere'; PAGES.clear();
   st.streams = [...st.streams, 'Elsewhere'];
   const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, needs: needsOf(stream), redraw: () => {} })).el;
   const needs = sec(el, 'Cues');
@@ -136,7 +162,7 @@ test('the stream chips count and filter the new rows too', () => {
 test('with no asks, rows for PRs and reviews replace the empty sentence', () => {
   const st = state();
   st.asks = [];
-  homeUi.order = 'oldest'; homeUi.stream = null; homeUi.allAsks = false; homeUi.allShipped = false;
+  homeUi.order = 'oldest'; homeUi.stream = null; PAGES.clear();
   const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, needs: needsOf('x'), redraw: () => {} })).el;
   assert.doesNotMatch(text(sec(el, 'Cues')), /Nothing needs you right now/);
   assert.equal(sec(el, 'Cues').querySelectorAll('ul.needs-items > li').length, 2);
@@ -153,7 +179,7 @@ test('the gauges say how many asks are open and how many PRs are open, with word
 test('the Stream order groups the asks by stream and the choice survives a redraw', () => {
   const st = state();
   const streams = [...new Set(st.asks.map((a) => a.stream))];
-  homeUi.order = 'stream'; homeUi.stream = null; homeUi.allAsks = true; homeUi.allShipped = false;
+  homeUi.order = 'stream'; homeUi.stream = null; PAGES.clear();
   const draw2 = (): HTMLElement => place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, redraw: () => {} })).el;
   for (const el of [draw2(), draw2()]) {
     assert.equal(el.querySelector<HTMLSelectElement>('select[data-ctl=order]')!.value, 'stream');

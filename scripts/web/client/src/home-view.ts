@@ -2,12 +2,16 @@
 import { h, refLink } from './dom.ts';
 import { BRIEF_CSS, briefBadgeEl, briefView } from './epic-brief.ts';
 import { SHELF_CSS, docsShelf } from './docs-shelf.ts';
-import { awaitingLabel, barSegments, capRows, epicEnd, epicUnknownsLabel, firstSentence, kindWord, noEpicLine, sharedFacts, sharedHeading, sharedKindWord, openCounts, progressSentence, quietNote, railCount, railGroups, ticketNotes, unknownsHeading, verifiedSentence } from './home-text.ts';
+import { pagedRows } from './pager.ts';
+import { awaitingLabel, barSegments, epicEnd, epicUnknownsLabel, firstSentence, kindWord, noEpicLine, sharedFacts, sharedHeading, sharedKindWord, openCounts, progressSentence, quietNote, railCount, railGroups, ticketNotes, unknownsHeading, verifiedSentence } from './home-text.ts';
 import type { LeftGroups } from './home-text.ts';
 import type { HomeEpic, HomeTicket, RailLink, SharedDoc, StreamHome } from './types.ts';
 
 /** Epics shown before "n more epics"; the most recently active come first, as the server sends them. */
-const EPIC_CAP = 3;
+const EPIC_PAGE = 3;
+const IN_PROGRESS_PAGE = 8;
+/** Rows on one page of a long group of tickets or links. */
+const ROW_PAGE = 5;
 /** The id the unknowns disclosure carries, so an epic block can open it. */
 const UNKNOWNS_ID = 'unknowns';
 
@@ -103,15 +107,13 @@ function epicBlock(e: HomeEpic, listed: boolean): HTMLElement {
     shelf ? h('details', { class: 'fold', 'data-fold': `epic-docs-${e.id}` }, h('summary', {}, shelfLabel), ...shelf) : null);
 }
 
-/** The epics of the stream, newest activity first, at most three shown; with none, one teaching line says how to get progress. */
+/** The epics of the stream, newest activity first, `EPIC_PAGE` to a page; with none, one teaching line says how to get progress. */
 export function epicStrip(home: StreamHome): HTMLElement {
   if (home.epics.length === 0) return h('p', { class: 'teach' }, noEpicLine(home));
-  const { shown, rest } = capRows(home.epics, EPIC_CAP);
   const listed = home.unknowns.length > 0;
-  return h('div', {},
-    h('ul', { class: 'epics', role: 'list' }, ...shown.map((e) => epicBlock(e, listed))),
-    rest.length ? h('details', { class: 'fold', 'data-fold': 'epics-more' }, h('summary', {}, `${rest.length} more ${rest.length === 1 ? 'epic' : 'epics'}`),
-      h('ul', { class: 'epics', role: 'list' }, ...rest.map((e) => epicBlock(e, listed)))) : null);
+  const blocks = home.epics.map((e) => epicBlock(e, listed));
+  const pager = pagedRows(blocks, { key: `epics:${home.stream}`, size: EPIC_PAGE, label: 'Epics' });
+  return h('div', {}, h('ul', { class: 'epics', role: 'list' }, ...blocks), pager);
 }
 
 /** A ticket as a row: id, its title (linked), its small facts, and up to three PR links under it. */
@@ -126,24 +128,21 @@ function ticketRows(ts: HomeTicket[]): HTMLElement {
   }));
 }
 
-/** A group of tickets under its heading: the first five, and a disclosure for the rest. Null when the group is empty. */
-function leftGroup(title: string, ts: HomeTicket[], cap: number): HTMLElement | null {
+/** A group of tickets under its heading, `size` to a page. Null when the group is empty. */
+function leftGroup(title: string, ts: HomeTicket[], size: number, stream: string): HTMLElement | null {
   if (ts.length === 0) return null;
-  const { shown, rest } = capRows(ts, cap);
-  return h('div', { class: 'left-group' },
-    h('h3', {}, `${title} (${ts.length})`),
-    ticketRows(shown),
-    rest.length ? h('details', { class: 'fold', 'data-fold': `left-${title}` }, h('summary', {}, `Show ${rest.length} more`), ticketRows(rest)) : null);
+  const list = ticketRows(ts);
+  const pager = pagedRows([...list.children] as HTMLElement[], { key: `left:${stream}:${title}`, size, label: title });
+  return h('div', { class: 'left-group' }, h('h3', {}, `${title} (${ts.length})`), list, pager);
 }
 
 /** What is left, by group: In progress, Blocked, Not started. Null when nothing is open. */
-export function leftBody(groups: LeftGroups): HTMLElement | null {
+export function leftBody(groups: LeftGroups, stream: string): HTMLElement | null {
   if (groups.shown === 0) return null;
-  const cap = Number.POSITIVE_INFINITY;
   return h('div', {},
-    leftGroup('In progress', groups.inProgress, cap),
-    leftGroup('Blocked', groups.blocked, 5),
-    leftGroup('Not started', groups.notStarted, 5),
+    leftGroup('In progress', groups.inProgress, IN_PROGRESS_PAGE, stream),
+    leftGroup('Blocked', groups.blocked, ROW_PAGE, stream),
+    leftGroup('Not started', groups.notStarted, ROW_PAGE, stream),
     groups.truncated > 0 ? h('p', { class: 'truncated' }, `${groups.truncated} more open ${groups.truncated === 1 ? 'ticket is' : 'tickets are'} not listed here.`) : null);
 }
 
@@ -182,10 +181,10 @@ export function railBody(home: StreamHome, wide: boolean): HTMLElement | null {
   return h('div', { class: 'rail', role: 'group', 'aria-label': 'Done means, links and shared documents' },
     done.length ? railFold('done', 'Done means', wide, ...done) : null,
     groups.length ? railFold('links', `Links (${railCount(home.links)})`, wide, ...groups.map((g) => {
-      const { shown, rest } = capRows(g.items);
+      const rows = g.items.map(railRow);
       return h('div', {}, h('h3', {}, g.title),
-        h('ul', { class: 'links', role: 'list' }, ...shown.map(railRow)),
-        rest.length ? h('details', { class: 'fold', 'data-fold': `rail-links-${g.title}` }, h('summary', {}, `Show ${rest.length} more`), h('ul', { class: 'links', role: 'list' }, ...rest.map(railRow))) : null,
+        h('ul', { class: 'links', role: 'list' }, ...rows),
+        pagedRows(rows, { key: `rail-links:${home.stream}:${g.title}`, size: ROW_PAGE, label: g.title }),
         g.more > 0 ? h('p', { class: 'truncated' }, `${g.more} more not listed.`) : null);
     })) : null,
     home.shared.length ? railFold('shared', sharedHeading(home), wide, h('ul', { class: 'links', role: 'list' }, ...home.shared.map(sharedRow)),
