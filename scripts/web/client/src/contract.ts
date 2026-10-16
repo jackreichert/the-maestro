@@ -359,7 +359,7 @@ export function sanitizeOpenPrs(x: unknown): { data: OpenPrsData; dropped: numbe
 }
 
 const OTHERS_PR: Shape = {
-  repo: str, number: count, title: str, url: str, author: str, authorName: opt(str), base: str, updatedAt: str, ageDays: opt(num), youAsked: bool, handsOff: opt(bool),
+  repo: str, number: count, title: str, url: str, author: str, authorName: opt(str), base: str, updatedAt: str, ageDays: opt(num), youAsked: bool, handsOff: opt(bool), isDraft: opt(bool), ci: opt(oneOf('pass', 'fail', 'pending', 'none')), conflicting: opt(bool), block: opt(oneOf('release', 'blocked')), awaitingAuthor: opt(bool), notAsked: opt(bool), askedAt: opt(str), stale: opt(bool), staleWhy: opt(str),
   review: oneOf('review-required', 'approved', 'changes-requested'), unresolved: count, copilotThreads: count,
 };
 

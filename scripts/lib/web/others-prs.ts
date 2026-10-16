@@ -3,6 +3,8 @@
  * Reads the cache only, so a page load never reaches GitHub. Own PRs and self-review repos are left out here as well as at fetch time,
  * so a changed `self_review_repos` takes effect before the next rebuild. The review-draft status is joined by the page from the draft queue, which changes on its own.
  */
+import { slackActivity } from './slack-activity.ts';
+import type { SlackActivity } from './slack-activity.ts';
 import { readOthersCache } from '../teammate/others.ts';
 import type { Guard } from '../teammate/wait.ts';
 import type { OtherPr } from '../teammate/others.ts';
@@ -13,11 +15,31 @@ import type { OthersPrRow, OthersPrsData } from '../../web/client/src/types.ts';
 
 const DAY_MS = 86_400_000;
 
-export interface OthersScopeOptions { statusDir: string; owners: readonly string[]; selfRepos: readonly string[]; self: string; guard?: Guard }
+export interface OthersScopeOptions { statusDir: string; owners: readonly string[]; selfRepos: readonly string[]; self: string; guard?: Guard;
+  /** A PR whose latest ask (Slack activity, or its own opened time when never posted) is older than this many days is marked stale, unless you are asked for review or @-mentioned. Absent means no cutoff. */
+  maxAgeDays?: number;
+  /** The folder of the slack-watch engineering notes (`<vault_root>/Projects/<container>/Slack`); absent means no Slack ask is known. */
+  slackDir?: string;
+  /** Names that count as @-mentioning you in Slack (`others_prs_mention_names`). */
+  mentionNames?: readonly string[] }
 
 const reviewOf = (decision: string | null): OthersPrRow['review'] => (decision === 'APPROVED' ? 'approved' : decision === 'CHANGES_REQUESTED' ? 'changes-requested' : 'review-required');
 
-function row(p: OtherPr, self: string, guard: Guard, now: Date): OthersPrRow {
+/** Open, nobody asked, nobody looked, and not posted in Slack: pushed but not yet asking for review. Drafts are reported as drafts instead. */
+const notAsked = (p: OtherPr, youAsked: boolean, slack: ReadonlyMap<string, SlackActivity>): boolean =>
+  p.isDraft === false && !youAsked && p.requested.length === 0 && p.decision === null && p.unresolved === 0 && (p.reviewCount ?? 1) === 0 && !p.yourReview && !slack.has(p.url.toLowerCase());
+
+const CI: Record<string, NonNullable<OthersPrRow['ci']>> = { SUCCESS: 'pass', FAILURE: 'fail', ERROR: 'fail', PENDING: 'pending', EXPECTED: 'pending' };
+const BLOCK_LABEL = /block|do not merge|don'?t merge|\bwip\b|\bhold\b/i;
+
+/** A review you posted that the author has not pushed after (a commit at or before the review). An approval is not waiting on anything. */
+const awaiting = (p: OtherPr): boolean => {
+  const r = p.yourReview;
+  if (!r || (r.state !== 'COMMENTED' && r.state !== 'CHANGES_REQUESTED') || !p.headAt) return false;
+  return Date.parse(p.headAt) <= Date.parse(r.at);
+};
+
+function row(p: OtherPr, self: string, guard: Guard, now: Date, slack: ReadonlyMap<string, SlackActivity>, cutoff: number | null): OthersPrRow {
   const opened = Date.parse(p.createdAt);
   const youAsked = self !== '' && p.requested.some((r) => r.toLowerCase() === self.toLowerCase());
   return {
@@ -25,7 +47,28 @@ function row(p: OtherPr, self: string, guard: Guard, now: Date): OthersPrRow {
     ...(Number.isFinite(opened) ? { ageDays: Math.max(0, Math.floor((now.getTime() - opened) / DAY_MS)) } : {}),
     youAsked, ...(isGuard(p.repo, p.author, guard) && !youAsked ? { handsOff: true } : {}),
     review: reviewOf(p.decision), unresolved: p.unresolved, copilotThreads: p.copilotThreads,
+    ...(typeof p.isDraft === 'boolean' ? { isDraft: p.isDraft } : {}),
+    ci: (p.ci && Object.hasOwn(CI, p.ci) ? CI[p.ci] : undefined) ?? 'none',
+    ...(p.mergeable === 'CONFLICTING' ? { conflicting: true } : {}),
+    ...(p.head.startsWith('release/') ? { block: 'release' as const } : (p.labels ?? []).some((l) => BLOCK_LABEL.test(l)) ? { block: 'blocked' as const } : {}),
+    ...(awaiting(p) ? { awaitingAuthor: true } : {}),
+    ...(notAsked(p, youAsked, slack) ? { notAsked: true } : {}),
+    ...ask(p, youAsked, slack, now, cutoff),
   };
+}
+
+/**
+ * The latest ask for review: the newest Slack post or reply carrying the PR link, or, when it was never posted, the PR's own opening time (GitHub gives no ready or
+ * re-request time to this tab). Past the cutoff the PR is stale, unless you are asked for review or @-mentioned: a direct ask never goes stale.
+ */
+function ask(p: OtherPr, youAsked: boolean, slack: ReadonlyMap<string, SlackActivity>, now: Date, cutoff: number | null): Pick<OthersPrRow, 'askedAt' | 'stale' | 'staleWhy'> {
+  const s = slack.get(p.url.toLowerCase());
+  const at = s ? s.at : Date.parse(p.createdAt);
+  if (!Number.isFinite(at)) return {};
+  const days = Math.round((now.getTime() - at) / DAY_MS);
+  const stale = cutoff !== null && at < cutoff && !youAsked && !s?.mentioned;
+  const why = s ? (s.replied ? `last Slack reply ${days}d ago` : `Slack post ${days}d, no reply`) : `never posted, opened ${days}d ago`;
+  return { askedAt: new Date(at).toISOString(), ...(stale ? { stale: true, staleWhy: why } : {}) };
 }
 
 export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData {
@@ -35,11 +78,13 @@ export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData 
   const kept = (cache?.prs ?? [])
     .filter((p) => p.author.toLowerCase() !== self && owners.has((p.repo.split('/')[0] ?? '').toLowerCase()) && !isSelfReview(p.repo, o.selfRepos))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const slack = slackActivity(o.slackDir, o.mentionNames);
+  const cutoff = o.maxAgeDays === undefined ? null : now.getTime() - o.maxAgeDays * DAY_MS;
   const fetchedAt = cache?.fetchedAt ?? null;
   const stale = !fetchedAt || now.getTime() - fetchedAt.getTime() > PR_STALE_MS;
   return {
     generatedAt: now.toISOString(),
     prData: { fetchedAt: fetchedAt ? fetchedAt.toISOString() : null, stale, ...(cache?.failure ? { failure: cache.failure } : {}) },
-    total: kept.length, prs: kept.map((p) => row(p, o.self, o.guard ?? NO_GUARD, now)),
+    total: kept.length, prs: kept.map((p) => row(p, o.self, o.guard ?? NO_GUARD, now, slack, cutoff)),
   };
 }

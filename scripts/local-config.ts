@@ -514,6 +514,11 @@ export const SELF_REVIEW_REPOS = [...repoGlobs(globList('MAESTRO_SELF_REVIEW_REP
 export const HANDS_OFF_REPOS = globList('MAESTRO_HANDS_OFF_REPOS', 'hands_off_repos').map((g) => (g.includes('/') ? g : `*/${g}`));
 export const HANDS_OFF_OWNER = pick('MAESTRO_HANDS_OFF_OWNER', 'hands_off_owner').trim();
 
+/** Others' PRs tab: a PR whose latest Slack activity (a post with its link or a reply under it; its own opening time when never posted) is more than this many days old goes to the Stale sub-tab. Default 2. */
+export const OTHERS_PRS_MAX_AGE_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_MAX_AGE_DAYS', 'others_prs_max_age_days'), 2);
+/** Names that count as an @-mention of you in the Slack notes (comma-separated, no `@`). A PR whose thread mentions one never goes stale. Default none. */
+export const OTHERS_PRS_MENTION_NAMES = globList('MAESTRO_OTHERS_PRS_MENTION_NAMES', 'others_prs_mention_names');
+
 /** Teammate PR helper: minutes a ready PR by someone else may wait with no review before pr-watch reports `REVIEW-WAIT` for it (the orchestrator then drafts review comments for your approval; see playbooks/teammate-review.md). Unset or 0 turns it off, the default. */
 export const TEAMMATE_REVIEW_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim()) ? Number(raw) : 0))(pick('MAESTRO_TEAMMATE_REVIEW_MINUTES', 'teammate_review_minutes'));
 /** The owners the helper searches: gh_org plus the plain owners in review_pool_owners. With none, it searches nothing: it is never unscoped. */
