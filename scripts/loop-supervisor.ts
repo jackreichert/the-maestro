@@ -191,11 +191,21 @@ function launch(alertTick: () => void): Promise<LoopResult> {
   });
 }
 
+/**
+ * Forwards `sig` to the loop and calls `done` once it has exited. A child that has already exited (its `exit` event fired, its `close` not yet handled) will never
+ * emit `exit` again, so waiting for one would leave the supervisor ignoring SIGTERM for good: `done` runs at once in that case.
+ */
+export function forwardStop(child: Pick<ChildProcess, 'exitCode' | 'signalCode' | 'once' | 'kill'>, sig: NodeJS.Signals, done: () => void): void {
+  if (child.exitCode !== null || child.signalCode !== null) { done(); return; }
+  child.once('exit', done);
+  child.kill(sig);
+}
+
 /** Stops on SIGTERM or SIGINT: forwards the signal to a running loop so it releases its lock, then drops the liveness record and exits 0. */
 function stopOnSignals(eventDir: string): void {
   const stop = (sig: NodeJS.Signals): void => {
     const done = (): void => { clearRecord(eventDir, process.pid); process.exit(0); };
-    if (running) { running.once('exit', done); running.kill(sig); } else done();
+    if (running) forwardStop(running, sig, done); else done();
   };
   process.once('SIGTERM', () => stop('SIGTERM'));
   process.once('SIGINT', () => stop('SIGINT'));

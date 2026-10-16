@@ -8,7 +8,7 @@ import { stubEnv, writeStub, type Stub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DELAYS, quietSleepSeconds, queueSavedDigest, secondsUntilClock, supervise } from './loop-supervisor.ts';
+import { DELAYS, forwardStop, quietSleepSeconds, queueSavedDigest, secondsUntilClock, supervise } from './loop-supervisor.ts';
 import type { LoopResult } from './loop-supervisor.ts';
 import { NO_OWNER_LOG } from './lib/digest-queue.ts';
 import { digestBody, digestDir, saveDigest, unseenDigests } from './lib/digest-store.ts';
@@ -506,4 +506,23 @@ test('a supervisor whose owner is killed outright stops itself and its loop inst
     for (const pid of [supervisorPid, loopPid]) if (pid && alive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
     owner.kill('SIGKILL');
   }
+});
+
+test('forwardStop finishes at once for a loop that has already exited, and otherwise after it exits', () => {
+  const fake = (exitCode: number | null) => {
+    const calls: string[] = [];
+    let onExit: () => void = () => {};
+    return { calls, fire: () => onExit(), child: { exitCode, signalCode: null, once: (_e: string, f: () => void) => { onExit = f; return undefined as never; }, kill: (sig?: NodeJS.Signals | number) => { calls.push(`kill ${String(sig)}`); return true; } } };
+  };
+  const gone = fake(0);
+  let done = 0;
+  forwardStop(gone.child, 'SIGTERM', () => { done += 1; });
+  assert.equal(done, 1, 'an exited loop must not be waited on');
+  assert.deepEqual(gone.calls, []);
+  const alive = fake(null);
+  forwardStop(alive.child, 'SIGTERM', () => { done += 1; });
+  assert.equal(done, 1);
+  assert.deepEqual(alive.calls, ['kill SIGTERM']);
+  alive.fire();
+  assert.equal(done, 2);
 });
