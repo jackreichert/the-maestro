@@ -30,14 +30,14 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export interface ApproveArgs { repo: string; pr: number; head: string; body: string; triage: ThreadTriage[]; asComment: boolean; dryRun: boolean }
 export type ApproveResult = { code: 0 | 1 | 2; message: string };
 
-const spawnGh = (args: string[], input?: string): GhOut => {
+const runGh = (args: string[], input?: string): GhOut => {
   const [cmd, argv] = toolCommand('gh', args);
   const r = spawnSync(cmd, argv, { encoding: 'utf8', timeout: 30_000, ...(input === undefined ? {} : { input }) });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 };
 
 /** Guards, then posts. `run` is the gh runner (tests pass a stub). */
-export function approvePr(a: ApproveArgs, run: GhRunner = spawnGh): ApproveResult {
+export function approvePr(a: ApproveArgs, run: GhRunner = runGh): ApproveResult {
   if (!REPO.test(a.repo) || !Number.isSafeInteger(a.pr) || a.pr <= 0 || !/^[0-9a-f]{40}$/.test(a.head)) return { code: 2, message: `${USAGE}\n(--head is the full 40-character sha you reviewed)` };
   const bad = textProblem(a.body) ?? triageProblem(a.triage);
   if (bad) return { code: 2, message: bad };
