@@ -45,7 +45,9 @@ test('a bot finding and a human finding are never merged, and withheld text neve
   assert.equal(mergeItems([], [bot, human], 'd').length, 2);
   const w1 = item({ srcId: 'w1', text: gistOf('SSN 123-45-6789') });
   const w2 = item({ srcId: 'w2', text: gistOf('SSN 987-65-4321') });
-  assert.equal(mergeItems([], [w1, w2], 'd').length, 2);
+  const two = mergeItems([], [w1, w2], 'd');
+  assert.equal(two.length, 2);
+  assert.notEqual(two[0]!.id, two[1]!.id);
 });
 
 test('planning-miss filter: prior art outside the diff, not in-diff drift or database duplicates', () => {

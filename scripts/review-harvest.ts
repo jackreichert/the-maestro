@@ -14,7 +14,7 @@
  * repeat passes collapse into one finding (lib/review-harvest.ts). Re-harvesting a PR changes nothing. `--since` finds Jack's merged PRs by search.
  * `pending` lists findings with no triage yet, with the skill lines that share the most words (a coverage hint). `triage` records one verdict, the
  * playbook's judgement step. `batch` renders the weekly note; it writes only with `--write` (and not while any finding in the window is untriaged), and it never edits a mithril skill.
- * Exit 0 ok, 2 on usage or a read error.
+ * Exit 0 ok, 2 on usage, an unreadable PR, or a PR with more than 100 threads, reviews or comments (read in part, reported, not marked harvested).
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync, appendFileSync } from 'node:fs';
@@ -46,7 +46,7 @@ const fail = (msg: string): never => { console.error(`review-harvest: ${msg}`); 
 
 function storeDir(flag: string | null): string {
   if (flag) return flag;
-  if (!LEDGER_ROOT) return fail(('pass --store <dir> (or set LEDGER_ROOT)'));
+  if (!LEDGER_ROOT) return fail('pass --store <dir> (or set LEDGER_ROOT)');
   return join(LEDGER_ROOT, 'Projects', CONTAINER_PROJECT, 'ReviewHarvest');
 }
 
@@ -78,33 +78,45 @@ function fetchPr(ref: string): PrNode {
   const [owner, name] = repo!.split('/');
   const r = spawnSync(...toolCommand('gh', ['api', 'graphql', '-f', `query=${QUERY}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${num}`]), { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   if (r.status !== 0) throw new Error((r.stderr || r.error?.message || 'gh failed').trim().split('\n')[0]);
-  const parsed = JSON.parse(r.stdout) as { errors?: { message?: string }[]; data?: { repository?: { pullRequest?: PrNode & { reviews?: { pageInfo?: { hasNextPage?: boolean } } } } } };
+  const parsed = JSON.parse(r.stdout) as { errors?: { message?: string }[]; data?: { repository?: { pullRequest?: PrNode } } };
   const pr = parsed.data?.repository?.pullRequest;
   if (parsed.errors?.length || !pr) throw new Error(parsed.errors?.[0]?.message ?? 'pull request not found');
   return pr;
 }
 
+/** Which connections of a PR have more than the 100 nodes read, so the harvest says what it did not see. */
+export const truncatedParts = (pr: PrNode): string[] =>
+  (['reviewThreads', 'reviews', 'comments'] as const).filter((k) => (pr[k] as { pageInfo?: { hasNextPage?: boolean } } | undefined)?.pageInfo?.hasNextPage);
+
 function mergedSince(jack: string, since: string): string[] {
-  if (!DATE.test(since)) return fail(('--since needs YYYY-MM-DD'));
+  if (!DATE.test(since)) return fail('--since needs YYYY-MM-DD');
   const q = `query($after:String){search(query:"is:pr is:merged author:${jack} merged:>=${since}",type:ISSUE,first:50,after:$after){pageInfo{hasNextPage endCursor} nodes{... on PullRequest{number repository{nameWithOwner}}}}}`;
   return searchAllPages<{ number: number; repository: { nameWithOwner: string } }>(q).map((n) => `${n.repository.nameWithOwner}#${n.number}`);
 }
 
-function harvest(refs: string[], jack: string, dir: string): { added: number; skipped: string[]; failed: string[]; total: number } {
-  const store = loadStore(dir);
+function harvest(refs: string[], jack: string, dir: string): { added: number; skipped: string[]; failed: string[]; truncated: string[]; total: number } {
   const skipped: string[] = [];
   const failed: string[] = [];
-  const before = store.findings.length;
+  const truncated: string[] = [];
+  let added = 0;
+  let total = loadStore(dir).findings.length;
   for (const ref of refs) {
     try {
       const pr = fetchPr(ref);
       if ((pr.author?.login ?? '').toLowerCase() !== jack.toLowerCase()) { skipped.push(ref); continue; }
+      const cut = truncatedParts(pr);
+      if (cut.length) truncated.push(`${ref} (${cut.join('/')})`);
+      // Reload right before the write: another run may have saved while gh was slow, and merging is idempotent by source id.
+      const store = loadStore(dir);
+      const before = store.findings.length;
       store.findings = mergeItems(store.findings, itemsFrom(pr, ref, jack), today());
-      store.harvested[ref] = today();
+      if (!cut.length) store.harvested[ref] = today();
+      saveStore(dir, store);
+      added += store.findings.length - before;
+      total = store.findings.length;
     } catch (e) { failed.push(`${ref}: ${(e as Error).message}`); }
   }
-  saveStore(dir, store);
-  return { added: store.findings.length - before, skipped, failed, total: store.findings.length };
+  return { added, skipped, failed, truncated, total };
 }
 
 function readSkills(dir: string): Record<string, string[]> {
@@ -123,8 +135,8 @@ export function renderBatch(findings: Finding[], triage: Map<string, Triage>, ra
   const planning = done.filter((f) => triage.get(f.id)!.klass === 'planning' && !dropped.includes(f));
   const real = done.filter((f) => !dropped.includes(f) && !planning.includes(f));
   const cov = (c: string) => real.filter((f) => triage.get(f.id)!.coverage === c).length;
-  const L = [`---`, `stream: Mithril`, `date: ${range.until}`, `status: awaiting Jack's approval`, `ledger: p8qo`, `---`, ``,
-    `# Review misses, batch ${n} (${range.since} to ${range.until})`, ``, `Loop: [[copilot-feedback-loop]]. Previous: [[2026-09-29-copilot-findings-batch-1]].`, ``, `## Summary`, ``,
+  const L = [`---`, `stream: Mithril`, `date: ${range.until}`, `status: awaiting Jack's approval`, `---`, ``,
+    `# Review misses, batch ${n} (${range.since} to ${range.until})`, ``, `Loop: [[copilot-feedback-loop]]. Previous batch: the newest earlier copilot-findings-batch note in this folder.`, ``, `## Summary`, ``,
     `- **Harvested:** ${findings.length} distinct findings from ${new Set(findings.flatMap((f) => f.prs)).size} PRs (${findings.reduce((s, f) => s + f.threads, 0)} threads; twins and repeat passes collapsed).`,
     `- **Mithril misses:** ${real.length} real. Coverage: ${cov('covered')} covered, ${cov('partial')} partial, ${cov('not-covered')} not covered.`,
     `- **Planning misses:** ${planning.length}. They go to the planning checklist, not to mithril.`,
@@ -145,11 +157,18 @@ export function renderBatch(findings: Finding[], triage: Map<string, Triage>, ra
   planning.forEach((f, i) => L.push(`| Q${i + 1} | ${where(f)} | ${cell(f.gist)} | ${cell(triage.get(f.id)!.candidate ?? triage.get(f.id)!.why ?? '')} |`));
   L.push(``, `## Dropped (not mithril misses)`, ``, `| # | PR (threads) | Gist | Why |`, `|---|---|---|---|`);
   dropped.forEach((f, i) => L.push(`| X${i + 1} | ${where(f)} | ${cell(f.gist)} | ${cell(dropReason(triage.get(f.id)!) ?? '')} |`));
-  const groups = new Map<string, Finding[]>();
-  for (const f of real) { const t = triage.get(f.id)!; if (t.candidate && t.skill) groups.set(`${t.skill}|${t.candidate}|${t.cite ?? 'unsourced'}`, [...(groups.get(`${t.skill}|${t.candidate}|${t.cite ?? 'unsourced'}`) ?? []), f]); }
+  const groups = new Map<string, { skill: string; text: string; cite: string; fs: Finding[] }>();
+  for (const f of real) {
+    const t = triage.get(f.id)!;
+    if (!t.candidate || !t.skill) continue;
+    const cite = t.cite ?? 'unsourced';
+    const key = JSON.stringify([t.skill, t.candidate, cite]);
+    const g = groups.get(key) ?? { skill: t.skill, text: t.candidate, cite, fs: [] };
+    g.fs.push(f);
+    groups.set(key, g);
+  }
   L.push(``, `## Candidate skill updates (proposals; nothing ships without Jack's approval)`, ``, `| # | Skill / rule | Change (exact wording) | Citation | Evidence | Status |`, `|---|---|---|---|---|---|`);
-  [...groups].forEach(([key, fs], i) => {
-    const [skill, text, cite] = key.split('|') as [string, string, string];
+  [...groups.values()].forEach(({ skill, text, cite, fs }, i) => {
     const status = cite === 'unsourced' ? 'blocked: unsourced' : candidateStatus(fs);
     L.push(`| ${i + 1} | \`${skill}\` | ${cell(text)} | ${cite} | ${fs.length} findings, ${new Set(fs.flatMap((f) => f.changes)).size} changes | ${status} |`);
   });
@@ -162,18 +181,18 @@ function batchFileCount(out: string): number {
 
 function main(argv: string[]): number {
   const cmd = argv[0];
-  const a = parseArgs(argv.slice(cmd ? 0 : 0));
+  const a = parseArgs(argv);
   const dir = storeDir(a.arg('store'));
   const json = argv.includes('--json');
   if (cmd === 'harvest') {
     const jack = a.arg('jack', GH_LOGIN);
-    if (!jack || !LOGIN.test(jack)) return fail((('pass --jack <login> (or set gh_login)')));
+    if (!jack || !LOGIN.test(jack)) return fail('pass --jack <login> (or set gh_login)');
     const since = a.arg('since');
     const refs = a.positional.length ? a.positional : since ? mergedSince(jack, since) : [];
-    if (!refs.length || refs.some((r) => !REF.test(r))) return fail((('harvest needs owner/repo#N refs or --since YYYY-MM-DD with merged PRs')));
+    if (!refs.length || refs.some((r) => !REF.test(r))) return fail('harvest needs owner/repo#N refs or --since YYYY-MM-DD with merged PRs');
     const r = harvest(refs, jack, dir);
-    if (json) printJson(r); else console.log(`harvested ${refs.length - r.skipped.length - r.failed.length} PRs: ${r.added} new findings (${r.total} total); skipped ${r.skipped.length} not by ${jack}; ${r.failed.length} unreadable${r.failed.map((f) => `\n  ${f}`).join('')}`);
-    return r.failed.length ? 2 : 0;
+    if (json) printJson(r); else console.log(`harvested ${refs.length - r.skipped.length - r.failed.length} PRs: ${r.added} new findings (${r.total} total); skipped ${r.skipped.length} not by ${jack}; ${r.failed.length} unreadable${r.truncated.length ? `; MORE THAN ONE PAGE, not fully read: ${r.truncated.join(', ')}` : ''}${r.failed.map((f) => `\n  ${f}`).join('')}`);
+    return r.failed.length || r.truncated.length ? 2 : 0;
   }
   if (cmd === 'pending') {
     const done = loadTriage(dir);
@@ -188,10 +207,10 @@ function main(argv: string[]): number {
     const klass = a.arg('class') ?? '';
     const fate = a.arg('fate', 'open');
     const cov = a.arg('coverage');
-    if (!loadStore(dir).findings.some((f) => f.id === id)) return fail(((`no finding ${id}`)));
-    if (!CLASSES.includes(klass) || !['yes', 'no'].includes(a.arg('real') ?? '') || !FATES.includes(fate) || (cov && !COVERAGE.includes(cov))) return fail((('bad --class, --real, --fate or --coverage')));
-    if (klass === 'dropped' && !a.arg('why')) return fail((('a dropped finding needs --why')));
-    if (klass === 'mithril' && a.arg('candidate') && !a.arg('skill')) return fail((('a candidate needs --skill')));
+    if (!loadStore(dir).findings.some((f) => f.id === id)) return fail(`no finding ${id}`);
+    if (!CLASSES.includes(klass) || !['yes', 'no'].includes(a.arg('real') ?? '') || !FATES.includes(fate) || (cov && !COVERAGE.includes(cov))) return fail('bad --class, --real, --fate or --coverage');
+    if (klass === 'dropped' && !a.arg('why')) return fail('a dropped finding needs --why');
+    if (klass === 'mithril' && a.arg('candidate') && !a.arg('skill')) return fail('a candidate needs --skill');
     const rec: Triage = { id, klass: klass as Triage['klass'], fate: fate as Triage['fate'], real: a.arg('real') === 'yes', why: a.arg('why') ?? undefined, coverage: cov as Triage['coverage'] ?? undefined, skill: a.arg('skill') ?? undefined, cite: a.arg('cite') ?? undefined, category: a.arg('category') ?? undefined, candidate: a.arg('candidate') ?? undefined };
     mkdirSync(dir, { recursive: true });
     appendFileSync(join(dir, 'triage.jsonl'), `${JSON.stringify(rec)}\n`);
@@ -201,18 +220,19 @@ function main(argv: string[]): number {
   if (cmd === 'batch') {
     const until = a.arg('until', today());
     const since = a.arg('since', new Date(Date.parse(until) - 6 * 86400000).toISOString().slice(0, 10));
-    if (!DATE.test(until) || !DATE.test(since)) return fail((('--since and --until need YYYY-MM-DD')));
+    if (!DATE.test(until) || !DATE.test(since)) return fail('--since and --until need YYYY-MM-DD');
     const out = a.arg('out', VAULT_ROOT ? join(VAULT_ROOT, 'Projects', 'mithril', 'Research') : '');
     const findings = loadStore(dir).findings.filter((f) => f.seen >= since && f.seen <= until);
     const triaged = loadTriage(dir);
-    const note = renderBatch(findings, triaged, { since, until }, batchFileCount(out) + 1);
+    const nth = batchFileCount(out) + 1;
+    const note = renderBatch(findings, triaged, { since, until }, nth);
     if (!a.has('write')) { console.log(note); return 0; }
     const untriaged = findings.filter((f) => !triaged.has(f.id)).length;
     if (untriaged) return fail(`${untriaged} findings are not triaged yet; triage them, then write the note`);
-    if (!out) return fail((('pass --out <dir> (or set vault_root) with --write')));
+    if (!out) return fail('pass --out <dir> (or set vault_root) with --write');
     mkdirSync(out, { recursive: true });
-    const file = join(out, `${until}-copilot-findings-batch-${batchFileCount(out) + 1}.md`);
-    if (existsSync(file)) return fail(((`${file} exists; not overwritten`)));
+    const file = join(out, `${until}-copilot-findings-batch-${nth}.md`);
+    if (existsSync(file)) return fail(`${file} exists; not overwritten`);
     writeFileSync(file, note);
     console.log(file);
     return 0;

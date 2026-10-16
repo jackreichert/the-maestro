@@ -47,7 +47,6 @@ export function jaccard(a: Set<string>, b: Set<string>): number {
   return both / (a.size + b.size - both);
 }
 
-const base = (p: string): string => p.split('/').pop() ?? p;
 const SAME_PATH = 0.6;
 const ANY_PATH = 0.8;
 
@@ -55,14 +54,14 @@ const ANY_PATH = 0.8;
 export function sameFinding(a: { path: string; gist: string }, b: { path: string; gist: string }): boolean {
   if (a.gist === WITHHELD || b.gist === WITHHELD) return false;   // withheld text says nothing, so two of them are never the same finding
   const j = jaccard(tokens(a.gist), tokens(b.gist));
-  return base(a.path) === base(b.path) ? j >= SAME_PATH : j >= ANY_PATH;
+  return a.path === b.path ? j >= SAME_PATH : j >= ANY_PATH;
 }
 
 const FATE_RANK: FateHint[] = ['fixed', 'deferred', 'declined', 'resolved', 'open'];
 const betterFate = (a: FateHint, b: FateHint): FateHint => (FATE_RANK.indexOf(a) <= FATE_RANK.indexOf(b) ? a : b);
 
-/** Short stable id: the same first-seen gist and path always get the same id. */
-export const idOf = (kind: string, path: string, gist: string): string => createHash('sha1').update(`${kind}|${path}|${gist}`).digest('hex').slice(0, 6);
+/** Short stable id: the same first-seen comment always gets the same id, and two withheld comments on one file never share one. */
+export const idOf = (kind: string, path: string, gist: string, srcId: string): string => createHash('sha1').update(`${kind}|${path}|${gist}|${srcId}`).digest('hex').slice(0, 6);
 
 // Planning misses: the work was possible with prior art the author did not look for (a core helper, a sibling EMR's approach).
 const PLANNING = [
@@ -143,7 +142,7 @@ export function mergeItems(existing: Finding[], items: Item[], today: string): F
       if (!hit.changes.includes(it.change)) hit.changes.push(it.change);
       hit.hints = [...new Set([...hit.hints, ...hintsFor(it)])];
     } else {
-      all.push({ id: idOf(it.kind, it.path, it.text), seen: today, kind: it.kind, path: it.path, gist: it.text, prs: [it.pr], changes: [it.change], threads: 1, srcIds: [it.srcId], fate: it.fate, hints: hintsFor(it) });
+      all.push({ id: idOf(it.kind, it.path, it.text, it.srcId), seen: today, kind: it.kind, path: it.path, gist: it.text, prs: [it.pr], changes: [it.change], threads: 1, srcIds: [it.srcId], fate: it.fate, hints: hintsFor(it) });
     }
   }
   return all;

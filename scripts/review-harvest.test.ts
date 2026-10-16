@@ -112,6 +112,22 @@ test('batch --write refuses while a finding is untriaged', () => {
   assert.equal(readdirSync(out).length, 0);
 });
 
+test('a PR with a full page of threads is reported, exits 2, and is not marked harvested', () => {
+  const store = mkdtempSync(join(tmpdir(), 'rh-store-'));
+  const big = { ...prNode('jack', 'feat/gate', [thread('a1', 'src/gate.mjs', TWIN)]), reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [thread('a1', 'src/gate.mjs', TWIN)] } };
+  const r = run(fakeGh({ '10': big }, []), ['harvest', 'rivendell/elrond-api#10', '--jack', 'jack', '--store', store]);
+  assert.equal(r.status, 2);
+  assert.match(r.stdout, /MORE THAN ONE PAGE.*reviewThreads/);
+  assert.deepEqual(JSON.parse(readFileSync(join(store, 'store.json'), 'utf8')).harvested, {});
+});
+
+test('a pipe in candidate text keeps its citation, and an unsourced one stays blocked', () => {
+  const f = (id: string): Finding => ({ id, seen: '2026-10-16', kind: 'human', path: 'a.mjs', gist: id, prs: ['r/a#1'], changes: ['r/a:x'], threads: 1, srcIds: [id], fate: 'open', hints: [] });
+  const tri = new Map<string, Triage>([['one', { id: 'one', klass: 'mithril', fate: 'open', real: true, skill: 'flow', candidate: 'Name the sink | and the source', category: 'Sinks' }]]);
+  const note = renderBatch([f('one')], tri, { since: '2026-10-10', until: '2026-10-16' }, 2);
+  assert.match(note, /Name the sink \\\| and the source \| unsourced \|.*blocked: unsourced/);
+});
+
 test('renderBatch: an unsourced candidate is blocked, and untriaged findings make the note a draft', () => {
   const f = (id: string): Finding => ({ id, seen: '2026-10-16', kind: 'human', path: 'a.mjs', gist: `gist ${id}`, prs: ['r/a#1'], changes: ['r/a:x'], threads: 1, srcIds: [id], fate: 'open', hints: [] });
   const tri = new Map<string, Triage>([['one', { id: 'one', klass: 'mithril', fate: 'open', real: true, skill: 'flow', candidate: 'Name the sink', category: 'Sinks' }]]);
