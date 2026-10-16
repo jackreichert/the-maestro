@@ -1,6 +1,6 @@
 /**
- * The Home tab, laid out as the concept's score but ordered by what needs acting on: the cues beside what is blocked and in flight,
- * then open asks by age, open PRs and the local review queue, and then the reporting views (the score, the movements beside the coda,
+ * The Home tab, laid out as the concept's score: the streams (the score) first, then what needs acting on: the cues beside what is blocked and in flight,
+ * then open asks by age, open PRs and the local review queue, and then the reporting views (the movements beside the coda,
  * the deck beside the cost). Draws what home-model works out.
  */
 import { AMBIENCE_CSS } from './home-ambience.ts';
@@ -74,10 +74,11 @@ export function homeTab(st: PodiumState, charts: ChartsData | null, opts: HomeOp
   coda.classList.add('third');
   return h('div', { class: takeEntrance() ? 'home grid enter' : 'home grid' },
     opts.projects.state === 'error' ? h('p', { class: 'home-note', role: 'alert' }, `Project names and notes could not be loaded (${opts.projects.message}). The rest of Home is current; reload to try again.`) : null,
+    // The streams head the page, in today's priority order (the score ranks its rows by it).
+    score ? scoreSection(score, pickedStream(st, opts.needs ?? [])) : h('p', { class: 'home-note', role: 'status' }, 'The 14-day score is missing: the charts data did not load.'),
     cues,
     h('div', { class: 'third side' }, held, flight),
     ages, prs, rehearsal,
-    score ? scoreSection(score, pickedStream(st, opts.needs ?? [])) : h('p', { class: 'home-note', role: 'status' }, 'The 14-day score is missing: the charts data did not load.'),
     movements, coda,
     deck, cost);
 }
