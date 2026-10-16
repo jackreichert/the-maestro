@@ -11,6 +11,7 @@ import type { OtherPr } from '../teammate/others.ts';
 import { isGuard, NO_GUARD } from '../teammate/wait.ts';
 import { isSelfReview } from '../self-review.ts';
 import { isFormerTeammate } from '../teammate/former.ts';
+import { ignoreState, readActions } from '../teammate/others-actions.ts';
 import { PR_STALE_MS } from './state.ts';
 import type { OthersPrRow, OthersPrsData } from '../../web/client/src/types.ts';
 
@@ -27,7 +28,9 @@ export interface OthersScopeOptions { statusDir: string; owners: readonly string
   /** A PR with no activity for more than this many days (and past `openHours`) leaves the tab entirely, Stale included. Never below the stale gate. Absent means nothing is dropped. */
   dropDays?: number;
   /** The folder of the slack-watch engineering notes (`<vault_root>/Projects/<container>/Slack`); absent means no Slack ask is known. */
-  slackDir?: string }
+  slackDir?: string;
+  /** The Others' PRs actions file (ignores and review requests); absent means none. */
+  actionsFile?: string }
 
 const reviewOf = (decision: string | null): OthersPrRow['review'] => (decision === 'APPROVED' ? 'approved' : decision === 'CHANGES_REQUESTED' ? 'changes-requested' : 'review-required');
 
@@ -45,13 +48,15 @@ const awaiting = (p: OtherPr): boolean => {
   return Date.parse(p.headAt) <= Date.parse(r.at);
 };
 
-function row(p: OtherPr, self: string, guard: Guard, now: Date, slack: ReadonlyMap<string, SlackActivity>, gate: Gate): OthersPrRow {
+function row(p: OtherPr, self: string, guard: Guard, now: Date, slack: ReadonlyMap<string, SlackActivity>, gate: Gate, acts: Acts): OthersPrRow {
   const opened = Date.parse(p.createdAt);
   const youAsked = self !== '' && p.requested.some((r) => r.toLowerCase() === self.toLowerCase());
   return {
     repo: p.repo, number: p.number, title: p.title, url: p.url, author: p.author, ...(p.authorName ? { authorName: p.authorName } : {}), base: p.base, updatedAt: p.updatedAt,
     ...(Number.isFinite(opened) ? { openedAt: new Date(opened).toISOString(), ageDays: Math.max(0, Math.floor((now.getTime() - opened) / DAY_MS)) } : {}),
-    youAsked, ...(isGuard(p.repo, p.author, guard) && !youAsked ? { handsOff: true } : {}),
+    youAsked, ...(isGuard(p.repo, p.author, guard) && !youAsked ? { handsOff: true, handsOffWhy: `${p.repo.split('/')[1] ?? p.repo} is a hands-off repo (hands_off_repos): only ${guard.login || 'its owner'}'s own PRs here are reviewed, and you were not asked to review this one.`, ...(acts.requests.get(`${p.repo}#${p.number}`) === p.headSha && p.headSha ? { reviewRequested: true } : {}) } : {}),
+    ...(p.headSha ? { headSha: p.headSha } : {}),
+    ...(() => { const st = ignoreState(acts.ignored, `${p.repo}#${p.number}`, p.headSha); return st ? { ignored: st } : {}; })(),
     review: reviewOf(p.decision), unresolved: p.unresolved, copilotThreads: p.copilotThreads,
     ...(typeof p.isDraft === 'boolean' ? { isDraft: p.isDraft } : {}),
     ci: (p.ci && Object.hasOwn(CI, p.ci) ? CI[p.ci] : undefined) ?? 'none',
@@ -101,12 +106,16 @@ function dropped(p: OtherPr, slack: ReadonlyMap<string, SlackActivity>, now: Dat
   return Number.isFinite(last) && now.getTime() - last > Math.max(gate.drop, gate.active ?? 0);
 }
 
+/** What the person did to PRs from the tab: ignores (key -> head) and review requests (key -> head). */
+interface Acts { ignored: ReadonlyMap<string, string>; requests: ReadonlyMap<string, string> }
+
 export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData {
   const cache = readOthersCache(o.statusDir);
   const owners = new Set(o.owners.map((x) => x.toLowerCase()));
   const self = o.self.toLowerCase();
   const slack = slackActivity(o.slackDir);
   const gate: Gate = { open: o.openHours === undefined ? null : o.openHours * HOUR_MS, active: o.activeHours === undefined ? null : o.activeHours * HOUR_MS, drop: o.dropDays === undefined ? null : o.dropDays * DAY_MS };
+  const acts: Acts = o.actionsFile ? readActions(o.actionsFile) : { ignored: new Map(), requests: new Map() };
   const approved = (cache?.prs ?? []).filter((p) => p.decision === 'APPROVED');
   const kept = (cache?.prs ?? [])
     .filter((p) => p.decision !== 'APPROVED')
@@ -118,6 +127,6 @@ export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData 
   return {
     generatedAt: now.toISOString(),
     prData: { fetchedAt: fetchedAt ? fetchedAt.toISOString() : null, stale, ...(cache?.failure ? { failure: cache.failure } : {}) },
-    total: kept.length, approvedKeys: approved.map((p) => `${p.repo}#${p.number}`), prs: kept.map((p) => row(p, o.self, o.guard ?? NO_GUARD, now, slack, gate)),
+    total: kept.length, approvedKeys: approved.map((p) => `${p.repo}#${p.number}`), prs: kept.map((p) => row(p, o.self, o.guard ?? NO_GUARD, now, slack, gate, acts)),
   };
 }

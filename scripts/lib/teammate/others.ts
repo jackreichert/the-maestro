@@ -20,6 +20,8 @@ export const DETAIL_REFRESH_MS = 30 * 60_000;
 /** One open teammate PR, as stored. Logins are GitHub's own; nothing here is free text from a comment. */
 export interface OtherPr {
   repo: string; number: number; title: string; url: string; author: string; authorName?: string; base: string; head: string;
+  /** The head commit's sha (`headRefOid`), so an ignore can be pinned to it; absent in a cache written before it was read. */
+  headSha?: string;
   createdAt: string; updatedAt: string;
   /** Logins of users asked to review (teams are not listed). */
   requested: string[];
@@ -43,7 +45,7 @@ export interface OthersScope { owners: readonly string[]; selfRepos: readonly st
 
 interface Login { login?: string; __typename?: string; name?: string | null }
 interface Node {
-  id?: string; number?: number; title?: string; url?: string; isDraft?: boolean; createdAt?: string; updatedAt?: string; baseRefName?: string; headRefName?: string;
+  id?: string; number?: number; title?: string; url?: string; isDraft?: boolean; createdAt?: string; updatedAt?: string; baseRefName?: string; headRefName?: string; headRefOid?: string;
   reviewDecision?: string | null; mergeable?: string; author?: Login | null;
   labels?: { nodes?: ({ name?: string } | null)[] };
   reviews?: { nodes?: ({ author?: Login | null; state?: string; submittedAt?: string } | null)[] };
@@ -62,7 +64,7 @@ export function othersSearch(owners: readonly string[], opts: { former?: readonl
 }
 
 export const othersQuery = (search: string): string => `query($after: String) { search(query: "${search}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
-  id number title url isDraft createdAt updatedAt baseRefName headRefName reviewDecision mergeable author { login __typename ... on User { name } } repository { nameWithOwner }
+  id number title url isDraft createdAt updatedAt baseRefName headRefName headRefOid reviewDecision mergeable author { login __typename ... on User { name } } repository { nameWithOwner }
   labels(first: 10) { nodes { name } }
   reviews(last: 30) { nodes { author { login } state submittedAt } }
   commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
@@ -93,7 +95,7 @@ export function reduceOthers(nodes: readonly Node[], scope: OthersScope): OtherP
     const head = n.commits?.nodes?.[0]?.commit;
     const open = (n.reviewThreads?.nodes ?? []).filter((t) => t && t.isResolved === false);
     out.push({
-      repo, number: n.number, title: n.title ?? '', url: n.url, author, ...(n.author?.name?.trim() ? { authorName: n.author.name.trim().slice(0, 80) } : {}), base: n.baseRefName ?? '', head: n.headRefName ?? '',
+      repo, number: n.number, title: n.title ?? '', url: n.url, author, ...(n.author?.name?.trim() ? { authorName: n.author.name.trim().slice(0, 80) } : {}), base: n.baseRefName ?? '', head: n.headRefName ?? '', ...(typeof n.headRefOid === 'string' && /^[0-9a-f]{40}$/.test(n.headRefOid) ? { headSha: n.headRefOid } : {}),
       createdAt: n.createdAt ?? '', updatedAt: n.updatedAt ?? n.createdAt ?? '',
       requested: (n.reviewRequests?.nodes ?? []).map((r) => r?.requestedReviewer?.login).filter((l): l is string => !!l),
       decision: n.reviewDecision ?? null, unresolved: open.length, copilotThreads: open.filter((t) => isCopilot(t?.comments?.nodes?.[0]?.author)).length,
