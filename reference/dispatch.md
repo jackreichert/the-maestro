@@ -30,6 +30,9 @@ node <xenophon-skill>/scripts/ticket.mjs new \
   --title "..." --type bug --priority 2 \
   --body-file - <<'EOF'
 <what you found, with file:line anchors>
+
+## What done looks like
+- <the observable result that closes this ticket>
 EOF
 ```
 
