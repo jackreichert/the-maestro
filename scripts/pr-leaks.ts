@@ -20,6 +20,9 @@
  * newline separated; a term matches case-insensitively as a whole word, with any separator (or none) between its letters
  * (`Acme Care` also finds `acme-care`, `acme.care` and `AcmeCare`; `widgetco` finds `Widget Co`), and never inside a longer run
  * of letters or digits (`acme` is not found in `acmeology`), except at a camelCase step (`getAcmeCareId` is found). A `~` prefix opts one term into substring matching.
+ * A term may start with `handle:`, `client:`, `repo:` or `host:` so the report names the kind (`handle-term`, ...); the category comes
+ * before any `~`. The commits the branch adds are read too (`git log base..head`): configured terms against author and committer
+ * names and emails, built-ins (with the same allowlist as a file) and terms against the message; a hit reads `commit:<sha8> <label>`.
  *
  * Missing terms: locally the run says so and checks built-ins only. In CI (`strict`) it fails unless
  * `LEAK_GATE_BUILTIN_ONLY=1` is set, and then it says in the log that customer names were not checked. It never
@@ -44,7 +47,7 @@ const OWNER = ['ja', 'ck'].join('');
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MIN_TERM = 3;
 
-export type Label = 'org-term' | 'person-name' | 'home-path' | 'personal-root' | 'configured-term';
+export type Label = 'org-term' | 'person-name' | 'home-path' | 'personal-root' | 'configured-term' | 'handle-term' | 'client-term' | 'repo-term' | 'host-term';
 export interface Hit { path: string; line: number; label: Label }
 interface Pattern { label: Label; re: RegExp; ok?: (captured: string) => boolean }
 
@@ -82,7 +85,10 @@ export const ALLOW: Allow[] = [
 ];
 
 /** A compiled configured term: matched as a whole word, or (a `~` prefix) as a squashed substring. */
-export interface Term { re?: RegExp; flat?: string }
+export interface Term { re?: RegExp; flat?: string; label: Label }
+
+/** The category prefixes a configured term may carry, and the label each reports. An unprefixed term reports `configured-term`. */
+const CATEGORIES: Record<string, Label> = { handle: 'handle-term', client: 'client-term', repo: 'repo-term', host: 'host-term' };
 
 const squash = (t: string): string => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 const escapeRe = (c: string): string => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -96,18 +102,25 @@ const EDGE_BEFORE = '(?:(?<![\\p{L}\\p{N}])|(?<=[\\p{Ll}\\p{N}])(?=\\p{Lu}))';
 const EDGE_AFTER = '(?:(?![\\p{L}\\p{N}])|(?<=[\\p{Ll}\\p{N}])(?=\\p{Lu}))';
 
 /** A term as a word: it must not sit inside a longer run of letters or digits, so `acme` does not match `acmeology`, but the separators between its letters stay optional and a capital starts a new word, so `getAcmeCareId` matches `Acme Care`. */
-function wordTerm(entry: string): Term {
+function wordTerm(entry: string, label: Label): Term {
   const chars = [...squash(entry)].map((c) => anyCase(escapeRe(c)));
-  return { re: new RegExp(`${EDGE_BEFORE}${chars.join(SEP)}${EDGE_AFTER}`, 'u') };
+  return { re: new RegExp(`${EDGE_BEFORE}${chars.join(SEP)}${EDGE_AFTER}`, 'u'), label };
 }
 
 /** The compiled configured terms, or the reason the list cannot be used. A term shorter than MIN_TERM would match almost anything. A leading `~` opts one term into the old substring match. */
 export function parseTerms(raw: string): { terms: Term[]; error: string } {
-  const entries = raw.split(/[\n,]/).map((t) => t.trim()).filter((t) => t && !t.startsWith('#'));
-  const short = entries.filter((t) => t.replace(/^~/, '').replace(/[\s_-]+/g, '').length < MIN_TERM);
+  const entries = raw.split(/[\n,]/).map((t) => t.trim()).filter((t) => t && !t.startsWith('#')).map((t) => {
+    const cat = /^([a-z]+):(.*)$/.exec(t);
+    const known = cat !== null && Object.hasOwn(CATEGORIES, cat[1]!);
+    return { text: known ? cat[2]!.trim() : t, label: known ? CATEGORIES[cat[1]!]! : ('configured-term' as Label) };
+  });
+  const short = entries.filter((e) => e.text.replace(/^~/, '').replace(/[\s_-]+/g, '').length < MIN_TERM);
   if (short.length) return { terms: [], error: `${short.length} configured term(s) are shorter than ${MIN_TERM} characters, which would match almost every line. Remove or lengthen them.` };
-  return { terms: entries.map((t) => (t.startsWith('~') ? { flat: squash(t) } : wordTerm(t))), error: '' };
+  return { terms: entries.map((e) => (e.text.startsWith('~') ? { flat: squash(e.text), label: e.label } : wordTerm(e.text, e.label))), error: '' };
 }
+
+/** Labels of the configured terms found in `text`. */
+export const termLabels = (text: string, terms: Term[]): Label[] => { const flat = squash(text); return terms.filter((t) => termHits(t, text, flat)).map((t) => t.label); };
 
 const termHits = (t: Term, text: string, flat: string): boolean => (t.flat !== undefined ? flat.includes(t.flat) : !!t.re?.test(text));
 
@@ -120,8 +133,7 @@ export function scanLine(path: string, text: string, terms: Term[], allow: Allow
     const re = new RegExp(p.re.source, `${p.re.flags.replace('g', '')}g`);
     for (let m = re.exec(line); m; m = re.exec(line)) if (!p.ok || p.ok(m[1] ?? '')) { found.add(p.label); break; }
   }
-  const flat = squash(text);
-  if (terms.some((t) => termHits(t, text, flat))) found.add('configured-term');
+  for (const l of termLabels(text, terms)) found.add(l);
   return [...found];
 }
 
@@ -170,10 +182,49 @@ export function leakCheck(i: LeakInput): LeakResult {
   const names = spawnSync('git', ['-C', i.repo, '-c', 'core.quotePath=false', 'diff', '--name-only', '-z', '-M', '--diff-filter=d', ...range.slice(range.indexOf('-M') + 1)], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   if (names.status !== 0) return { problems: [`git diff failed: ${(names.stderr || '').trim()}`], notes, hits: [] };
   for (const path of names.stdout.split('\0').filter(Boolean)) for (const label of scanLine(path, path, parsed.terms, [])) hits.push({ path, line: 0, label });
+  if (!i.tree) {
+    const log = commitsIn(i.repo, `${i.base}..${i.head}`);
+    if (log.error) return { problems: [log.error], notes, hits: [] };
+    for (const c of log.commits) for (const label of scanCommit(c, parsed.terms)) hits.push({ path: `commit:${c.sha.slice(0, 8)}`, line: 0, label });
+  }
   for (const [name, text] of [['PR title', i.title], ['PR body', i.body]] as const) {
     (text ?? '').split('\n').forEach((t, n) => { for (const label of scanLine(name, t, parsed.terms, [])) hits.push({ path: name, line: n + 1, label }); });
   }
-  return { problems: hits.map((h) => `${h.path}:${h.line} ${h.label}`), notes, hits };
+  return { problems: hits.map((h) => (h.path.startsWith('commit:') ? `${h.path} ${h.label}` : `${h.path}:${h.line} ${h.label}`)), notes, hits };
+}
+
+/** One commit's metadata, as `git log` reports it. */
+interface CommitMeta { sha: string; people: string; message: string }
+
+/**
+ * The commits in `range`, each with its author and committer names and emails apart from the message. The message is free text, so it
+ * is read with its own `git show` and never split from a record by a delimiter it could contain: a message holding the delimiter
+ * would otherwise hide the rest of itself from the scan. Names and emails are published with the commit.
+ */
+function commitsIn(repo: string, range: string): { commits: CommitMeta[]; error: string } {
+  const git = (...args: string[]) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const listed = git('rev-list', '--no-color', range);
+  if (listed.status !== 0) return { commits: [], error: `git log failed: ${(listed.stderr || '').trim()}` };
+  const commits: CommitMeta[] = [];
+  for (const sha of listed.stdout.split('\n').filter(Boolean)) {
+    const people = git('show', '-s', '--no-color', '--format=%an%n%ae%n%cn%n%ce', sha);
+    const message = git('show', '-s', '--no-color', '--format=%B', sha);
+    const failed = [people, message].find((r) => r.status !== 0);
+    if (failed) return { commits: [], error: `git show failed: ${(failed.stderr || '').trim()}` };
+    commits.push({ sha, people: people.stdout, message: message.stdout });
+  }
+  return { commits, error: '' };
+}
+
+/**
+ * Labels for one commit: configured terms against its author and committer names and emails (the built-in checks would flag the
+ * owner's own address on every commit), and the built-in and configured checks against its message. `commit:<sha8>` stands in for a path.
+ */
+export function scanCommit(c: CommitMeta, terms: Term[]): Label[] {
+  const found = new Set<Label>();
+  for (const line of c.people.split('\n')) for (const l of termLabels(line, terms)) found.add(l);
+  for (const line of c.message.split('\n')) for (const l of scanLine('commit', line, terms)) found.add(l);
+  return [...found];
 }
 
 /** `owner/name` glob match, case-insensitive; `*` matches any run of characters. */

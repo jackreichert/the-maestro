@@ -349,3 +349,88 @@ test('paths: deleting a file whose name carries a term passes, and a quoted file
   git(repo, 'commit', '-q', '-m', 'only delete');
   assert.deepEqual(check(repo, { head: 'only-del', termsRaw: 'Acme Care' }).problems, []);
 });
+
+// ---- commit metadata and term categories ----
+
+/** A feature commit on top of `repoWith` with its own message and, when given, author and committer identity. */
+function commitOn(repo: string, message: string, identity?: { name: string; email: string }): void {
+  const who = identity ? ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`] : [];
+  git(repo, ...who, 'commit', '-q', '--allow-empty', '-m', message);
+}
+const sha8 = (repo: string): string => spawnSync('git', ['-C', repo, 'rev-parse', '--short=8', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+
+test('commit messages: a configured term fails the gate with the commit named and the term never printed', () => {
+  const repo = repoWith({}, { 'src/a.ts': 'export const x = 1;\n' });
+  commitOn(repo, 'fix: handle the Acme Care edge case');
+  const r = check(repo, { termsRaw: 'Acme Care' });
+  assert.deepEqual(r.problems, [`commit:${sha8(repo)} configured-term`]);
+  assert.ok(!r.problems.join(' ').toLowerCase().includes('acme'));
+});
+
+test('commit messages: the built-in checks run on them, and a clean message passes', () => {
+  const repo = repoWith({}, { 'src/a.ts': 'export const x = 1;\n' });
+  commitOn(repo, `chore: moved from ${homePath('alice')}`);
+  assert.deepEqual(check(repo).problems, [`commit:${sha8(repo)} home-path`]);
+  assert.deepEqual(check(repoWith({}, { 'src/a.ts': 'export const x = 1;\n' })).problems, []);
+});
+
+test('commit metadata: a configured term in an author or committer email or name fails; the built-in checks do not read identities', () => {
+  const repo = repoWith({}, { 'src/a.ts': 'export const x = 1;\n' });
+  commitOn(repo, 'chore: tidy', { name: 'Dev', email: `dev@${Org.toLowerCase()}.example` });
+  assert.deepEqual(check(repo).problems, [], 'the built-in org term is not applied to an email, so the owner can commit under their own address');
+  assert.deepEqual(check(repo, { termsRaw: 'client:Zed Health' }).problems, []);
+  commitOn(repo, 'chore: tidy again', { name: 'Dev', email: 'dev@zedhealth.example' });
+  assert.deepEqual(check(repo, { termsRaw: 'client:Zed Health' }).problems, [`commit:${sha8(repo)} client-term`]);
+});
+
+test('commit metadata: only commits on the branch are read, and --tree skips the log', () => {
+  const repo = repoWith({}, { 'src/a.ts': 'export const x = 1;\n' });
+  git(repo, 'checkout', '-q', 'main');
+  commitOn(repo, 'chore: Acme Care was already on main');
+  git(repo, 'checkout', '-q', 'feature');
+  assert.deepEqual(check(repo, { termsRaw: 'Acme Care' }).problems, []);
+  commitOn(repo, 'chore: Acme Care on the branch');
+  assert.equal(check(repo, { termsRaw: 'Acme Care' }).problems.length, 1);
+  assert.deepEqual(check(repo, { termsRaw: 'Acme Care', tree: true, base: '' }).problems, []);
+});
+
+test('term categories: a prefix names the kind of term in the report, an unprefixed term still works', () => {
+  const raw = 'handle:zedbot, client:Acme Care, repo:billing-core, host:internal.example, plain thing';
+  const labels2 = (text: string): string[] => scanLine('src/a.ts', text, parseTerms(raw).terms, []);
+  assert.deepEqual(labels2('ping zedbot'), ['handle-term']);
+  assert.deepEqual(labels2('Acme Care renewal'), ['client-term']);
+  assert.deepEqual(labels2('see billing-core#42'), ['repo-term']);
+  assert.deepEqual(labels2('clone widgetco-billing-core'), ['repo-term'], 'an org-prefixed repo name is found');
+  assert.deepEqual(labels2('see mybilling-core'), [], 'a repo name inside a longer word is not a reference');
+  assert.deepEqual(labels2('curl internal.example/health'), ['host-term']);
+  assert.deepEqual(labels2('a plain thing here'), ['configured-term']);
+  assert.deepEqual(labels2('nothing here'), []);
+});
+
+test('term categories: an unknown prefix is part of the term, and a short prefixed term is still refused', () => {
+  assert.deepEqual(scanLine('a.ts', 'see note:alpha', parseTerms('note:alpha').terms, []), ['configured-term']);
+  assert.match(parseTerms('client:ab').error, /shorter than 3/);
+  assert.deepEqual(scanLine('a.ts', 'xAcme Carex', parseTerms('client:~Acme Care').terms, []), ['client-term']);
+});
+
+test('commit messages: a message cannot hide text from the scan with the control characters a record format would use', () => {
+  const repo = repoWith({}, { 'src/a.ts': 'export const x = 1;\n' });
+  commitOn(repo, 'chore: tidy\n\nbody\x1fAcme Care after a unit separator');
+  commitOn(repo, 'chore: more\n\nbody\x1eAcme Care after a record separator');
+  const r = check(repo, { termsRaw: 'Acme Care' });
+  assert.equal(r.problems.length, 2, r.problems.join(' | '));
+});
+
+test('commit messages: the file allowlist applies, so an allowed stored name in a message is not a hit', () => {
+  const repo = repoWith({}, { 'src/a.ts': 'export const x = 1;\n' });
+  commitOn(repo, `fix: rename the box Needs ${Owner} column`);
+  assert.deepEqual(check(repo).problems, []);
+  commitOn(repo, `fix: ask ${Owner} about it`);
+  assert.equal(check(repo).problems.length, 1);
+});
+
+test('term categories: an inherited object property is not a category', () => {
+  const t = parseTerms('constructor:foo').terms;
+  assert.deepEqual(scanLine('a.ts', 'constructor:foo', t, []), ['configured-term']);
+  assert.deepEqual(scanLine('a.ts', 'foo alone', t, []), []);
+});
