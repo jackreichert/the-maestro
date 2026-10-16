@@ -1397,6 +1397,7 @@ function cmdStatus() {
     const g = groups(has('include-archived'));
     // No --date: the day is WATCH_TZ, and closes match by timestamp in that zone. A passed --date still matches the stored date field.
     const explicit = arg('date');
+    if (explicit !== null && !isDate(explicit)) die('--date must be YYYY-MM-DD.');
     const tz = explicit === null ? WATCH_TZ : undefined;
     const d = explicit ?? localDate(new Date(), WATCH_TZ);
     const view = footerDone(g, d, tz ? { tz } : undefined);

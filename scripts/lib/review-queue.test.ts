@@ -243,3 +243,9 @@ test('footerQueue treats a snapshot dated in the future as stale and reads live'
   const future = { prs: prs(false), takenAt: '2026-01-02T12:00:00Z' };
   assert.equal(footerQueue(future, 4, now, [], () => ({ prs: prs(false, false, false) })), '**Review queue:** 3 of 4 waiting on reviewers');
 });
+
+test('a failed live read does not fall back to a snapshot dated in the future', () => {
+  const r = readQueue({ fetchLive: down, readStored: stored('2099-01-01T00:00:00Z') }, 4, NOW);
+  assert.equal(r.ok, false);
+  assert.equal(staleSuffix('2099-01-01T00:00:00Z', NOW), ' (snapshot of unknown age: dated in the future)');
+});

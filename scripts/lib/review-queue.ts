@@ -101,7 +101,7 @@ export function readQueue(src: QueueSources, cap: number, now: Date = new Date()
   const stored = src.readStored();
   if (!stored) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and there is no usable snapshot` };
   const ageMs = stored.takenAt ? now.getTime() - Date.parse(stored.takenAt) : Number.NaN;
-  if (!(ageMs <= MAX_FALLBACK_AGE_MS)) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and the stored snapshot is ${stored.takenAt ? `from ${stored.takenAt}, over ${MAX_FALLBACK_AGE_MS / 36e5} hours old` : 'of unknown age'}` };
+  if (!(ageMs >= 0 && ageMs <= MAX_FALLBACK_AGE_MS)) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and the stored snapshot is ${stored.takenAt ? `from ${stored.takenAt}, over ${MAX_FALLBACK_AGE_MS / 36e5} hours old` : 'of unknown age'}` };
   return { ok: true, queue: reviewQueue(stored.prs, cap, selfReview, owners), prs: stored.prs, source: 'snapshot', takenAt: stored.takenAt, liveError };
 }
 
@@ -121,6 +121,7 @@ export const STALE_SNAPSHOT_MS = 10 * 60_000;
 /** ` (snapshot 40m old)`, `5h`, `3d`: how old a snapshot is, for the board line; empty when it is under ten minutes old or its time is unknown (the board reads it without a network call, so a PR merged since then still shows as open until the next refresh). */
 export function staleSuffix(takenAt: string | undefined, now: Date): string {
   const ms = takenAt ? now.getTime() - Date.parse(takenAt) : Number.NaN;
+  if (ms < 0) return ' (snapshot of unknown age: dated in the future)';
   if (!Number.isFinite(ms) || ms < STALE_SNAPSHOT_MS) return '';
   if (ms < 36e5) return ` (snapshot ${Math.floor(ms / 60_000)}m old)`;
   const hours = Math.floor(ms / 36e5);

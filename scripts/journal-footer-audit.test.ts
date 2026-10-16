@@ -45,3 +45,9 @@ test('a footer of another day says which day its done count is of', () => {
     assert.match(dated('2026-10-01'), /0 done on 2026-10-01/);
     assert.doesNotMatch(dated('2026-10-01'), /done today/);
 });
+
+test('a bad --date is refused, and the multi-line footer labels another day too', () => {
+    const { dated } = world();
+    assert.equal(dated('banana'), '');
+    assert.match(spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--date', '2026-10-01', '--vault', mkdtempSync(join(tmpdir(), 'fa-')), '--project', 'test-proj'], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: '' } }).stdout, /0 done on 2026-10-01/);
+});
