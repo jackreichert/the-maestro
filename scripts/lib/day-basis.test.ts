@@ -1,7 +1,7 @@
-// Run: node --test scripts/lib/ledger-day.test.ts
+// Run: node --test scripts/lib/day-basis.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { askAgeDays, clock, ledgerDay, userDay } from './ledger-day.ts';
+import { askAgeDays, clock, ledgerDay, userDay } from './day-basis.ts';
 
 // 2026-10-12T00:18Z is already the 12th in UTC and Tokyo, still the evening of the 11th in New York.
 const AFTER_UTC_MIDNIGHT = new Date('2026-10-12T00:18:00Z');

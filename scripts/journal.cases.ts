@@ -1,5 +1,5 @@
 // Cases for journal; run through journal.shard-N.test.ts (see lib/shard.ts)
-import { userDay } from './lib/ledger-day.ts';
+import { userDay } from './lib/day-basis.ts';
 import { beforeEach } from 'node:test';
 import { ASK_TEMPLATE } from './lib/ask-template-fixture.ts';
 import { test } from './lib/shard.ts';
@@ -2130,7 +2130,7 @@ test('handoff section 4 keeps every open question: one boxed as a rule by its ap
 // ── prime, gates, defer ────────────────────────────────────────
 
 const inDays = (n: number): string => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
-/** A `defer --until` date n days from the user's today: deferrals lapse on the calendar day in watch_tz, not the UTC day (lib/ledger-day.ts). */
+/** A `defer --until` date n days from the user's today: deferrals lapse on the calendar day in watch_tz, not the UTC day (lib/day-basis.ts). */
 const deferDays = (n: number): string => userDay(process.env.MAESTRO_WATCH_TZ ?? '', new Date(Date.now() + n * 864e5));
 
 /** A fake `gh` behind MAESTRO_GH_BIN answering `pr view <n> --repo <r> --json ...` from the env var STUB_STATE (a bare state, or 'fail'). */

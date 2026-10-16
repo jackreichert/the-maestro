@@ -7,7 +7,7 @@
 import type { LedgerItem } from '../ledger-core.ts';
 import type { Pr } from '../status-page/render.ts';
 import { localDate } from '../status-page/priorities.ts';
-import { askAgeDays } from '../ledger-day.ts';
+import { askAgeDays } from '../day-basis.ts';
 import { family } from '../model-family.ts';
 import { inQueueOwners, reviewQueue } from '../review-queue.ts';
 import { isSelfReview, splitSelfReview } from '../self-review.ts';

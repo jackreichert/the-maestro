@@ -19,7 +19,7 @@ import type { Groups } from '../journal/board.ts';
 import { withholdJson } from '../json-out.ts';
 import { statusJson } from '../journal/status-json.ts';
 import { foldLeases, summarizeLeases } from '../journal/leases.ts';
-import { ledgerDay } from '../ledger-day.ts';
+import { ledgerDay } from '../day-basis.ts';
 import { triageItems } from '../journal/triage.ts';
 import { ticketNoteRef } from '../status-page/render.ts';
 import type { PageConfig, Ref } from '../status-page/render.ts';

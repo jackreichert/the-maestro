@@ -17,7 +17,7 @@ import { lastTouchOf, touchDates } from '../last-touch.ts';
 export interface BoardContext extends Pick<Store, 'readLedger' | 'rollPoint' | 'loadRegistry' | 'ensureDir' | 'dir'> {
     fold: (entries: LedgerRow[]) => ReturnType<typeof foldRows>;
     today: () => string;
-    /** The day a deferral lapses on: the user's calendar day. `today` when absent (lib/ledger-day.ts). */
+    /** The day a deferral lapses on: the user's calendar day. `today` when absent (lib/day-basis.ts). */
     deferDay?: () => string;
     has: Args['has'];
     mapStream: (stream: string | undefined) => string | undefined;
