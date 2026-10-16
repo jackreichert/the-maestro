@@ -16,9 +16,9 @@ import type { LedgerItem } from '../ledger-core.ts';
 
 /** A subagent transcript written to within this long ago is running. */
 export const RUNNING_WINDOW_MS = 120_000;
-/** A row closed this recently still accounts for an agent that has not stopped writing yet. */
 /** Shortest text that can account for another by containment. */
 const MIN_MATCH = 8;
+/** A row closed this recently still accounts for an agent that has not stopped writing yet. */
 const CLOSED_GRACE_MS = 10 * 60_000;
 /** Only sessions whose directory changed within this long are searched, so a year of old sessions is never listed. */
 const SESSION_RECENT_MS = 24 * 3_600_000;
@@ -63,7 +63,7 @@ export function untrackedAgents(agents: readonly RunningAgent[], items: readonly
     return !tracking.some((i) => {
       const t = words(String(i.text ?? ''));
       // The length rule applies both ways: a one-word description ("fix") is not accounted for by any row that happens to contain it.
-      return (i.id && d.split(' ').includes(i.id.toLowerCase())) || (d.length >= MIN_MATCH && contains(t, d)) || (t.length >= MIN_MATCH && contains(d, t));
+      return t === d || (i.id && contains(d, words(i.id))) || (d.length >= MIN_MATCH && contains(t, d)) || (t.length >= MIN_MATCH && contains(d, t));
     });
   });
 }

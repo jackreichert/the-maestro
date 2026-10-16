@@ -86,13 +86,11 @@ test('the footer shows the drift against a real projects folder and ledger, one 
 });
 
 test('the continuity tick records the drift in its state and raises one event when it first appears', () => {
-  const io = { drift: (() => { let n = 0; return () => n++; })() };
   const base: ContinuityState = { lastOk: '', error: '', last: '' };
   assert.deepEqual(cont.diff(base, { ...base, drift: 3 }).map((e) => e.summary.slice(0, 30)), ['ledger drift: 3 running agents']);
   assert.deepEqual(cont.diff({ ...base, drift: 3 }, { ...base, drift: 4 }), [], 'a standing mismatch is not re-announced');
   assert.deepEqual(cont.diff({ ...base, drift: 3 }, { ...base, drift: 0 }), []);
   assert.deepEqual(cont.diff(base, { ...base }), [], 'an unknown drift raises nothing');
-  assert.equal(typeof io.drift, 'function');
 });
 
 test('one unreadable meta file does not hide the agents after it', () => {
@@ -104,11 +102,13 @@ test('one unreadable meta file does not hide the agents after it', () => {
 test('a short description is not accounted for by an unrelated longer row, and an empty one still counts', () => {
   const agents = [{ description: 'Fix', agentType: '', session: 's' }, { description: '', agentType: '', session: 's' }];
   assert.equal(untrackedAgents(agents, [item('ab12', 'Fix the footer typo')], NOW).length, 2);
+  assert.equal(untrackedAgents([{ description: 'Fix bug', agentType: '', session: 's' }], [item('ab12', 'Fix bug')], NOW).length, 0, 'an identical short text still matches');
+  assert.equal(untrackedAgents([{ description: 'Ship MAESTRO-365 fix', agentType: '', session: 's' }], [item('maestro-365', 'other')], NOW).length, 0, 'an id with punctuation matches');
 });
 
 test('the continuity tick keeps the last known drift when a read fails', () => {
   const base: ContinuityState = { lastOk: '', error: '', last: '' };
   const io = { transcripts: () => [], deps: {}, handoffPath: () => '', lockDir: '', drift: () => undefined } as unknown as Parameters<typeof cont.check>[2];
   const next = cont.check('t', { now: NOW, prev: { ...base, drift: 3 } as never }, io);
-  assert.ok(next.drift === 3 || next.error, 'drift is carried (or the tick errored before reading it, which keeps prev)');
+  assert.equal(next.drift, 3, 'drift is carried when the read is unknown');
 });
