@@ -40,6 +40,7 @@ Before anything else in a new session, and after a compaction, run `node scripts
    user-facing lessons it hands back with `journal.ts decide --scope working-rule`.
    A `repost-nudge` ACTION says his PRs are waiting on reviewers: raise it as an ask he sees on the Podium
    ([playbooks/event-types/repost-nudge.md](playbooks/event-types/repost-nudge.md)); never post the Slack message yourself.
+   A `REVIEW-WAIT` line is a teammate PR to review ([playbooks/teammate-review.md](playbooks/teammate-review.md)). Relays of teammate reviews use the six-part summary shape defined in [Review summary](playbooks/teammate-review.md#review-summary).
 10. **Close** — every reply ends with the status footer, below.
 
 ### The non-blocking rule

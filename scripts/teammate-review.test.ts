@@ -17,7 +17,8 @@ const text = 'Could we check for an empty list here? It looks like the first ite
 
 const NICE = 'The ID validation before anything goes into a URL is careful and easy to follow.';
 const DIFF = ['diff --git a/src/a.ts b/src/a.ts', '--- a/src/a.ts', '+++ b/src/a.ts', '@@ -3,0 +4,1 @@', '+const first = items[0];'].join('\n');
-const sub = (over: object = {}) => ({ repo: 'acme/widgets', pr: 12, head: HEAD, base: 'main', path: '/x/review-widgets-12-aaaaaaa', compliment: NICE, findings: [], ...over });
+const CONTEXT = { summary: 'Reads the first cart item before the totals are computed, so the totals start from a known value.', ticket: { status: 'none' as const }, tests: { status: 'not-checked' as const, reason: 'the fixture has no tests' }, core: [{ path: 'src/a.ts', start: 4, end: 4, label: 'First item read into a local' }] };
+const sub = (over: object = {}) => ({ repo: 'acme/widgets', pr: 12, head: HEAD, base: 'main', path: '/x/review-widgets-12-aaaaaaa', compliment: NICE, findings: [], context: CONTEXT, ...over });
 
 test('submit queues ONE pending review draft, applies the bar, and posts nothing (no gh is even reachable)', () => {
   const file = join(tmp(), 'J', 'drafts.jsonl');
@@ -34,7 +35,7 @@ test('submit queues ONE pending review draft, applies the bar, and posts nothing
   const d = drafts[0];
   assert.ok(d && d.state === 'pending' && d.source === 'review' && d.severity === 'review');
   assert.equal(d.review?.comments.length, 2);
-  assert.ok(d.text.startsWith(NICE), 'the review opens with the compliment');
+  assert.ok(d.text.includes(NICE) && d.text.startsWith('**What it does**'), 'the review opens with its context and carries the compliment');
   assert.equal(submit(file, sub(), DIFF).queued, null, 'a second run for the same head neither duplicates nor adds');
 });
 
@@ -162,4 +163,27 @@ test('smell findings are kept on the first round of a PR and dropped on every la
   assert.ok(again.queued);
   const latest = listDrafts(file).find((d) => d.id === again.queued?.id);
   assert.equal(latest?.review?.comments.length, 1, 'only the reviewer finding is kept');
+});
+
+test('submit refuses a review with no context, and one whose core logic is off the diff', () => {
+  const file = join(tmp(), 'd.jsonl');
+  assert.match(submit(file, sub({ context: undefined }), DIFF).problem ?? '', /needs its context/);
+  assert.match(submit(file, sub({ context: { ...CONTEXT, core: [{ path: 'src/a.ts', start: 40, end: 41, label: 'Not a changed line at all' }] } }), DIFF).problem ?? '', /not on lines the PR changes/);
+  assert.equal(listDrafts(file).length, 0);
+});
+
+test('supersedes replaces a pending draft of the SAME head: the old one is rejected with a reason, the new one is the only pending draft', () => {
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  const first = submit(file, sub({ context: undefined }), DIFF);
+  assert.equal(first.queued, null);
+  const plain = submit(file, sub({ context: { ...CONTEXT, ticket: { status: 'none' } } }), DIFF);
+  const id = plain.queued?.id as string;
+  assert.equal(submit(file, sub(), DIFF).queued, null, 'the same head without supersedes is still a no-op');
+  const richer = submit(file, sub({ supersedes: id, context: { ...CONTEXT, ticket: { status: 'read', key: 'WID-1', verdict: 'partly', missing: ['empty-cart case'] } } }), DIFF);
+  assert.ok(richer.queued);
+  const ds = listDrafts(file);
+  assert.deepEqual(ds.map((d) => d.state), ['rejected', 'pending']);
+  assert.match(ds[0]?.rejectReason ?? '', /fuller review of the same head/);
+  assert.match(ds[1]?.text ?? '', /Ticket match \(WID-1\):\*\* partly matches/);
+  assert.throws(() => submit(file, sub({ supersedes: 'dr-nope', head: 'c'.repeat(40) }), DIFF), /supersedes/);
 });

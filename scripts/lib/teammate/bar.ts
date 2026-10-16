@@ -11,14 +11,17 @@
  * Naming, style, nice-to-have tests and refactors can never be blocking: no category outside the three can reach that severity. The code cannot
  * judge whether the evidence is true; it makes sure it was stated, and the person still approves the whole review before it is posted.
  *
- * The result is ONE review draft: it opens with a specific compliment (required, and refused when generic), carries each finding as an inline comment
+ * The result is ONE review draft. When the caller hands in a `ReviewContext` (`submit` always does), the body opens with what the PR does, the ticket match and the
+ * core logic links (context.ts), then the specific compliment (required, and refused when generic); carries each finding as an inline comment
  * anchored to a line that is on the RIGHT side of the head commit's diff (a finding with no such line is dropped, never posted loose), and its event
  * is APPROVE when nothing blocks and REQUEST_CHANGES when something does. The closing line tells the author to resolve the suggestions however they
  * think best. A text is in the person's first person and may not mention an assistant or a tool: such a text is refused.
  */
 import { createHash } from 'node:crypto';
-import { isLogin } from '../drafts/queue.ts';
+import { isLogin, MAX_TEXT } from '../drafts/queue.ts';
 import type { NewDraft, ReviewComment } from '../drafts/queue.ts';
+import { contextProblem, renderSummary } from './context.ts';
+import type { ReviewContext } from './context.ts';
 
 export const MAX_SUGGESTIONS = 3;
 /** Smell suggestions have their own cap, so a smells pass can never crowd out the reviewer's findings. */
@@ -33,7 +36,7 @@ const MIN_COMPLIMENT_WORDS = 8;
 /** One finding as an agent reports it. Every field is untrusted. */
 export interface Finding { category?: string; kind?: string; input?: string; failure?: string; path?: string; line?: number; text?: string; source?: string; cost?: string }
 
-export interface PrContext { repo: string; pr: number; head: string; /** The PR author's login, recorded on the draft for the approval list. */ author?: string }
+export interface PrContext { repo: string; pr: number; head: string; /** The id of an earlier draft for this same head that this one replaces; it gives the new draft its own key. */ supersedes?: string; /** The PR author's login, recorded on the draft for the approval list. */ author?: string }
 export interface Dropped { index: number; reason: string }
 /** The lines of each file that are on the RIGHT side of the diff (added or context), by path. */
 export type DiffLines = ReadonlyMap<string, ReadonlySet<number>>;
@@ -149,9 +152,11 @@ export interface ReviewPlan { draft: NewDraft | null; problem?: string; dropped:
  * Builds the review draft for one PR head. `diff` is the head's diff lines; a finding off it is dropped. At most MAX_SUGGESTIONS suggestions are
  * kept (blocking ones never are dropped for the cap). The draft's key is the PR and head, so asking again for the same head queues nothing new.
  */
-export function planReview(ctx: PrContext, compliment: string | undefined, findings: readonly Finding[], diff: DiffLines): ReviewPlan {
+export function planReview(ctx: PrContext, compliment: string | undefined, findings: readonly Finding[], diff: DiffLines, context?: ReviewContext): ReviewPlan {
   const problem = complimentProblem(compliment);
   if (problem) return { draft: null, problem, dropped: [], downgraded: 0 };
+  const ctxProblem = context ? contextProblem(context, diff) : null;
+  if (ctxProblem) return { draft: null, problem: ctxProblem, dropped: [], downgraded: 0 };
   const dropped: Dropped[] = [];
   const comments: ReviewComment[] = [];
   let suggestions = 0;
@@ -191,13 +196,14 @@ export function planReview(ctx: PrContext, compliment: string | undefined, findi
   if (lostBlocker) return { draft: null, problem: `a blocking finding could not be posted (${lostBlocker}); anchor it to a changed line and word it plainly, then submit again`, dropped, downgraded };
   const blocking = comments.some((c) => c.severity === 'blocking');
   const opening = str(compliment);
-  const body = `${opening}\n\n${closing(blocking, comments.length)}`;
-  const tail = voiceProblem(body);
+  const lead = context ? `${renderSummary(ctx.repo, ctx.head, context, [...comments].sort((a, b) => Number(b.severity === 'blocking') - Number(a.severity === 'blocking')).map((c) => ({ blocking: c.severity === 'blocking', path: c.path, line: c.line, text: c.text.replace(/^(Blocking|Suggestion): /, '') })))}\n\n` : '';
+  const body = `${lead}${opening}\n\n${closing(blocking, comments.length)}`;
+  const tail = voiceProblem(body) ?? (body.length > MAX_TEXT ? `the review is ${body.length} characters; keep it under ${MAX_TEXT}: shorten the summary, ticket lists and core logic notes` : null);
   if (tail) return { draft: null, problem: tail, dropped, downgraded };
   return {
     draft: {
-      key: `${ctx.repo}#${ctx.pr}@${ctx.head.slice(0, 12)}:review`, source: 'review', repo: ctx.repo, pr: ctx.pr, severity: 'review', text: body,
-      target: { kind: 'review', commitId: ctx.head }, ...(ctx.author && isLogin(ctx.author) ? { author: ctx.author } : {}), review: { compliment: opening, comments },
+      key: `${ctx.repo}#${ctx.pr}@${ctx.head.slice(0, 12)}:review${ctx.supersedes ? `:redo-${ctx.supersedes}` : ''}`, source: 'review', repo: ctx.repo, pr: ctx.pr, severity: 'review', text: body,
+      target: { kind: 'review', commitId: ctx.head }, ...(ctx.author && isLogin(ctx.author) ? { author: ctx.author } : {}), review: { compliment: opening, comments, ...(context ? { context } : {}) },
       context: `${blocking ? 'Requests changes' : 'Approves'}: ${comments.filter((c) => c.severity === 'blocking').length} blocking, ${comments.filter((c) => c.severity === 'suggestion').length} suggestion(s); ${createHash('sha1').update(body).digest('hex').slice(0, 6)}`,
     },
     dropped, downgraded,
