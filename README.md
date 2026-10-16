@@ -891,6 +891,17 @@ The installer refuses while any loop holds the lock, and while another `*maestro
 
 With the supervisor installed (its plist or its liveness record exists), a plain `event-loop.ts run` refuses with exit 2 and says to wait on the inbox instead, so only one runner exists; `run --serve` (the supervisor's own launch), `run --once` and `run --force` are not refused. With launchd holding the lock, a session cannot run the loop itself: it waits on the event inbox with `node scripts/event-loop.ts events wait`. `digest-wait` is the old name of the same command, kept as an alias: it first moves any unseen saved digest into the inbox (and does so again on each poll), then waits like `events wait`. The supervisor does the same move when it starts and after each digest a loop of an older version makes it save, so an event is delivered once whichever path it came in on. A digest is claimed by renaming it and marked seen only after its events are in the inbox, and an event's id covers the digest's save time (from the file name), so a crash in between shows the events again at worst, never twice in the inbox. `node scripts/event-loop.ts digests [--mark-seen]` prints the unseen digests without waiting.
 
+### gh-guard.ts and gh-budget.ts (the GitHub budget)
+
+Every production `gh` call runs through `scripts/gh-guard.ts` (`lib/tool-bin.ts` points `gh` at it; `MAESTRO_GH_BIN` or `MAESTRO_GH_GUARD=off` bypasses it). It logs the call to `<event_dir>/gh-calls.jsonl`, and before a GraphQL call (`gh pr ...`, `gh issue ...`, `gh api graphql`) it reads the real budget from the GraphQL `rateLimit` field at most every two minutes. Under 300 points left, or after a call GitHub refused for rate reasons, GraphQL calls fail fast with `GitHub limited until HH:MM` instead of being sent (a doubling 2 to 30 minute backoff, or the window's reset when known). REST and local calls are never blocked. `journal.ts status --footer` shows `**GitHub:** limited until 9:42 pm EDT (...)` while a block is active.
+
+`gh api rate_limit` is not used: its graphql bucket does not track what GraphQL charges (on 2026-10-15 it said about 4,700 left while every GraphQL call failed).
+
+- `gh-budget.ts report [--hours N] [--json]` prints calls per hour by caller and kind.
+- `gh-budget.ts status [--json]` prints the last probe and any block; `gh-budget.ts clear` drops a block.
+
+GraphQL charges by the connections a query asks for, so the costly reads are kept small. `pr-watch` searches the cheap fields of every open PR each tick (about 2 points) and reads threads, comments and reviews by node id only for PRs whose `updatedAt` moved, with a refresh after 10 minutes (open threads) or an hour. The Others' PRs list does the same for thread authors. Measured on 2026-10-15: one `pr-watch` tick cost 103 points and the Others' PRs list about 850 per rebuild before; about 2 and 50 after.
+
 ### Loop health (is it actually running?)
 
 A held lock does not mean a working loop, so the loop and the supervisor leave a heartbeat. `event-loop.ts run` (not `--once`) rewrites `<event_dir>/heartbeat.json` (`{ pid, at, tick, watchesLive, sleepingUntil, mode, lastError }`, written by temp file and rename) on each tick and each sleep chunk; the supervisor does the same, with mode `idle`, `quiet` or `backoff`, while it waits between launches. The file holds no event text.
