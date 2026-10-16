@@ -677,7 +677,7 @@ export class PodiumApp extends HTMLElement {
     board.home = this.#homes.get(stream) ?? null;
     if (board.live) void this.#loadHome(stream, board);
     const score = streamScore(st, this.#charts, stream);
-    return score ? h('div', { class: 'grid stream-page' }, score, board) : board;
+    return score ? h('div', { class: 'grid stream-page' }, board, score) : board;
   }
 
   /** Fetch the stream's home base and hand it to the board that asked; a board redrawn in the meantime is a different element and is left alone. */
