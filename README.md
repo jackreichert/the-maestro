@@ -17,6 +17,7 @@ An agent skill that turns the session at the root of a multi-repo directory into
 - **One writer per repo.** Two agents editing one checkout corrupt each other's work. Worktrees are for repos that are genuinely busy, and an optional claim lock makes the rule visible across sessions.
 - **The ledger.** An append-only JSONL log (`journal.ts`) records what started, finished, blocked and is waiting on you. A board, a standup, a status footer, a handoff note and a search index are all generated from it.
 - **Tickets.** Problems that should outlive the conversation become tickets in a separate skill ([xenophon](https://github.com/jackreichert/xenophon)); the ledger links to them instead of copying them.
+- **Reviews.** The maestro works well with [mithril](https://github.com/jackreichert/mithril), a code-review skill with specialist review agents. It plugs in at three places: the preflight a worker runs on its diff before handing back, the recorded smells run that `pr-open.ts` requires in repos listed in `pr_smells_repos`, and the first pass on a teammate's PR. Without mithril the maestro still works; those steps are skipped.
 - **The event loop.** One loop watches everything you would otherwise poll (CI, a run, review activity, new messages, a reminder time) and wakes a cheap runner only on a change that matters, so waiting costs one wake per event.
 - **The Podium.** A local web page (and a Markdown twin) over the ledger: what needs you, what is in flight, your open PRs, and drafted GitHub comments waiting for your approval. You answer asks and reorder priorities there, and nothing reaches GitHub until you press a button.
 - **The library.** Agents record each fact they establish, with evidence. A composer pass turns those into short, checked pages that the next agent reads before it re-derives anything.
@@ -95,7 +96,7 @@ node ~/.claude/skills/the-maestro/scripts/journal.ts autopull on    # fast-forwa
 
 See [Updating](#updating) for what `on` does and never does.
 
-Optional next steps: install xenophon against the same `VAULT_ROOT` for tickets, write a config file ([Configuration](#configuration)), keep the loop and the Podium running without a session ([Running it unattended](#running-it-unattended)), and set `ledger_root` if you want the day-to-day ledger outside your vault so it stays out of vault search.
+Optional next steps: install xenophon against the same `VAULT_ROOT` for tickets, install [mithril](https://github.com/jackreichert/mithril) for code reviews, write a config file ([Configuration](#configuration)), keep the loop and the Podium running without a session ([Running it unattended](#running-it-unattended)), and set `ledger_root` if you want the day-to-day ledger outside your vault so it stays out of vault search.
 
 ## Updating
 
@@ -289,7 +290,7 @@ Home keeps the local review queue to a compact Rehearsal section: the count of b
 
 ### Reviewing PRs, and what the Podium holds back
 
-`pr-state.ts` reads a PR's real state (reviewer verdicts, unresolved threads, checks, mergeability) instead of trusting `reviewDecision`, and `prs-snapshot.ts` builds the bucketed PR board from it. A fresh agent re-reviews a fix and records SHIP IT or NEEDS WORK for the exact head commit (`review-verdict.ts`); a PR with resolved bot threads is held until one exists. `merge-sweep.ts` closes ledger rows whose PRs merged.
+`pr-state.ts` reads a PR's real state (reviewer verdicts, unresolved threads, checks, mergeability) instead of trusting `reviewDecision`, and `prs-snapshot.ts` builds the bucketed PR board from it. A fresh agent re-reviews a fix and records SHIP IT or NEEDS WORK for the exact head commit (`review-verdict.ts`); a PR with resolved bot threads is held until one exists. `merge-sweep.ts` closes ledger rows whose PRs merged. If [mithril](https://github.com/jackreichert/mithril) is installed, its review agents do the reviewing here.
 
 Comments that would be posted as you do not post themselves. When a teammate's ready PR has waited past `teammate_review_minutes`, the [teammate review playbook](playbooks/teammate-review.md) checks it out read-only, runs a first pass, and `teammate-review.ts submit` queues one review draft under a lenient bar (only a stated-input correctness bug, a listed security class or a deploy that cannot roll back blocks). For your own PRs, `reply-drafts.ts` sorts unresolved threads: a thread with a person in it becomes a draft, and a thread with only bots in it is answered directly. The queue is `drafts.jsonl` beside the ledger; the Others' PRs and Open PRs tabs show it, and only the Approve button reaches `gh`. Details are under [web.ts](#webts) ([drafted comments](#drafted-comments-approve-edit-reject), [teammate review](#reviewing-a-teammates-pr-that-has-waited), [replies](#replies-to-comments-on-your-own-prs)).
 
