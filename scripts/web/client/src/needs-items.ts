@@ -25,6 +25,8 @@ export interface NeedsItem {
   author?: string;
   /** A review draft's proposed verdict, in words. */
   verdict?: 'approve' | 'request changes';
+  /** A review draft's id, so the row can open that exact card. */
+  draftId?: string;
   summary: string;
   ageDays?: number;
 }
@@ -78,7 +80,7 @@ export function reviewDraftItems(data: DraftsData | null, cards: PrCard[], strea
     const made = Date.parse(d.createdAt);
     const verdict = d.review?.event === 'REQUEST_CHANGES' ? 'request changes' : 'approve';
     return {
-      key: `review:${d.id}`, kind: 'approve review', stream: streamOfRepo(d.repo, cards, streams), repo: d.repo, number: d.pr, url: d.prUrl,
+      key: `review:${d.id}`, draftId: d.id, kind: 'approve review', stream: streamOfRepo(d.repo, cards, streams), repo: d.repo, number: d.pr, url: d.prUrl,
       title: `Review of ${d.repo.split('/')[1] ?? d.repo}#${d.pr}`, verdict, ...(d.author ? { author: d.author } : {}),
       summary: d.context || d.review?.compliment || d.text.split('\n')[0] || 'Drafted review.',
       ...(Number.isFinite(at) && Number.isFinite(made) ? { ageDays: Math.max(0, Math.floor((at - made) / DAY_MS)) } : {}),

@@ -126,7 +126,7 @@ test('a stream chip narrows the asks to that stream', () => {
 
 const needsOf = (stream: string): import('../src/needs-items.ts').NeedsItem[] => [
   { key: 'ready:acme/widgets#7', kind: 'ready to merge', stream, repo: 'acme/widgets', number: 7, url: 'https://github.com/acme/widgets/pull/7', title: 'Add the thing', base: 'develop', ticket: { label: 'AB-9', url: 'https://x.test/AB-9' }, summary: 'Approved by pat, checks passing, no open threads.', ageDays: 2 },
-  { key: 'review:dr-00000001', kind: 'approve review', stream: 'Elsewhere', repo: 'acme/gadgets', number: 41, url: 'https://github.com/acme/gadgets/pull/41', title: 'Review of gadgets#41', author: 'robin', verdict: 'approve', summary: 'Approves: 0 blocking, 2 suggestion(s)', ageDays: 0 },
+  { key: 'review:dr-00000001', draftId: 'dr-00000001', kind: 'approve review', stream: 'Elsewhere', repo: 'acme/gadgets', number: 41, url: 'https://github.com/acme/gadgets/pull/41', title: 'Review of gadgets#41', author: 'robin', verdict: 'approve', summary: 'Approves: 0 blocking, 2 suggestion(s)', ageDays: 0 },
 ];
 
 test('PRs ready to merge and reviews waiting for an OK are rows in Needs you, with a kind badge in words, a link, and the count includes them', () => {
@@ -143,7 +143,9 @@ test('PRs ready to merge and reviews waiting for an OK are rows in Needs you, wi
   assert.match(text(rows[0]), /develop/);
   assert.match(text(rows[1]), /by robin/);
   assert.match(text(rows[1]), /proposed: approve/);
-  assert.equal(rows[1]!.querySelector('a[href^="#tab=others"]')?.textContent, 'Open the draft');
+  const open = rows[1]!.querySelector('a[href^="#tab=others"]');
+  assert.equal(open?.textContent, 'Open the draft to approve');
+  assert.match(open?.getAttribute('href') ?? '', /^#tab=others-prs&draft=dr-[0-9a-f]{8}$/, 'the cue opens the exact draft, not just the tab');
   assert.equal(needs.querySelector('ask-card') !== null, true, 'the asks are still there');
 });
 

@@ -59,6 +59,10 @@ export class OthersPrs extends HTMLElement {
   #pages: Partial<Record<SubTab, number>> = {};
   #focusTab: SubTab | null = null;
   #focusPager: string | null = null;
+  /** A draft id the page was asked to open (the Home cue's link): its PR's sub-tab is selected once and its card scrolled to and focused. */
+  #focusDraft: string | null = null;
+  #focusDone: string | null = null;
+  #focusOpened: string | null = null;
   readonly #status = h('p', { class: 'status', role: 'status' });
   /** A hidden live region that outlives every redraw (a live region that is removed and re-added is not reliably announced). */
   readonly #announce = h('p', { class: 'vh', role: 'status' });
@@ -67,13 +71,20 @@ export class OthersPrs extends HTMLElement {
   constructor() { super(); this.#root = shadow(this, CSS); this.#root.append(this.#announce, this.#view); }
 
   set model(m: OthersPrsModel | null) { this.#model = m; if (this.isConnected) this.#render(); }
+  set focusDraft(id: string | null) { this.#focusDraft = id; this.#sig = ''; if (this.isConnected) this.#render(); }
   set drafts(d: OthersDrafts) { this.#drafts = d; if (this.isConnected) this.#render(); }
   connectedCallback(): void { this.#render(); }
+
+  /** What the rows say: a change in it redraws them. */
+  #signature(): string {
+    const m = this.#model;
+    return `${m?.loaded ? m.data?.generatedAt ?? 'none' : 'loading'}|${(this.#drafts?.rows ?? []).filter(waiting).map((d) => d.id).sort().join(',')}|${this.#drafts ? 'q' : ''}|${this.#tab}|${this.#pages[this.#tab] ?? 0}|${this.#focusDraft ?? ''}`;
+  }
 
   #render(): void {
     const m = this.#model;
     // Only a change in what the rows say redraws them: the draft cards inside follow the store on their own, so a keystroke-level or button-state change never rebuilds 340 rows under the person's focus.
-    const sig = `${m?.loaded ? m.data?.generatedAt ?? 'none' : 'loading'}|${(this.#drafts?.rows ?? []).filter(waiting).map((d) => d.id).sort().join(',')}|${this.#drafts ? 'q' : ''}|${this.#tab}|${this.#pages[this.#tab] ?? 0}`;
+    const sig = this.#signature();
     if (sig === this.#sig && this.#view.childElementCount > 0) return;
     this.#sig = sig;
     if (!m || !m.loaded) { this.#view.replaceChildren(h('p', { class: 'empty' }, 'Loading teammates\' PRs.')); return; }
@@ -82,17 +93,45 @@ export class OthersPrs extends HTMLElement {
     const d = m.data;
     const byPr = new Map<string, DraftRow[]>();
     for (const r of this.#drafts?.rows ?? []) byPr.set(key(r.repo, r.pr), [...(byPr.get(key(r.repo, r.pr)) ?? []), r]);
-    const listed = new Set([...d.prs.map((p) => key(p.repo, p.number)), ...(d.approvedKeys ?? [])]);
+    const listed = new Set(d.prs.map((p) => key(p.repo, p.number)));
+    this.#openFocused(d.prs, byPr);
     const names = new Map(d.prs.map((p) => [key(p.repo, p.number), who(p)] as const));
     const authorOf = (x: DraftRow): string | undefined => x.author ?? names.get(key(x.repo, x.pr));
     const when = d.prData.fetchedAt ? `List read ${ago(d.prData.fetchedAt, d.generatedAt)} ago${d.prData.stale ? ' (older than expected)' : ''}.` : 'The list has not been read yet. It fills in when the next page refresh runs.';
     const hasOrphans = [...byPr].some(([k, rows]) => !listed.has(k) && rows.some(waiting));
     this.#view.replaceChildren(
       this.#statusLine(`${d.total} open ${d.total === 1 ? 'PR' : 'PRs'} by teammates. ${when}${d.prData.failure ? ` The last read failed (${d.prData.failure}); this is the last good list.` : ''}`, !!d.prData.failure),
+      ...this.#waitingNote(d.prs, byPr),
       ...(d.prs.length ? this.#tabbed(d.prs, byPr) : [tacet('No teammate PR is open.', 'tacet')]),
       ...(this.#drafts ? [...(hasOrphans ? [h('h3', { class: 'orphans' }, 'Drafts on PRs not listed above')] : []), this.#drafts.queue((x) => !listed.has(key(x.repo, x.pr)), '', false, authorOf)] : []));
+    this.#revealFocused();
     if (this.#focusTab) { this.#root.querySelector<HTMLElement>(`button.tab[data-tab="${this.#focusTab}"]`)?.focus(); this.#focusTab = null; }
     if (this.#focusPager) { this.#root.querySelector<HTMLElement>(`nav.pager [data-dir=${this.#focusPager}]`)?.focus(); this.#focusPager = null; }
+  }
+
+  /** Selects the sub-tab of the PR that holds the asked-for draft, once per draft, before the rows are drawn. */
+  #openFocused(prs: OthersPrRow[], byPr: Map<string, DraftRow[]>): void {
+    const id = this.#focusDraft;
+    if (!id || this.#focusOpened === id) return;
+    this.#focusOpened = id;
+    const row = [...byPr.values()].flat().find((r) => r.id === id);
+    const p = row ? prs.find((x) => x.repo === row.repo && x.number === row.pr) : undefined;
+    if (p) { this.#tab = classify(p, (byPr.get(key(p.repo, p.number)) ?? []).some(waiting)).tab; this.#sig = this.#signature(); }
+  }
+
+  /** Scrolls to and focuses the asked-for draft's card (inside its PR row, or under "Drafts on PRs not listed above"), once. */
+  #revealFocused(): void {
+    const id = this.#focusDraft;
+    if (!id || this.#focusDone === id) return;
+    for (const q of this.#root.querySelectorAll('draft-queue')) {
+      const card = q.shadowRoot?.querySelector<HTMLElement>(`li.draft[data-id="${id}"]`);
+      if (!card) continue;
+      card.setAttribute('tabindex', '-1');
+      card.scrollIntoView?.({ block: 'center' });
+      card.focus();
+      this.#focusDone = id;
+      return;
+    }
   }
 
   /**
@@ -115,6 +154,15 @@ export class OthersPrs extends HTMLElement {
     const rows = groups.get(def.id) ?? [];
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': `tab-${def.id}`, ...(rows.length ? {} : { tabindex: '0' }) }, ...(rows.length ? this.#list(def.id, rows, byPr) : [tacet(def.empty, 'tacet')]));
     return [tabs, panel];
+  }
+
+  /** When review drafts wait in a sub-tab other than the open one, say so and offer the jump: they are not under Ready for approval. */
+  #waitingNote(prs: OthersPrRow[], byPr: Map<string, DraftRow[]>): Node[] {
+    const n = prs.filter((p) => (byPr.get(key(p.repo, p.number)) ?? []).some(waiting)).length;
+    if (!n || this.#tab === 'in-review') return [];
+    const b = h('button', { type: 'button', class: 'secondary' }, `Show ${n === 1 ? 'it' : 'them'} (In review)`);
+    b.addEventListener('click', () => this.#select('in-review', true));
+    return [h('p', { class: 'status', 'data-note': 'waiting-drafts' }, `${n} drafted ${n === 1 ? 'review waits' : 'reviews wait'} for your Approve in the In review tab. `, b)];
   }
 
   #select(id: SubTab, focus = false): void {

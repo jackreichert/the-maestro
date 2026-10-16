@@ -65,6 +65,15 @@ export function parseFragment(hash: string, ids: string[]): string {
   return ids.includes(raw) ? raw : DASHBOARD;
 }
 
+/** The `draft=` value of a fragment (a draft id the Home cue links to), or null for none or anything that is not a draft id. */
+export function parseDraftFocus(hash: string): string | null {
+  const value = hash.replace(/^#/, '').split('&').find((part) => part.startsWith('draft='))?.slice(6);
+  return value && /^dr-[0-9a-f]{8}$/.test(value) ? value : null;
+}
+
+/** The fragment of the Others' PRs tab opened on one draft's card: `#tab=others-prs&draft=dr-0123abcd`. */
+export const draftFragment = (id: string): string => `${formatFragment(OTHERS_PRS)}&draft=${id}`;
+
 /** The fragment (with the leading #) that selects a tab, a tile filter when there is one, and a stream chip on the asks view: `#tab=dashboard&show=asks&stream=ops`. */
 export function formatFragment(id: string, filter: CueKey | null = null, stream: string | null = null): string {
   const chip = filter === 'asks' && stream ? `&stream=${encodeURIComponent(stream)}` : '';

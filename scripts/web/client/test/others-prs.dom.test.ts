@@ -234,10 +234,45 @@ test('each sub-tab pages on its own: Next in one does not change another', async
   cleanup();
 });
 
-test('a draft on an already approved PR is not shown as an orphan or as waiting', async () => {
+test('a draft on a PR someone else already approved still shows, with its card, under the drafts not listed above', async () => {
   const model = { data: { ...data([pr(1)]), approvedKeys: ['acme/app#9'] }, loaded: true };
   const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model, drafts: drafts([draft(9)]) });
-  assert.equal(root.querySelector('h3.orphans'), null);
-  assert.doesNotMatch(root.textContent ?? '', /acme\/app#9 by/);
+  assert.ok(root.querySelector('h3.orphans'));
+  assert.match(root.textContent ?? '', /acme\/app#9 by/);
+  cleanup();
+});
+
+test('a waiting draft outside the open sub-tab is announced with a jump to it', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1)]), loaded: true }, drafts: drafts([draft(1)]) });
+  const note = root.querySelector('[data-note="waiting-drafts"]');
+  assert.match(note?.textContent ?? '', /1 drafted review waits for your Approve in the In review tab/);
+  (note?.querySelector('button') as HTMLButtonElement).click();
+  assert.match(root.querySelector('li.pr')?.textContent ?? '', /Draft ready/);
+  assert.equal(root.querySelector('[data-note="waiting-drafts"]'), null);
+  cleanup();
+});
+
+test('focusDraft opens the sub-tab that holds that draft, once', async () => {
+  const { root, cleanup } = await mount<El & { focusDraft: string | null }>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1), pr(2)]), loaded: true }, drafts: drafts([draft(1)]), focusDraft: 'dr-00000001' });
+  assert.equal(root.querySelector('button.tab[aria-selected="true"]')?.getAttribute('data-tab'), 'in-review');
+  pick(root, 'ready');
+  assert.equal(root.querySelector('button.tab[aria-selected="true"]')?.getAttribute('data-tab'), 'ready', 'the person can still leave it');
+  cleanup();
+});
+
+test('a queued draft shows its Approve button on the tab, in the sub-tab the Home cue opens, and for a PR no longer listed', async () => {
+  await import('../src/draft-queue.ts');
+  const rows = [draft(1, { severity: 'review', review: { event: 'APPROVE', compliment: 'The ID validation before anything goes into a URL is careful.', comments: [] }, text: 'The ID validation before anything goes into a URL is careful.' }), draft(9)];
+  const noop = () => {};
+  const real: OthersDrafts = { rows, queue: (match, empty, quiet, authorOf) => {
+    const q = document.createElement('draft-queue') as unknown as HTMLElement & Record<string, unknown>;
+    q.sources = ['review']; q.emptyText = empty; q.match = match; q.quiet = quiet; q.authorOf = authorOf;
+    q.actions = { startEdit: noop, startReject: noop, cancel: noop, setBuffer: noop, setComment: noop, saveEdit: noop, approve: noop, reject: noop };
+    q.model = { data: { generatedAt: '2026-10-15T12:00:00Z', drafts: rows }, loaded: true, ui: {} };
+    return q;
+  } };
+  const { root, cleanup } = await mount<El & { focusDraft: string | null }>('../src/others-prs.ts', 'others-prs', { model: { data: { ...data([pr(1)]), approvedKeys: ['acme/app#9'] }, loaded: true }, drafts: real, focusDraft: 'dr-00000001' });
+  const approves = (): string[] => [...root.querySelectorAll('draft-queue')].flatMap((q) => [...(q.shadowRoot?.querySelectorAll('li.draft button.primary') ?? [])].map((b) => `${q.shadowRoot?.querySelector('li.draft')?.getAttribute('data-id')}:${b.textContent}`));
+  assert.deepEqual(approves().sort(), ['dr-00000001:Approve', 'dr-00000009:Approve']);
   cleanup();
 });
