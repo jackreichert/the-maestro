@@ -161,7 +161,7 @@ import { importTracker, writeTracker } from './lib/whats-next/tracker.ts';
 import { gatherRankInput } from './lib/whats-next/gather.ts';
 import { nextLines, rankNext, whyOf } from './lib/whats-next/rank.ts';
 import type { Ranking } from './lib/whats-next/rank.ts';
-import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS, NEXT_FROZEN_LABELS, NEXT_BLOCKED_LABELS } from './local-config.ts';
+import { CLAUDE_SETTINGS_PATH, CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS, NEXT_FROZEN_LABELS, NEXT_BLOCKED_LABELS } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -271,6 +271,7 @@ import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-p
 import { toolCommand } from './lib/tool-bin.ts';
 import { correctedCommand, inferStreamForRepo, isPlaceholder, modelOfAgentType } from './lib/journal/start-hints.ts';
 import { briefLinkRow, briefOf, briefTextProblem, briefsDir, linkableBrief, readBriefStdin, saveBrief } from './lib/journal/brief-link.ts';
+import { driftLine, missingAgentHooks, untrackedCount } from './lib/journal/agent-drift.ts';
 import { dryRunJson, printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -1408,6 +1409,15 @@ function ownSessionId(): string | undefined {
     return id && sessionFileById(CLAUDE_PROJECTS_DIR, id) ? id : undefined;
 }
 
+/** `ledger drift: N untracked agents ...` when the harness has agents running that no in-flight row accounts for; '' when it does or when the transcripts cannot be read. Never throws: a footer must not fail on this. */
+function ledgerDrift(): string {
+    try {
+        const nowMs = Date.now();
+        const untracked = untrackedCount(CLAUDE_PROJECTS_DIR, fold(readLedger()).items, nowMs, process.env.CLAUDE_CODE_SESSION_ID || undefined);
+        return driftLine(untracked, untracked ? missingAgentHooks(CLAUDE_SETTINGS_PATH) : []);
+    } catch { return ''; }
+}
+
 /** Live leases on the board's open items, counted for this window. */
 const leaseSummary = (g: Groups, window = windowId) => {
     const open = new Set([...g.inflight, ...g.queued, ...g.blocked].map((i) => i.id));
@@ -1461,8 +1471,8 @@ function cmdStatus() {
         // The window is named only when the session is pinned (--session, or a status line's stdin): the newest transcript may belong to
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
-        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window), doneLabel: live.doneLabel })); return; }
-        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, ledgerDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...[githubFooter(EVENT_DIR, Date.now(), WATCH_TZ)].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window), doneLabel: live.doneLabel, drift: ledgerDrift() })); return; }
+        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, ledgerDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...[githubFooter(EVENT_DIR, Date.now(), WATCH_TZ)].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), ...[ledgerDrift()].filter(Boolean).map((l) => `**${l.replace(': ', ':** ')}`), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 

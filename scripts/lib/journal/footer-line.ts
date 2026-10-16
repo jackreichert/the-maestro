@@ -15,6 +15,8 @@ export interface FooterLineParts {
     window?: string;
     /** `Leases: 2 mine, 1 other` (live leases on open items); left out when absent. */
     leases?: string;
+    /** `ledger drift: 3 untracked agents ...` (lib/journal/agent-drift.ts); empty when the ledger accounts for every running agent. */
+    drift?: string;
 }
 
 const plain = (s: string): string => s.replace(/\*\*/g, '').trim();
@@ -24,7 +26,7 @@ const plain = (s: string): string => s.replace(/\*\*/g, '').trim();
  * the loop, the window and the session, joined by ` | `. Parts that are empty are left out. Pure: the numbers are the ones `footerRows`
  * and `sessionStatus` already computed, so it cannot disagree with the multi-line footer.
  */
-export function footerOneLine({ rows, queue, loop, session, window, leases, doneLabel = 'done today' }: FooterLineParts): string {
+export function footerOneLine({ rows, queue, loop, session, window, leases, drift, doneLabel = 'done today' }: FooterLineParts): string {
     const sum = (pick: (r: FooterRow) => number): number => rows.reduce((n, r) => n + pick(r), 0);
     const ledger = [
         `${sum((r) => r.done)} ${doneLabel}`,
@@ -38,5 +40,5 @@ export function footerOneLine({ rows, queue, loop, session, window, leases, done
     const sess = session.available
         ? `Session: ${session.session ? `${session.session}${session.newest ? ' (newest transcript)' : ''} · ` : ''}${session.turns} turns${session.turnsBefore ? ` since compact (${session.turnsBefore} before)` : ''} · ${session.ctxK}k/${session.triggerK}k (${session.pct}%) · ${session.readK}k/turn${session.advice ? ` · ${session.advice}` : ''}`
         : `Session: unavailable (${session.unavailable})`;
-    return [`Ledger: ${ledger}`, queue ? plain(queue) : '', loop ? plain(loop) : '', window ? `Window: ${window}` : '', leases ?? '', sess].filter(Boolean).join(' | ');
+    return [`Ledger: ${ledger}`, drift ?? '', queue ? plain(queue) : '', loop ? plain(loop) : '', window ? `Window: ${window}` : '', leases ?? '', sess].filter(Boolean).join(' | ');
 }
