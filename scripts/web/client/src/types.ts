@@ -254,7 +254,7 @@ export interface OpenPrsData {
 /** One open teammate PR in the Others' PRs tab (`GET /api/others-prs`). `youAsked` is true when the user is a requested reviewer. */
 export interface OthersPrRow {
   repo: string; number: number; title: string; url: string; author: string; authorName?: string; base: string; updatedAt: string; ageDays?: number;
-  youAsked: boolean; handsOff?: boolean; review: 'review-required' | 'approved' | 'changes-requested'; unresolved: number; copilotThreads: number;
+  youAsked: boolean; handsOff?: boolean; /** Newer fields, absent from an older server: read as clean. */ isDraft?: boolean; ci?: 'pass' | 'fail' | 'pending' | 'none'; conflicting?: boolean; block?: 'release' | 'blocked'; awaitingAuthor?: boolean; notAsked?: boolean; /** When the latest ask for review was made (Slack post or reply, else the PR's opening); stale: past the age cutoff, with the reason. */ askedAt?: string; stale?: boolean; staleWhy?: string; review: 'review-required' | 'approved' | 'changes-requested'; unresolved: number; copilotThreads: number;
 }
 /** `prData.fetchedAt` is null until the first read; `failure` says why the last read did not refresh the list. Rows run newest activity first. */
 export interface OthersPrsData { generatedAt: string; prData: { fetchedAt: string | null; stale: boolean; failure?: string }; total: number; prs: OthersPrRow[] }
