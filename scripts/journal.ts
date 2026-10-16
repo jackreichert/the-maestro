@@ -262,6 +262,7 @@ import { daysBefore, maintainLine } from './lib/journal/maintain.ts';
 import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
 import { toolCommand } from './lib/tool-bin.ts';
+import { correctedCommand, inferStreamForRepo, modelOfAgentType } from './lib/journal/start-hints.ts';
 import { dryRunJson, printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -379,6 +380,9 @@ function normaliseStream(raw: string | null): string | null {
     const near = didYouMean(reg, raw);
     console.error(`Unknown stream "${raw}".${near ? ` Did you mean "${near}"?` : ''}`);
     console.error(`Known: ${Object.keys(reg.streams).join(', ') || '(none)'}. Pass --new-stream to register it, or \`journal.ts streams add <name>\`.`);
+    const rerun = process.argv.slice(2);
+    if (near) console.error(`Run: ${correctedCommand(rerun, { stream: near })}`);
+    console.error(`${near ? 'Or to register it as new' : 'To register it'}: ${correctedCommand(rerun, {}, [])} --new-stream`);
     process.exit(1);
 }
 
@@ -437,15 +441,20 @@ function normaliseModel(raw: string | null): string | null {
     return canon;
 }
 
+/** Where an agent type's definition (`<type>.md`, with a `model:` line) may live: the project's .claude/agents, then the user's. */
+const agentDirs = (): string[] => [join(process.cwd(), '.claude', 'agents'), join(process.env.HOME ?? '', '.claude', 'agents')];
+
 /** The usage marks every written row carries, from --model, --used and the optional --tokens, --harness and --agent. */
 interface Usage { model?: string; used?: string[]; tokens?: string; harness?: string; agent?: string }
 
 function usageFromArgs(): Usage {
-    const model = normaliseModel(arg('model'));
+    const model = normaliseModel(arg('model') || modelOfAgentType(arg('agent-type') ?? '', agentDirs()) || null);
     const used = parseList('used');
     if (!has('allow-unmarked') && (!model || !used)) {
         console.error('Every ledger entry needs --model "<name>" and --used "skill:x,tool:y".');
         console.error('Do not guess. Unknown is --model unrecorded --used unrecorded. Tests may pass --allow-unmarked.');
+        const missing: Record<string, string> = { ...(model ? {} : { model: '<name>' }), ...(used ? {} : { used: 'skill:x,tool:y' }) };
+        console.error(`Run: ${correctedCommand(process.argv.slice(2), missing)}   (fill in ${Object.keys(missing).map((k) => `--${k}`).join(' and ')})`);
         process.exit(1);
     }
     const usage: Usage = {};
@@ -638,6 +647,12 @@ function askTemplate(text: string, fields: AskFields, given: { flags: AskTemplat
     return template;
 }
 
+/** The stream the ledger has always used for `repo`, noted on stderr; undefined when it names none or several (never guessed). */
+function inferredStream(repo: string | null): string | undefined {
+    const s = inferStreamForRepo(fold(readLedger()).items, repo || undefined, (n) => { const reg = loadRegistry(); return reg ? canonicalOf(reg, n) ?? null : null; });
+    if (s) console.error(`stream ${s} (inferred from repo ${repo}; pass --stream to choose another)`);
+    return s;
+}
 function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false, lease = false } = {}) {
     const tplFlags = askTemplateFlags(ask);
     const text = arg('text') || positional.join(' ') || tplFlags.file?.question || '';
@@ -699,7 +714,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
         ...(kind === 'wip' ? recoveryFlags() : {}),
-        stream: streamOrNone(arg('stream')),
+        stream: streamOrNone(arg('stream') || (kind === 'wip' ? inferredStream(arg('repo')) ?? null : null)),
         refs,
         pending: ask && kind === 'decision' && routed.acted === null ? true : undefined,
         queued: queued ? true : undefined,
