@@ -1,4 +1,5 @@
 import { BASE_CSS, h, refLink, shadow } from './dom.ts';
+import { GRID_CSS } from './grid.ts';
 import { ago, askAge, clockTime } from './glance.ts';
 import { readyToMerge } from './pr-ready.ts';
 import type { OpenPrRow } from './types.ts';
@@ -12,9 +13,8 @@ type Mix = 'pass' | 'pending' | 'fail' | 'none';
 
 const CSS = `${BASE_CSS}
   :host { display: block; }
-  .cue { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--space-6) var(--col-gap); align-items: end; padding-bottom: var(--space-6); border-bottom: var(--hairline); }
-  .cue > * { grid-column: 1 / -1; }
-  @media (min-width: 1100px) { .cue > .two-thirds { grid-column: span 8; } .cue > .third { grid-column: span 4; } }
+  ${GRID_CSS}
+  .cue { row-gap: var(--space-6); align-items: end; padding-bottom: var(--space-6); border-bottom: var(--hairline); }
   .kicker { font-size: var(--text-sm); color: var(--text-muted); }
   .cueline { margin: var(--space-4) 0 0; font: 400 clamp(2rem, 3.6vw, 3.25rem)/1.08 var(--font-display); letter-spacing: -0.02em; color: var(--text-muted); }
   .cue-item { white-space: nowrap; }
@@ -311,7 +311,7 @@ export class OpenPrs extends HTMLElement {
     const repos = new Set(all.map((p) => p.repo)).size;
     const oldest = units.filter((u) => unitMove(u) === 'yours').map((u) => u.lead).sort((a, b) => (b.ageDays ?? 0) - (a.ageDays ?? 0))[0];
     const short = (repo: string): string => repo.split('/')[1] ?? repo;
-    return h('section', { class: 'cue' },
+    return h('section', { class: 'grid cue' },
       h('div', { class: 'two-thirds' },
         h('span', { class: 'kicker' }, 'Open pull requests'),
         line,

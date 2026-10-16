@@ -243,7 +243,7 @@ export class StreamBoard extends HTMLElement {
     const slots = { stand: h('div', { class: 'stand' }), left: h('div'), rail: h('div'), below: h('div', { class: 'below' }), clear: h('p', { class: 'clear', hidden: true }) };
     this.#slots = slots;
     this.#filled = false;
-    this.#root.replaceChildren(slots.stand, h('div', { class: 'board' },
+    this.#root.replaceChildren(slots.stand, h('div', { class: 'grid board' },
       h('div', { class: 'col two-thirds' },
         section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false, Number.POSITIVE_INFINITY, (xs) => byPriority(oldestFirst(xs), todaysPriorities(st)))?.list ?? null),
         slots.left,

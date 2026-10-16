@@ -7,7 +7,6 @@ import { AMBIENCE_CSS } from './home-ambience.ts';
 import { COST_CSS, costSection } from './cost-widget.ts';
 import { h } from './dom.ts';
 import { CONCEPT_CSS } from './home-concept.ts';
-import { GRID_CSS } from './grid.ts';
 import { CUES_CSS, cuesSection, pickedStream } from './home-cues.ts';
 import { DECK_CSS, deckSection, agesSection, prsSection } from './home-deck.ts';
 import { HELD_CSS, codaSection, flightSection, heldSection } from './home-held.ts';
@@ -37,7 +36,6 @@ export interface HomeOptions {
 
 export const HOME_TAB_CSS = `
   .home { padding-block: var(--space-2) 0; }
-  ${GRID_CSS}
   .home-note { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }
   ${CONCEPT_CSS}
   ${SCORE_CSS}

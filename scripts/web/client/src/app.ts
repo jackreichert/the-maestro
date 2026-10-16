@@ -24,6 +24,7 @@ import { waiting } from './drafts-model.ts';
 import type { DraftRow } from './drafts-model.ts';
 import { createDraftActions, loadDrafts } from './drafts-api.ts';
 import { createPoster } from './write-token.ts';
+import { GRID_CSS } from './grid.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
 import { armHomeEntrance } from './home-motion.ts';
 import { queueSize } from './local-review-widget.ts';
@@ -42,7 +43,7 @@ import type { AskBusyDetail, ChartsData, CostData, EpicsData, LocalReview, Podiu
 
 interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; cost: CostData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number; needsSig: string }
 
-const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
+const CSS = `${GRID_CSS}${BOARD_CSS}${HOME_TAB_CSS}
   .wrap { max-width: var(--grid-max); margin: 0 auto; padding-inline: var(--page-pad); }
 
   /* Off screen until it has focus, then the first thing on the page; fixed so no layout moves. */
@@ -95,6 +96,7 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .stream-title .tempo-line { margin-left: var(--space-2); }
 
   .badge { min-width: 20px; min-height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xs); line-height: 20px; font-weight: var(--weight-semibold); text-align: center; font-variant-numeric: tabular-nums; }
+  .board { align-items: start; }
   .lead-grid { row-gap: var(--space-6); align-items: start; padding-bottom: var(--space-6); border-bottom: var(--hairline); margin-bottom: var(--space-7); }
   .lede { margin: var(--space-4) 0 0; max-width: 62ch; font-size: var(--text-lg); line-height: var(--leading-lg); color: var(--text-secondary); }
   .lede strong { color: var(--text-primary); font-weight: var(--weight-semibold); }
@@ -107,7 +109,6 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .stream-title .mark { width: 12px; height: 12px; border-radius: 3px; }
   /* Side by side (from 1100px), the priorities panel is one compact line per priority and takes the height it needs, top-aligned beside the headline. */
   @media (min-width: 1100px) { .lead-grid > priority-list { align-self: start; } }
-  @media (min-width: 1100px) { .lead-grid > .two-thirds { grid-column: span 8; } .lead-grid > .third { grid-column: span 4; } }
 
   @media (forced-colors: active) {
     [role=tab][aria-selected=true]::after { forced-color-adjust: none; background: Highlight; height: 4px; bottom: 0; }
@@ -867,7 +868,7 @@ function skeleton(): HTMLElement {
     h('div', { class: 'wrap sk-head', 'aria-hidden': 'true' }, line('150px'), h('span', { class: 'sk-scope' }, line('96px')), staff()),
     h('div', { class: 'sk-tabs', 'aria-hidden': 'true' }, h('div', { class: 'wrap' }, line('72px'), line('104px'), line('56px'))),
     h('div', { class: 'wrap sk-panel', 'aria-hidden': 'true' },
-      h('div', { class: 'board' },
+      h('div', { class: 'grid board' },
         h('div', { class: 'sk-stack two-thirds' }, line('120px'), h('span', { class: 'sk-hint' }, line('340px')), rows(['62%', '48%', '55%', '40%']), line('96px'), rows(['44%'])),
         h('div', { class: 'sk-stack third' }, line('110px'), rows(['80%', '66%', '72%'])))));
 }
