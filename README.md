@@ -930,7 +930,7 @@ GraphQL charges by the connections a query asks for, so the costly reads are kep
 
 ### Loop health (is it actually running?)
 
-A held lock does not mean a working loop, so the loop and the supervisor leave a heartbeat. `event-loop.ts run` (not `--once`) rewrites `<event_dir>/heartbeat.json` (`{ pid, at, tick, watchesLive, sleepingUntil, mode, lastError }`, written by temp file and rename) on each tick and each sleep chunk; the supervisor does the same, with mode `idle`, `quiet` or `backoff`, while it waits between launches. The file holds no event text.
+A held lock does not mean a working loop, so the loop and the supervisor leave a heartbeat. `event-loop.ts run` (not `--once`) rewrites `<event_dir>/heartbeat.json` (`{ pid, at, tick, watchesLive, sleepingUntil, mode, lastError }`, written by temp file and rename) on each tick, after each watch a tick checks (a tick runs its watches one after another, and a slow `gh` call must not make a healthy loop read `STALLED` or get killed by the supervisor's hang watchdog) and each sleep chunk; the supervisor does the same, with mode `idle`, `quiet` or `backoff`, while it waits between launches. The file holds no event text.
 
 `lib/loop-health.ts` is the one reader. It turns the heartbeat, the loop lock and the supervisor record into a `Loop:` line, shown in `journal.ts status --footer` (bold label), `prime`, `session-start.ts` and the `loop-alive` standing row:
 
