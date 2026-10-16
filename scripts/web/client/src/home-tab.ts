@@ -6,6 +6,7 @@ import { AMBIENCE_CSS } from './home-ambience.ts';
 import { COST_CSS, costSection } from './cost-widget.ts';
 import { h } from './dom.ts';
 import { CONCEPT_CSS } from './home-concept.ts';
+import { GRID_CSS } from './grid.ts';
 import { CUES_CSS, cuesSection, pickedStream } from './home-cues.ts';
 import { DECK_CSS, deckSection, gaugesSection } from './home-deck.ts';
 import { HELD_CSS, codaSection, flightSection, heldSection } from './home-held.ts';
@@ -34,10 +35,8 @@ export interface HomeOptions {
 }
 
 export const HOME_TAB_CSS = `
-  .home { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--section-gap) var(--gutter); padding-block: var(--space-2) 0; }
-  .home > * { grid-column: 1 / -1; }
-  @media (min-width: 768px) { .home > .half { grid-column: span 6; } }
-  @media (min-width: 1100px) { .home > .w7 { grid-column: span 7; } .home > .w5 { grid-column: span 5; } }
+  .home { padding-block: var(--space-2) 0; }
+  ${GRID_CSS}
   .home-note { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }
   ${CONCEPT_CSS}
   ${SCORE_CSS}
@@ -62,14 +61,14 @@ export function homeTab(st: PodiumState, charts: ChartsData | null, opts: HomeOp
   const cues = cuesSection(st, opts.live, opts.redraw, opts.needs);
   const movements = movementsSection(opts.epics, projects?.links ?? []);
   const rehearsal = localReviewWidget(opts.local ?? null);
-  cues.classList.add('w7');
-  movements.classList.add('w7');
-  rehearsal.classList.add('w5');
-  return h('div', { class: takeEntrance() ? 'home enter' : 'home' },
+  cues.classList.add('two-thirds');
+  movements.classList.add('two-thirds');
+  rehearsal.classList.add('third');
+  return h('div', { class: takeEntrance() ? 'home grid enter' : 'home grid' },
     score ? scoreSection(score, pickedStream(st, opts.needs ?? [])) : h('p', { class: 'home-note', role: 'status' }, 'The 14-day score is missing: the charts data did not load.'),
     opts.projects.state === 'error' ? h('p', { class: 'home-note', role: 'alert' }, `Project names and notes could not be loaded (${opts.projects.message}). The rest of Home is current; reload to try again.`) : null,
     cues,
-    h('div', { class: 'w5 side' }, heldSection(st, opts.live), codaSection(st, opts.redraw), flightSection(st)),
+    h('div', { class: 'third side' }, heldSection(st, opts.live), codaSection(st, opts.redraw), flightSection(st)),
     movements,
     rehearsal,
     deck, cost,

@@ -128,6 +128,10 @@
   --staff: color-mix(in srgb, var(--border-strong) 55%, transparent);
   --staff-dim: color-mix(in srgb, var(--border-strong) 28%, transparent);
   --section-gap: var(--space-7);
+  /* The grid: the gap between columns and between rows, and the padding inside a card. */
+  --col-gap: var(--gutter);
+  --row-gap: var(--section-gap);
+  --card-pad: var(--space-5);
 
   /* Elevation: a hairline ring plus a soft drop. 1 for resting cards, 2 for anything over content. The sticky bar is
      translucent material instead of a shadow. */
