@@ -141,7 +141,7 @@ function leaksGate(o: OpenArgs, body: string): void {
   const t = flagIndex(o.pass, '--title');
   const res = leakCheck({ repo: o.repo, base: resolveBase(o.repo, o.base), head: headOf(o) || 'HEAD', title: t >= 0 ? o.pass[t + 1] : '', body, termsRaw: LEAK_TERMS, strict: false });
   if (!leaksReport(res, (s) => console.log(`pr-open: ${s}`), (s) => console.error(`pr-open: ${s}`))) return;
-  console.error('pr-open: refused, the PR adds text that must not be in a public skill (file:line and kind above). Genericise it; a stored name that cannot change goes in the narrow allowlist in pr-leaks.ts, with a reason.');
+  console.error('pr-open: refused, the PR adds text that must not be in a public skill (file:line, or commit:<sha8>, and kind above; a commit message or identity cannot be edited in place, so say so and ask before rewording the commit). Genericise it; a stored name that cannot change goes in the narrow allowlist in pr-leaks.ts, with a reason.');
   process.exit(1);
 }
 
