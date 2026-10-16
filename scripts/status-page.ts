@@ -33,6 +33,8 @@ import { withDevelopTwins } from './lib/status-page/twin.ts';
 import type { RepoFlow } from './lib/status-page/twin.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 import { refreshOthers } from './lib/teammate/others.ts';
+import { draftsPath } from './lib/drafts/queue.ts';
+import { reconcileFailedReviews } from './lib/drafts/reconcile.ts';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 
@@ -113,6 +115,8 @@ export function regenerate(o: RegenerateOptions): GenerateResult {
   if (!o.cachedPrsOnly && !o.dryRun) {
     const others = refreshOthers(o.statusDir, { owners: REVIEW_QUEUE_ORGS, selfRepos: SELF_REVIEW_REPOS, self: GH_LOGIN }, new Date());
     if (others.failure) console.error(`status-page: teammate PR list not refreshed (${others.failure}); the Others' PRs tab keeps the last list`);
+    // A failed review draft whose PR you already reviewed by hand is settled here, on the rebuild's cadence, so reading the queue never calls GitHub. A GitHub failure leaves the draft as it was.
+    try { reconcileFailedReviews(draftsPath(o.ledger, o.project), GH_LOGIN); } catch (e) { console.error(`status-page: failed review drafts not reconciled (${(e as Error).message.split('\n')[0]})`); }
   }
   return result;
 }

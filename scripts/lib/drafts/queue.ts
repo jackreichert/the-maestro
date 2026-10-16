@@ -72,7 +72,9 @@ export type Row =
   | { op: 'posting'; id: string; ts: string; nonce?: string }
   | { op: 'posted'; id: string; ts: string; url?: string }
   | { op: 'post-failed'; id: string; ts: string; error: string }
-  | { op: 'reject'; id: string; ts: string; reason: string };
+  | { op: 'reject'; id: string; ts: string; reason: string }
+  /** A failed review draft whose PR already carries a review you posted by hand after the draft was made (see reconcile.ts). */
+  | { op: 'already-reviewed'; id: string; ts: string; url?: string };
 
 export interface Draft extends NewDraft {
   id: string; state: DraftState; createdAt: string; updatedAt: string;
@@ -94,7 +96,7 @@ export function readRows(file: string): Row[] {
     if (!line.trim()) continue;
     try {
       const r: unknown = JSON.parse(line);
-      if (isObj(r) && typeof r.id === 'string' && typeof r.ts === 'string' && ['add', 'edit', 'approve', 'posting', 'uncertain', 'posted', 'post-failed', 'reject'].includes(String(r.op))) rows.push(r as Row);
+      if (isObj(r) && typeof r.id === 'string' && typeof r.ts === 'string' && ['add', 'edit', 'approve', 'posting', 'uncertain', 'posted', 'post-failed', 'reject', 'already-reviewed'].includes(String(r.op))) rows.push(r as Row);
     } catch { /* a torn line is skipped */ }
   }
   return rows;
@@ -139,6 +141,7 @@ export function fold(rows: readonly Row[]): Draft[] {
     else if (r.op === 'posted' && d.state === 'posting') { d.state = 'posted'; if (r.url) d.postedUrl = r.url; }
     else if (r.op === 'post-failed' && d.state === 'posting') { d.state = 'failed'; d.error = r.error; delete d.postingNonce; }
     else if (r.op === 'reject' && (editable || d.state === 'approved' || d.state === 'uncertain' || (d.state === 'posting' && stuck(d, r.ts)))) { d.state = 'rejected'; d.rejectReason = r.reason; }
+    else if (r.op === 'already-reviewed' && d.state === 'failed' && d.target.kind === 'review') { d.state = 'rejected'; d.rejectReason = `Already reviewed: you posted a review on this PR by hand${typeof r.url === 'string' && r.url.startsWith('https://github.com/') ? ` (${r.url})` : ''}.`; }
     else continue;
     d.updatedAt = r.ts;
   }
