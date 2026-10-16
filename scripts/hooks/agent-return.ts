@@ -9,18 +9,34 @@
  *
  * Fails open and prints nothing to stdout; an error is a stderr line with exit 0. No spawned process, so it stays under 300 ms.
  */
+import { readFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { returnRows } from '../lib/journal/agent-rows.ts';
 import type { LedgerRow } from '../lib/ledger-core.ts';
 import { failOpen, hookWindow, HOOK_MARKS, idSource, readInput, realLedger } from './ledger-hook.ts';
 import type { HookLedger } from './ledger-hook.ts';
 
-export interface AgentStop { session_id?: string; agent_type?: string }
+export interface AgentStop { session_id?: string; agent_type?: string; agent_id?: string; transcript_path?: string; agent_transcript_path?: string }
+
+/**
+ * The tool-use id of the Agent call that started the stopping subagent: the harness writes it into `<session>/subagents/agent-<id>.meta.json`
+ * beside the subagent's transcript. Empty when the stop names no transcript or the file is missing, and the stop is then paired by agent type.
+ */
+export function toolUseIdOf(input: AgentStop): string {
+  try {
+    const transcript = input.agent_transcript_path || (input.transcript_path && input.agent_id && /^[\w-]+$/.test(input.agent_id) ? join(dirname(input.transcript_path), basename(input.transcript_path, '.jsonl'), 'subagents', `agent-${input.agent_id}.jsonl`) : '');
+    if (!transcript.endsWith('.jsonl')) return '';
+    const id = (JSON.parse(readFileSync(transcript.replace(/\.jsonl$/, '.meta.json'), 'utf8')) as { toolUseId?: unknown }).toolUseId;
+    // The id is written into the journal: only the harness's own shape, and bounded.
+    return typeof id === 'string' && /^[\w-]{1,100}$/.test(id) ? id : '';
+  } catch { return ''; }
+}
 
 /** Appends the return rows and returns them; none when this window has no open dispatch. */
 export function agentReturned(input: AgentStop, ledger: HookLedger): LedgerRow[] {
   const rows = ledger.readLedger();
-  const out = returnRows(rows, hookWindow(input.session_id), input.agent_type ?? '', ledger.now(), idSource(rows, ledger.newId), HOOK_MARKS);
+  const out = returnRows(rows, hookWindow(input.session_id), input.agent_type ?? '', ledger.now(), idSource(rows, ledger.newId), HOOK_MARKS, toolUseIdOf(input));
   if (out.length) ledger.append(out);
   return out;
 }

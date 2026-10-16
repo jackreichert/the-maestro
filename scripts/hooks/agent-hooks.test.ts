@@ -10,7 +10,10 @@ import { fold, isInFlight, isQueued } from '../lib/ledger-core.ts';
 import type { LedgerRow } from '../lib/ledger-core.ts';
 import { foldLeases, liveLease } from '../lib/journal/leases.ts';
 import { liveAgent, lapsedRequeues } from '../lib/journal/lease-requeue.ts';
-import { agentReturned } from './agent-return.ts';
+import { agentReturned, toolUseIdOf } from './agent-return.ts';
+import { returnRows } from '../lib/journal/agent-rows.ts';
+import { footerLines, footerRows } from '../lib/journal/board.ts';
+import { footerOneLine } from '../lib/journal/footer-line.ts';
 import { dispatch } from './agent-dispatch.ts';
 import { requeueEnding } from './session-end-requeue.ts';
 import type { HookLedger } from './ledger-hook.ts';
@@ -220,4 +223,92 @@ test('the real dispatch hook ignores a call that carries agent_id: nothing is wr
     assert.equal(r.status, 0, r.stderr);
     assert.equal(existsSync(join(vault, 'Projects', 'hook-proj', 'Journal', 'ledger.jsonl')), false);
   } finally { rmSync(vault, { recursive: true, force: true }); }
+});
+
+const toolCall = (description: string, toolUseId: string, agentType = 'general-purpose') => ({ session_id: SESSION, tool_use_id: toolUseId, tool_input: { description, prompt: 'p', subagent_type: agentType } });
+
+test('a stop that names its Agent call (tool-use id) ends exactly that dispatch, even with two same-type agents on different rows', () => {
+  const led = memory();
+  dispatch(toolCall('Build the widget', 'toolu_A'), led);
+  dispatch(toolCall('Build the gadget', 'toolu_B'), led);
+  const idOf = (text: string) => items(led.rows).find((i) => i.text === text)?.id as string;
+  const out = returnRows(led.rows, WIN, 'general-purpose', led.at, (() => { let n = 100; return () => `r${n++}`; })(), {}, 'toolu_B');
+  led.rows.push(...out);
+  assert.equal(items(led.rows).find((i) => i.id === idOf('Build the gadget'))?.nextStep, 'returned, verify');
+  assert.equal(items(led.rows).find((i) => i.id === idOf('Build the widget'))?.nextStep, 'agent running: Build the widget', 'the other agent is untouched');
+  assert.equal(liveAgent(led.rows, idOf('Build the widget'), led.at), true);
+  assert.equal(liveAgent(led.rows, idOf('Build the gadget'), led.at), false);
+});
+
+test('the stop hook finds the tool-use id in the subagent meta file next to its transcript', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-stop-'));
+  try {
+    const sub = join(dir, 'sess-1', 'subagents');
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, 'agent-x1.meta.json'), JSON.stringify({ toolUseId: 'toolu_B', agentType: 'general-purpose' }));
+    assert.equal(toolUseIdOf({ agent_transcript_path: join(sub, 'agent-x1.jsonl') }), 'toolu_B');
+    assert.equal(toolUseIdOf({ transcript_path: join(dir, 'sess-1.jsonl'), agent_id: 'x1' }), 'toolu_B', 'derived from the session transcript and agent id');
+    assert.equal(toolUseIdOf({ agent_transcript_path: join(sub, 'agent-gone.jsonl') }), '', 'a missing meta file is no id, and the stop falls back to the agent type');
+    assert.equal(toolUseIdOf({}), '');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('with two agents out on one row, the first stop does not mark it returned; the last one does', () => {
+  const led = memory();
+  dispatch(toolCall('Build the widget', 'toolu_A'), led);
+  dispatch(toolCall('Build the widget', 'toolu_B'), led);
+  const id = items(led.rows).find((i) => i.kind === 'wip')?.id as string;
+  agentReturned({ session_id: SESSION, agent_type: 'general-purpose' }, led);
+  assert.notEqual(items(led.rows).find((i) => i.id === id)?.nextStep, 'returned, verify');
+  assert.equal(liveAgent(led.rows, id, led.at), true);
+  agentReturned({ session_id: SESSION, agent_type: 'general-purpose' }, led);
+  assert.equal(items(led.rows).find((i) => i.id === id)?.nextStep, 'returned, verify');
+});
+
+test('the footer counts a returned row as to verify, not in flight, and moves back when it is dispatched again', () => {
+  const led = memory();
+  dispatch(toolCall('Build the widget', 'toolu_A'), led);
+  const inflight = () => items(led.rows).filter(isInFlight);
+  const footer = () => footerRows({ inflight: inflight(), queued: [], blocked: [], awaiting: [], paste: [] }, [])[0];
+  assert.deepEqual([footer().inflight, footer().verify], [1, undefined]);
+  agentReturned({ session_id: SESSION, agent_type: 'general-purpose' }, led);
+  assert.deepEqual([footer().inflight, footer().verify], [0, 1], 'the agent finished: the footer says so without the orchestrator remembering');
+  assert.match(footerLines({ inflight: inflight(), queued: [], blocked: [], awaiting: [], paste: [] }, [])[0], /0 in flight · 1 to verify/);
+  assert.match(footerOneLine({ rows: [footer()], session: { available: false, unavailable: 'x' } }), /0 in flight · 1 to verify/);
+  dispatch(toolCall('Build the widget', 'toolu_C'), led);
+  assert.deepEqual([footer().inflight, footer().verify], [1, undefined], 'a re-dispatch puts it back in flight');
+});
+
+test('an agent whose stop never fired does not keep a row from reading "returned, verify" once its lease has lapsed', () => {
+  const led = memory();
+  dispatch(toolCall('Build the widget', 'toolu_A'), led);
+  led.at = T0 + 60 * 60_000;
+  dispatch(toolCall('Build the widget', 'toolu_B'), led);
+  led.at = T0 + 250 * 60_000;
+  const out = returnRows(led.rows, WIN, 'general-purpose', led.at, (() => { let n = 100; return () => `r${n++}`; })(), {}, 'toolu_B');
+  led.rows.push(...out);
+  assert.equal(items(led.rows).find((i) => i.kind === 'wip')?.nextStep, 'returned, verify', 'the first agent was killed: its dispatch is past its lease and is not "still out"');
+});
+
+test('a row requeued after its hand-back lapsed is no longer "to verify"', () => {
+  const led = memory();
+  dispatch(call('Build the widget'), led);
+  const id = items(led.rows).find((i) => i.kind === 'wip')?.id as string;
+  led.at = T0 + 10 * 60_000;
+  agentReturned({ session_id: SESSION, agent_type: 'general-purpose' }, led);
+  assert.equal(items(led.rows).find((i) => i.id === id)?.nextStep, 'returned, verify');
+  led.rows.push({ id: 'q1', kind: 'queue', queues: id, ts: new Date(led.at + 61 * 60_000).toISOString(), date: '2026-10-15' } as LedgerRow);
+  assert.notEqual(items(led.rows).find((i) => i.id === id)?.nextStep, 'returned, verify');
+});
+
+test('the stop hook ignores an agent_id with path separators and a tool-use id of the wrong shape', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-stop-bad-'));
+  try {
+    const sub = join(dir, 'sess-1', 'subagents');
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, 'agent-x1.meta.json'), JSON.stringify({ toolUseId: 'toolu_B' }));
+    assert.equal(toolUseIdOf({ transcript_path: join(dir, 'sess-1.jsonl'), agent_id: '../sess-1/subagents/agent-x1' }), '');
+    writeFileSync(join(sub, 'agent-x2.meta.json'), JSON.stringify({ toolUseId: 'toolu B\nrow' }));
+    assert.equal(toolUseIdOf({ agent_transcript_path: join(sub, 'agent-x2.jsonl') }), '');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
