@@ -1,7 +1,7 @@
 /**
  * Jira freeze guard: the decision behind scripts/hooks/jira-freeze-guard.ts.
  *
- * A ticket carrying a frozen label (the `next_frozen_labels` setting, e.g. `pilot-hold` in the Arya overlay) must never be
+ * A ticket carrying a frozen label (the `next_frozen_labels` setting, e.g. `pilot-hold` in an org overlay) must never be
  * written to. Reads are never blocked. This repo has no Jira write code of its own: every write is an agent calling an Atlassian MCP
  * tool, so the single door is a PreToolUse hook, and this module is its logic (pure, with the label lookup injected).
  *
