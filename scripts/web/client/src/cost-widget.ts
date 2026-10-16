@@ -89,7 +89,7 @@ export const COST_CSS = `
   .donut .a-opus { stroke: var(--mix-1); } .donut .a-sonnet { stroke: var(--mix-2); } .donut .a-haiku { stroke: var(--mix-3); }
   .donut line.goal { stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
   .donut text { fill: var(--text-primary); font-family: var(--font-display); text-anchor: middle; }
-  .donut .c1 { font-size: 15px; } .donut .c2 { font-size: 9px; fill: var(--text-secondary); font-family: var(--font-body, inherit); }
+  .donut .c1 { font-size: 15px; } .donut .c2 { font-size: 9px; fill: var(--text-secondary); }
   .donut-says { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; font-size: var(--text-sm); color: var(--text-secondary); }
   .donut-says b { color: var(--text-primary); font-weight: var(--weight-medium); }
   .donut-date { margin: 0; font-size: var(--text-xs); color: var(--text-muted); }
