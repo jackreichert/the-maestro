@@ -29,6 +29,11 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .msg.bad { color: var(--critical); }
   .done { color: var(--text-muted); }
   .empty { margin: 0; padding: var(--space-3) 0; color: var(--text-muted); font-size: var(--text-sm); }
+  section.summary { display: grid; gap: var(--space-2); padding: var(--space-3); border: var(--hairline); border-radius: var(--radius-sm); }
+  section.summary dl { margin: 0; display: grid; gap: var(--space-2); }
+  section.summary dt { font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--text-secondary); }
+  section.summary dd { margin: 0; overflow-wrap: anywhere; font-size: var(--text-sm); line-height: var(--leading-md); }
+  section.summary ul, section.summary ol { margin: 0; padding-left: var(--space-5); }
   details.finished { margin-top: var(--space-6); }
   details.finished summary { cursor: pointer; font-size: var(--text-sm); color: var(--text-secondary); }
 `;
@@ -126,6 +131,35 @@ export class DraftQueue extends HTMLElement {
     return cs.length ? h('ul', { class: 'inline', role: 'list', 'aria-label': 'Inline comments' }, ...cs.map((c) => h('li', {}, h('span', { class: 'meta' }, h('code', {}, `${c.path}:${c.line}`), h('span', { class: `chip ${c.severity === 'blocking' ? 'bad' : ''}` }, c.severity === 'blocking' ? 'Blocking' : 'Suggestion')), h('p', { class: 'body' }, c.text)))) : document.createDocumentFragment();
   }
 
+  /**
+   * The review's summary in six parts, always all six: what it does, core logic (links to the lines at the head commit), tests, ticket match,
+   * suggestions (numbered, from the inline comments) and the compliment. A draft made before summaries says so instead of showing nothing.
+   */
+  #summary(d: DraftRow): Node {
+    const r = d.review;
+    if (!r) return document.createDocumentFragment();
+    const c = r.context;
+    const part = (title: string, ...body: Node[]): Node[] => [h('dt', {}, title), h('dd', {}, ...body)];
+    if (!c) return h('section', { class: 'summary', 'aria-label': 'Review summary' }, h('p', { class: 'msg' }, 'No structured summary was recorded for this draft (it was made before summaries). The full text is below.'));
+    const links = c.core.map((k) => { const a = linkAttrs(k.url); const code = h('code', {}, `${k.path}#L${k.start}-L${k.end}`); return h('li', {}, a ? h('a', a, k.label) : document.createTextNode(k.label), ' ', code); });
+    const sugg = r.comments.map((x) => h('li', {}, `${x.severity === 'blocking' ? 'Blocking' : 'Non-blocking'}, `, h('code', {}, `${x.path}:${x.line}`), `: ${x.text.replace(/^(Blocking|Suggestion): /, '').replace(/\s+/g, ' ')}`));
+    return h('section', { class: 'summary', 'aria-label': 'Review summary' }, h('dl', {},
+      ...part('What it does', document.createTextNode(c.summary)),
+      ...part('Core logic', links.length ? h('ul', { role: 'list' }, ...links) : document.createTextNode('No core logic links were recorded.')),
+      ...part('Tests', document.createTextNode(c.tests)),
+      ...part('Ticket match', document.createTextNode(c.ticket)),
+      ...part('Suggestions', sugg.length ? h('ol', {}, ...sugg) : document.createTextNode('None.')),
+      ...part('Compliment', document.createTextNode(r.compliment))));
+  }
+
+  /** The text under the summary: what follows the compliment when the text still carries it (the summary already shows the rest), else all of it. */
+  #tail(d: DraftRow): string {
+    const r = d.review;
+    if (!r?.context) return d.text;
+    const at = d.text.indexOf(r.compliment);
+    return at >= 0 ? d.text.slice(at + r.compliment.length).trim() : d.text;
+  }
+
   #postedLink(d: DraftRow): Node | null {
     const attrs = d.postedUrl ? linkAttrs(d.postedUrl) : null;
     return attrs ? h('a', attrs, 'View on GitHub') : null;
@@ -161,7 +195,8 @@ export class DraftQueue extends HTMLElement {
       body = [h('p', { class: 'body' }, d.text), this.#inline(d), h('label', {}, 'Why? (kept on record; nothing is posted)', input),
         h('div', { class: 'actions' }, btn('secondary', 'Reject', `Confirm reject of comment on ${what}`, () => a?.reject(d.id)), btn('secondary', 'Cancel', 'Cancel reject', () => a?.cancel(d.id)))];
     } else {
-      body = [h('p', { class: 'body' }, d.text), this.#inline(d),
+      const tail = this.#tail(d);
+      body = [this.#summary(d), ...(tail ? [h('p', { class: 'body' }, tail)] : []), this.#inline(d),
         h('div', { class: 'actions' },
           ...(unresolved(d) ? [] : [btn('primary', 'Approve', `Approve and post comment on ${what}`, () => a?.approve(d.id)), ...(d.state === 'approved' ? [] : [btn('secondary', 'Edit', `Edit comment on ${what}`, () => a?.startEdit(d.id))])]),
           btn('secondary', 'Reject', `Reject comment on ${what}`, () => a?.startReject(d.id)))];

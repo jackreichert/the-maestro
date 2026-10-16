@@ -2,7 +2,10 @@
 
 export type DraftSeverity = 'blocking' | 'suggestion' | 'reply' | 'review';
 export type DraftStatus = 'pending' | 'approved' | 'posting' | 'posted' | 'failed' | 'uncertain' | 'rejected';
-export interface ReviewView { event: 'APPROVE' | 'REQUEST_CHANGES'; compliment: string; comments: { path: string; line: number; text: string; severity: 'blocking' | 'suggestion' }[] }
+export interface SummaryCore { label: string; path: string; start: number; end: number; url: string }
+/** The structured summary the server sends for a review draft: plain text parts and the core logic links. */
+export interface SummaryView { summary: string; core: SummaryCore[]; tests: string; ticket: string }
+export interface ReviewView { event: 'APPROVE' | 'REQUEST_CHANGES'; compliment: string; context?: SummaryView; comments: { path: string; line: number; text: string; severity: 'blocking' | 'suggestion' }[] }
 export interface DraftRow {
   rev: string; review?: ReviewView; id: string; source: 'review' | 'reply'; repo: string; pr: number; prUrl: string; severity: DraftSeverity; text: string;
   where?: string; context?: string; replyTo?: string; author?: string; state: DraftStatus; error?: string; postedUrl?: string; rejectReason?: string; createdAt: string;
@@ -14,9 +17,15 @@ const str = (v: unknown, max = 5000): v is string => typeof v === 'string' && v.
 const opt = (v: unknown, max?: number): boolean => v === undefined || str(v, max);
 const STATES = ['pending', 'approved', 'posting', 'posted', 'failed', 'uncertain', 'rejected'];
 
+function summary(x: unknown): boolean {
+  if (x === undefined) return true;
+  return isObj(x) && str(x.summary, 1500) && str(x.tests, 1500) && str(x.ticket, 2500) && Array.isArray(x.core) && x.core.length <= 10
+    && x.core.every((k) => isObj(k) && str(k.label, 200) && str(k.path, 400) && Number.isSafeInteger(k.start) && Number.isSafeInteger(k.end) && str(k.url, 800));
+}
+
 function review(x: unknown): boolean {
   if (x === undefined) return true;
-  return isObj(x) && (x.event === 'APPROVE' || x.event === 'REQUEST_CHANGES') && str(x.compliment, 600) && Array.isArray(x.comments) && x.comments.length <= 30
+  return isObj(x) && (x.event === 'APPROVE' || x.event === 'REQUEST_CHANGES') && str(x.compliment, 600) && summary(x.context) && Array.isArray(x.comments) && x.comments.length <= 30
     && x.comments.every((c) => isObj(c) && str(c.path, 400) && Number.isSafeInteger(c.line) && str(c.text) && (c.severity === 'blocking' || c.severity === 'suggestion'));
 }
 

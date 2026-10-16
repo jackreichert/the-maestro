@@ -221,7 +221,7 @@ export class OthersPrs extends HTMLElement {
     const rv = REVIEW[p.review];
     const draftChip = open.length
       ? h('span', { class: 'chip good' }, h('span', { 'aria-hidden': 'true' }, '> '), `Draft ready${open.length > 1 ? ` (${open.length})` : ''}`)
-      : h('span', { class: 'chip' }, 'No draft yet');
+      : h('span', { class: 'chip' }, 'No review yet');
     const asked = p.askedAt ? agoHours(p.askedAt, this.#now) : '';
     const updated = agoHours(p.updatedAt, this.#now);
     const opened = p.openedAt ? agoHours(p.openedAt, this.#now) : '';

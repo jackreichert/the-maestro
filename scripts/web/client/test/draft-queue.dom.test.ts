@@ -148,3 +148,39 @@ test('a plain approving review with no inline comments still shows Approve, Edit
   assert.deepEqual([...root.querySelectorAll('button')].map((b) => b.textContent), ['Approve', 'Edit', 'Reject']);
   cleanup();
 });
+
+const HEAD = 'a'.repeat(40);
+const summarised = (over: Partial<DraftRow> = {}): DraftRow => row({
+  severity: 'review', where: undefined, context: undefined, text: 'LEAD\n\nThe ID validation before anything goes into a URL is careful.\n\nApproving. Resolve them however you think best.',
+  review: {
+    event: 'APPROVE', compliment: 'The ID validation before anything goes into a URL is careful.',
+    context: { summary: 'Shows the named sender on each delivery row.', tests: '4 tests added or changed. Ran: npm test, 4 passing. Only mocked or checked by hand: the lookup is mocked.', ticket: 'WID-9: partly matches. Missing from the PR: - empty state',
+      core: [{ label: 'Rows join the sender', path: 'src/a.ts', start: 10, end: 12, url: `https://github.com/acme/widgets/blob/${HEAD}/src/a.ts#L10-L12` }] },
+    comments: [{ path: 'src/a.ts', line: 11, text: 'Suggestion: Could the join limit after the lateral?', severity: 'suggestion' }],
+  }, ...over });
+
+test('a review draft shows its six-part summary above the buttons, with the core logic link clickable', async () => {
+  const { root, cleanup } = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([summarised()]), actions: noop, sources: ['review'] });
+  const sec = root.querySelector('section.summary') as HTMLElement;
+  assert.deepEqual([...sec.querySelectorAll('dt')].map((x) => x.textContent), ['What it does', 'Core logic', 'Tests', 'Ticket match', 'Suggestions', 'Compliment']);
+  const a = sec.querySelector('a') as HTMLAnchorElement;
+  assert.equal(a.getAttribute('href'), `https://github.com/acme/widgets/blob/${HEAD}/src/a.ts#L10-L12`);
+  assert.equal(a.textContent, 'Rows join the sender');
+  assert.match(sec.textContent ?? '', /Only mocked or checked by hand: the lookup is mocked/);
+  assert.equal(sec.querySelector('ol li')?.textContent, 'Non-blocking, src/a.ts:11: Could the join limit after the lateral?');
+  const li = root.querySelector('li.draft') as HTMLElement;
+  const kids = [...li.children].map((c) => c.tagName + (c.className ? `.${c.className}` : ''));
+  assert.ok(kids.indexOf('SECTION.summary') < kids.findIndex((k) => k.startsWith('DIV.actions')), 'summary sits above the buttons');
+  assert.ok(!(li.querySelector('p.body')?.textContent ?? '').includes('LEAD'), 'the body shows only what follows the compliment, not the summary twice');
+  assert.deepEqual([...root.querySelectorAll('button')].map((b) => b.textContent), ['Approve', 'Edit', 'Reject']);
+  cleanup();
+});
+
+test('a review draft made before summaries still renders, and says no summary was recorded', async () => {
+  const old = row({ severity: 'review', where: undefined, context: undefined, text: 'A careful compliment that names the thing.\n\nNothing here blocks.', review: { event: 'APPROVE', compliment: 'A careful compliment that names the thing.', comments: [] } });
+  const { root, cleanup } = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([old]), actions: noop, sources: ['review'] });
+  assert.match(root.querySelector('section.summary')?.textContent ?? '', /No structured summary was recorded/);
+  assert.match(root.textContent ?? '', /Nothing here blocks/);
+  assert.deepEqual([...root.querySelectorAll('button')].map((b) => b.textContent), ['Approve', 'Edit', 'Reject']);
+  cleanup();
+});

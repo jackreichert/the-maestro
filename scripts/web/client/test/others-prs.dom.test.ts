@@ -21,7 +21,7 @@ test('one row per PR, linked as repo#number with title, author, base, age, revie
   const rows = [...root.querySelectorAll('li.pr')];
   assert.equal(rows.length, 2);
   const first = rows[0]?.textContent ?? '';
-  for (const re of [/acme\/app#1/, /Title 1/, /by pat-fake/, /Into develop/, /Updated 1 h ago/, /Open 3 d/, /You are a requested reviewer/, /Changes requested/, /Copilot threads open: 2/, /Threads open: 3/, /No draft yet/]) assert.match(first, re);
+  for (const re of [/acme\/app#1/, /Title 1/, /by pat-fake/, /Into develop/, /Updated 1 h ago/, /Open 3 d/, /You are a requested reviewer/, /Changes requested/, /Copilot threads open: 2/, /Threads open: 3/, /No review yet/]) assert.match(first, re);
   assert.match(rows[1]?.textContent ?? '', /You are not a requested reviewer/);
   assert.match(rows[1]?.textContent ?? '', /Approved/);
   assert.equal(root.querySelector('li.pr h3 a')?.getAttribute('href'), 'https://github.com/acme/app/pull/1');
@@ -37,7 +37,7 @@ test('a PR with a waiting draft says "Draft ready" and shows the existing queue 
   const a = root.querySelector('li.pr');
   assert.match(a?.textContent ?? '', /Draft ready/);
   assert.equal(a?.querySelector('.queue')?.textContent, 'acme/app#1 by pat-fake');
-  assert.match(b?.textContent ?? '', /No draft yet/);
+  assert.match(b?.textContent ?? '', /No review yet/);
   assert.equal(b?.querySelector('.queue'), null);
   cleanup();
 });
