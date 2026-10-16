@@ -1,10 +1,11 @@
 import { BASE_CSS, UI_CSS, h, shadow } from './dom.ts';
+import { TACET_CSS, tacet } from './score.ts';
 import { createRunApi } from './run-api.ts';
 import type { ArgSpec, CatalogView, RunApi, RunSource, ScriptInfo } from './run-api.ts';
 import './run-panel.ts';
 import './script-queue.ts';
 
-const CSS = `${BASE_CSS}${UI_CSS}
+const CSS = `${BASE_CSS}${UI_CSS}${TACET_CSS}
   :host { display: block; }
   section.group { margin-block: var(--space-5); }
   h3.group-name { font-size: var(--text-sm); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 0 0 var(--space-2); }
@@ -73,7 +74,7 @@ export class ScriptsViewElement extends HTMLElement {
       h('h3', { class: 'catalog-title' }, 'Podium catalog'),
       h('p', { class: 'note' }, 'Scripts the Podium may run on this computer. Review shows the exact command; nothing runs until you press Run. Arguments are checked against each script\'s schema and are never passed through a shell.'),
       ...groups.map((g) => h('section', { class: 'group', 'aria-label': g }, h('h3', { class: 'group-name' }, g), ...scripts.filter((s) => s.group === g).map((s) => this.#card(s)))),
-      ...(scripts.length === 0 ? [h('p', { class: 'note' }, 'The catalog has no scripts.')] : []),
+      ...(scripts.length === 0 ? [tacet('The catalog has no scripts.', 'tacet')] : []),
       ...(problems.length ? [h('ul', { class: 'problems', 'aria-label': 'Entries that did not load' }, ...problems.map((p) => h('li', {}, `Not loaded: ${p}`)))] : []));
   }
 

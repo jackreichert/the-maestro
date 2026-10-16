@@ -85,6 +85,7 @@ test('the freshness line says when the PR data was read, and flags stale data an
 test('empty, loading and unavailable are each said in words', async () => {
   const empty = await mount<El>('../src/open-prs.ts', 'open-prs', { model: model({ data: data({ total: 0, groups: [] }) }) });
   assert.match(text(empty.root), /No open PRs\./);
+  assert.ok(empty.root.querySelector('p.tacet svg'), 'the empty state is the score\'s rest and its word');
   empty.cleanup();
   const loading = await mount<El>('../src/open-prs.ts', 'open-prs', { model: model({ data: null, loaded: false }) });
   assert.match(text(loading.root), /Loading PR data/);
@@ -244,4 +245,16 @@ test('a pair never reads ready while its staging side needs fixing, and every co
   assert.equal(root.querySelector('section#orchestra .n')?.textContent, '2');
   assert.equal(root.querySelector('section#ready .n')?.textContent, '0');
   cleanup();
+});
+
+test('each band is named by an instrument in the display italic, hidden from assistive technology, over its plain heading', async () => {
+  const view = await mount<El>('../src/open-prs.ts', 'open-prs', { model: model({ data: data() }) });
+  const bands = [...view.root.querySelectorAll('section.band')];
+  assert.ok(bands.length >= 4);
+  for (const b of bands) {
+    const inst = b.querySelector('.band-head .instrument');
+    assert.ok(inst && inst.getAttribute('aria-hidden') === 'true' && (inst.textContent ?? '').length > 0);
+    assert.ok(b.querySelector('.band-head h2'), 'the plain heading still names the band');
+  }
+  view.cleanup();
 });
