@@ -20,7 +20,7 @@ Write a details file (in the scripts shelf `scratch/briefs/`) with what the stal
 - what it was stuck on, and what it tried that did not work, so the new agent does not repeat it;
 - the next concrete step, and the command that checks it.
 
-Take it from the worktree and the agent's last output, not from memory. Never paste secrets or personal data. Release the old grant, then brief again with the file:
+Take it from the worktree and the agent's last output, not from memory. Never paste secrets or personal data. Carry the original plan's Invariants, Prior art and Prep refactor sections forward into it, because `brief` refuses a writer brief without them. Release the old grant, then brief again with the file:
 
 ```bash
 node scripts/journal.ts release <repo> --desk <stream> --worktree <worktree name>

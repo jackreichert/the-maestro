@@ -39,7 +39,7 @@ A reviewer's brief carries four rules that the "concrete failure only" filter wo
 A build brief (a writer brief) carries a plan in its details file, with three parts. `journal.ts brief` refuses a writer brief whose details lack any of them, writing nothing and taking no claim; the escape hatch is `--one-point`, below.
 
 1. **Invariants.** What must be true when the work is done, derived from first principles (what the system has to guarantee), not from the diff you expect to write. Each one is checkable.
-2. **Prior art.** What was read before deciding: in this repo, in sibling implementations (for example the other EMR adapters) and in core packages (for example `@arya/core`). One line per thing read, each ending in **reuse** or **why not**. "None" is not an answer: if nothing was read, go and read.
+2. **Prior art.** What was read before deciding: in this repo, in sibling implementations (for example the other adapters of the same kind) and in shared core packages. One line per thing read, each ending in **reuse** or **why not**. "None" is not an answer: if nothing was read, go and read.
 3. **Prep refactor.** `none`, or a preparatory refactor that lands as its own first commit or ticket. The line comes from running the `mithril-smells` agent read-only over the files the plan touches; the planner reads its output, not the smells or refactor skill texts, so those stay out of the planner's context.
 
 ```markdown

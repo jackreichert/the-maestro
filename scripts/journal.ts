@@ -2422,7 +2422,8 @@ function cmdBrief(): void {
     if (detailsFile) { try { details = readFileSync(resolve(detailsFile), 'utf8'); } catch (e) { die(`--details-file ${detailsFile} could not be read: ${errorMessage(e)}`); } }
 
     // A writer brief is a build brief: its plan carries invariants, prior art and a prep-refactor line, or it is a declared 1-point, one-file change.
-    if (writer && !has('one-point')) {
+    const onePoint = writer && has('one-point');
+    if (writer && !onePoint) {
         const missing = planSectionProblems(details);
         if (missing.length) die(`No brief was written: a build brief's details (--details-file) need ${PLAN_SECTIONS.map((n) => `"${n}"`).join(', ')} (see reference/brief.md#the-build-plan); ${missing.join('; ')}. A 1-point, one-file change passes --one-point instead.`);
     }
@@ -2430,7 +2431,7 @@ function cmdBrief(): void {
     const outDir = resolve(arg('out-dir') || (SCRIPTS_SHELF_DIR ? join(SCRIPTS_SHELF_DIR, 'scratch', 'briefs') : join(vault, 'Projects', project, 'Dispatch')));
     const paths = briefPaths(outDir, target.id as string, writer);
     const workingDir = repo && CONTAINER_ROOT ? join(CONTAINER_ROOT, repo) : undefined;
-    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library, standing: block.stdout, details, doneWhen: arg('done-when') || undefined, onePoint: has('one-point'), writer, reportPath: paths.report, journal: `node ${join(scripts, 'journal.ts')} --project ${project}` });
+    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library, standing: block.stdout, details, doneWhen: arg('done-when') || undefined, onePoint, writer, reportPath: paths.report, journal: `node ${join(scripts, 'journal.ts')} --project ${project}` });
     const why = `brief ${target.id}`;
     const holder = writer ? (arg('as') || desk) : undefined;
     const pid = arg('pid') ? Number(arg('pid')) : null;

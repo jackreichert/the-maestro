@@ -579,3 +579,12 @@ test('planSectionProblems: heading and bold-label forms pass; empty, placeholder
     assert.match(planSectionProblems('## Invariants\nok\n## Prior art\nread x\n## Prep refactor\n\n## Scope\nfoo').join(), /"Prep refactor" is empty/);
     assert.deepEqual(planSectionProblems('The prior art of this is old.\nInvariants are good.').length, 3, 'prose mentioning a label is not a section');
 });
+
+test('planSectionProblems: the docs template unfilled, empty headings, bullet placeholders and CRLF', () => {
+    const template = readFileSync(new URL('../reference/brief.md', import.meta.url).pathname, 'utf8').split('```markdown\n')[1]!.split('```')[0]!;
+    assert.equal(planSectionProblems(template).length, 3, 'the template as shipped is refused');
+    assert.equal(planSectionProblems('## Invariants (must hold)\n\n## Prior art (read)\n\n## Prep refactor (none?)\n').length, 3, 'heading text is not a value');
+    assert.match(planSectionProblems('## Invariants\n- TBD\n## Prior art\n- TODO.\n## Prep refactor\n— \n').join(), /"Invariants" is empty.*"Prior art" is empty.*"Prep refactor" is empty/);
+    assert.match(planSectionProblems('## Invariants\nok\n## Prior art\n- none found\n## Prep refactor\nnone').join(), /says nothing was read/);
+    assert.deepEqual(planSectionProblems(PLAN.replace(/\n/g, '\r\n')), [], 'CRLF files pass');
+});
