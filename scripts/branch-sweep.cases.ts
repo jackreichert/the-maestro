@@ -11,7 +11,7 @@ import { join } from 'node:path';
 process.env.MAESTRO_LOCAL_CONFIG = '';
 process.env.MAESTRO_LAUNCH_AGENTS_DIR = mkdtempSync(join(tmpdir(), 'agents-')); // and never the real launchd plist
 const SCRIPT = new URL('./branch-sweep.ts', import.meta.url).pathname;
-import { liveClaims } from './branch-sweep.ts';
+import { liveClaims, mergedPrsParallel } from './branch-sweep.ts';
 import type { CmdResult, ExcludedItem, Git, GhJson, ListedItem, PrInfo, SweepContext } from './branch-sweep.ts';
 const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts, isEnvFile } = await import('./branch-sweep.ts');
 
@@ -564,7 +564,9 @@ test('a PR merged before the look-back window reads as not merged; prDays widens
 test('one failed window fails the whole PR lookup closed', () => {
     const w = world(); feature(w, 'feat/sq'); mergeInto(w, 'develop', 'feat/sq', true);
     let n = 0;
-    const r = scanRepo(w.repo, ctxFor({ gh: () => (++n === 3 ? null : []) }));
+    // the first page is full, so the lookup splits the window; the second call fails
+    const full = Array.from({ length: 1000 }, (_, i) => ({ number: i, mergedAt: daysAgo(1), headRefName: `x/${i}`, baseRefName: 'develop', headRefOid: 'f'.repeat(40), url: 'u', body: '' }));
+    const r = scanRepo(w.repo, ctxFor({ gh: () => (++n === 2 ? null : n === 1 ? full : []) }));
     assert.deepEqual(r.items, []);
     assert.match(r.notes.join('\n'), /gh pr list failed/);
 });
@@ -1028,4 +1030,61 @@ test('liveClaims counts a scoped claim file (<repo>@<scope>.lock) as a claim on 
     const claims = liveClaims(dir);
     assert.equal(claims.get('proj')?.desk, 'Launch');
     assert.equal(claims.get('proj@wt-a')?.desk, 'Launch');
+});
+
+test('a branch whose tip is a colleague\'s commit is skipped before any ownership check, and is never listed', () => {
+    const w = world(); feature(w, 'feat/theirs', { email: COLLEAGUE }); mergeInto(w, 'develop', 'feat/theirs'); feature(w, 'feat/mine'); mergeInto(w, 'develop', 'feat/mine');
+    const logged: string[] = [];
+    const gitFor = (repo: string): Git => Object.assign((...a: string[]): CmdResult => {
+        if (a[0] === 'log') logged.push(a.join(' '));
+        const r = spawnSync('git', ['--no-optional-locks', '-C', repo, ...a], { encoding: 'utf8' });
+        return { ok: r.status === 0, status: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
+    }, { repo });
+    const r = scanRepo(w.repo, ctxFor({ gitFor, fetch: false }));
+    assert.deepEqual(names(r, 'remote-branch'), ['feat/mine']);
+    assert.equal(logged.filter((l) => l.includes('feat/theirs')).length, 0, 'no per-commit walk for a foreign branch');
+});
+
+test('slices of a repo concatenate to the unsliced scan, and only the last slice scans worktrees', () => {
+    const w = world();
+    for (const b of ['feat/a', 'feat/b', 'feat/c', 'feat/d', 'feat/e']) { feature(w, b); mergeInto(w, 'develop', b); }
+    sh(w.repo, 'worktree', 'add', '-q', '-b', 'feat/wt', join(w.root, 'wt'), 'origin/main');
+    const whole = scanRepo(w.repo, ctxFor({ fetch: false, twin: [] }));
+    const parts = [0, 1, 2].map((index) => scanRepo(w.repo, ctxFor({ fetch: false, twin: [], shard: { index, count: 3 } })));
+    assert.deepEqual(parts.flatMap((p) => p.items), whole.items);
+    assert.deepEqual(parts.flatMap((p) => p.excluded), whole.excluded);
+    assert.ok(whole.items.filter((i) => i.kind === 'remote-branch').length >= 5);
+    assert.deepEqual(parts.slice(0, 2).flatMap((p) => p.excluded), [], 'worktrees are only in the last slice');
+});
+
+test('CLI: a parallel listing of several repos is the serial listing', () => {
+    const w = world('one'); feature(w, 'feat/one'); mergeInto(w, 'develop', 'feat/one');
+    const two = join(w.container, 'two'); sh(w.root, 'clone', '-q', w.origin, two);
+    for (const [k, v] of [['user.email', ME], ['user.name', 'T']]) sh(two, 'config', k, v);
+    const env = { PATH: process.env.PATH, HOME: w.root, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GIT_EMAILS: ME, MAESTRO_GH: '/nonexistent/gh', MAESTRO_SWEEP_IDLE_MINUTES: '1' };
+    const list = (jobs: string) => { const r = spawnSync(process.execPath, [SCRIPT, '--container', w.container, '--json', '--jobs', jobs], { encoding: 'utf8', env }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout) as { items: { repo: string }[] }; };
+    const serial = list('1'); const parallel = list('4');
+    assert.deepEqual(parallel, serial);
+    assert.deepEqual(parallel.items.map((i) => i.repo), ['one', 'two'], 'both repos, in repo order');
+});
+
+test('the PR list fetched in parallel fortnights is the one a serial scan reads, split on a full page too', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghstub-'));
+    const prs = Array.from({ length: 1200 }, (_, i) => ({ number: i + 1, mergedAt: daysAgo(i % 3), headRefName: `x/${i}`, baseRefName: 'develop', headRefOid: 'a'.repeat(40), url: 'u', body: '' }));
+    writeFileSync(join(dir, 'prs.json'), JSON.stringify(prs));
+    const stub = writeStub(join(dir, 'gh.mjs'), `#!${process.execPath}
+import { readFileSync } from 'node:fs';
+const a = process.argv.slice(2); const [lo, hi] = a[a.indexOf('--search') + 1].replace('merged:', '').split('..');
+const all = JSON.parse(readFileSync(${JSON.stringify(join(dir, 'prs.json'))}, 'utf8'));
+console.log(JSON.stringify(all.filter((p) => p.mergedAt.slice(0, 10) >= lo && p.mergedAt.slice(0, 10) <= hi).slice(0, 1000)));
+`);
+    const names_ = ['MAESTRO_GH', 'MAESTRO_GH_BIN', 'MAESTRO_GH_BIN_ARGS'];
+    const saved = names_.map((n) => process.env[n]);
+    delete process.env.MAESTRO_GH; Object.assign(process.env, stubEnv('MAESTRO_GH_BIN', stub));
+    try {
+        const got = await mergedPrsParallel(dir, 30);
+        assert.deepEqual(got.map((p) => p.number).sort((a, b) => a - b), prs.map((p) => p.number), 'every PR, though a day holds more than one page');
+        process.env.MAESTRO_GH = 'false'; delete process.env.MAESTRO_GH_BIN;
+        await assert.rejects(mergedPrsParallel(dir, 30), /gh pr list failed/);
+    } finally { names_.forEach((n, i) => { if (saved[i] === undefined) delete process.env[n]; else process.env[n] = saved[i]; }); }
 });

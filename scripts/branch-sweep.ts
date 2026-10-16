@@ -31,10 +31,10 @@
  * are untouched; they keep the listing and `--apply --ids` flow.
  * The `gh` binary is `MAESTRO_GH` if set. Settings: local-config.ts and reference/local-config.md.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { homedir, hostname } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { availableParallelism, homedir, hostname, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -60,17 +60,19 @@ export interface PrInfo {
 export type GhJson = (repo: string, args: string[]) => unknown;
 /** A claim file under Claims/<repo>.lock or Claims/<repo>@<scope>.lock. */
 export interface Claim { time?: string; pid?: number; host?: string; desk?: string }
+/** One slice of a repo's branches: the `index`th of `count` contiguous chunks. The last slice also scans the worktrees, so the slices concatenate to the whole scan in its serial order. */
+export interface Shard { index: number; count: number }
 /** Everything a scan reads besides the repo itself: settings, claims, the gh runner, and caches. */
 export interface SweepContext {
   emails: string[]; protectedNames: string[]; twin: string[]; targets: Record<string, string[]>; idleMinutes: number; prDays: number;
   protectDirs: string[]; disposableIgnored: string[]; claims: Map<string, Claim>; gh: GhJson; ghLogin: string; fetch: boolean;
-  claimsDir?: string; gitFor?: (repo: string) => Git; worktreesOnly?: boolean; prCache?: Map<string, PrInfo[]>;
+  claimsDir?: string; gitFor?: (repo: string) => Git; worktreesOnly?: boolean; shard?: Shard; prCache?: Map<string, PrInfo[]>;
   /** The env store root (env_store_root). An env file that is a symlink into it does not keep a worktree. */
   envStoreRoot?: string;
   /** Extra paths that are in use (tests); the cwd, the running script and the loop runtime are always added. */
   inUse?: string[];
 }
-interface Scan { ctx: SweepContext; protectedRefs: string[]; mainline: Set<string> }
+interface Scan { ctx: SweepContext; protectedRefs: string[]; mainline: Set<string>; tips?: Map<string, TipInfo>; reach?: Map<string, Set<string>> }
 export interface Evidence { how: string; url?: string }
 export interface MergedEvidence { state: 'ok' | 'review' | 'no'; per: (Evidence & { target: string })[]; weak: string[]; missing: string[] }
 interface Commit { sha: string; email: string }
@@ -172,10 +174,23 @@ function isAncestor(g: Git, a: string, b: string): boolean {
 }
 
 /** Commits on the first-parent line of every protected ref: the mainline, which no branch owns. */
-const mainlineOf = (g: Git, protectedRefs: string[]): Set<string> => new Set(protectedRefs.flatMap((p) => must(g, 'rev-list', '--first-parent', p).split('\n').filter(Boolean)));
+const mainlineOf = (g: Git, protectedRefs: string[]): Set<string> => new Set(protectedRefs.length ? must(g, 'rev-list', '--first-parent', ...protectedRefs).split('\n').filter(Boolean) : []); // one call: a set of tips lists the union of their lines
 
 /** The origin refs (as `origin/<name>`) that contain `commit`, in one call. Full ref names are listed, so an ambiguous short name cannot misreport. */
 const containing = (g: Git, commit: string): Set<string> => new Set(must(g, 'for-each-ref', '--contains', commit, '--format=%(refname)', 'refs/remotes/origin').split('\n').filter(Boolean).map((f) => f.replace(/^refs\/remotes\//, '')));
+
+/**
+ * The protected refs (of `scan.protectedRefs`, as `origin/<name>`) that contain `ref`. Each protected ref's history is listed once
+ * per scan (`rev-list`), so each branch is one set lookup instead of a `for-each-ref --contains` walk over every origin ref, which
+ * is the cost that grows with both the branch count and the history. A ref that does not resolve to a commit falls back to `containing`.
+ */
+function protectedContaining(g: Git, ref: string, scan: Scan): Set<string> {
+  const tip = scan.tips?.get(ref)?.tip ?? (/^[0-9a-f]{40}$/.test(ref) ? ref : g('rev-parse', '--verify', '-q', `${ref}^{commit}`).out);
+  if (!tip) return containing(g, ref);
+  scan.reach ??= new Map();
+  for (const p of scan.protectedRefs) if (!scan.reach.has(p)) scan.reach.set(p, new Set(must(g, 'rev-list', p).split('\n').filter(Boolean)));
+  return new Set(scan.protectedRefs.filter((p) => (scan.reach as Map<string, Set<string>>).get(p)?.has(tip)));
+}
 
 /**
  * For each protected ref in `tips` that already contains `ref`: the mainline commit just before the OLDEST first-parent merge that brought `ref` in (a merge, not
@@ -206,7 +221,7 @@ function forkPoints(g: Git, ref: string, tips: string[]): string[] {
  */
 function ownCommits(g: Git, ref: string, scan: Scan): Commit[] {
   const { protectedRefs, mainline } = scan;
-  const has = containing(g, ref);
+  const has = protectedContaining(g, ref, scan);
   const outside = protectedRefs.filter((p) => !has.has(p));
   const not = [...outside, ...forkPoints(g, ref, protectedRefs.filter((p) => has.has(p)))];
   const log = must(g, 'log', '--no-merges', '--format=%H %ae', ref, ...(not.length ? ['--not', ...not] : []));
@@ -225,7 +240,13 @@ const OWNERSHIP_RULES: Rule<[OwnCtx], boolean>[] = [
 ];
 
 /** The user's author emails: the configured list, else the repo's own user.email. */
-const emailsFor = (g: Git, ctx: SweepContext): string[] => (ctx.emails.length ? ctx.emails : [g('config', 'user.email').out]).filter(Boolean);
+const emailCache = new WeakMap<Git, string[]>();
+const emailsFor = (g: Git, ctx: SweepContext): string[] => {
+  if (ctx.emails.length) return ctx.emails;
+  let e = emailCache.get(g);
+  if (!e) { e = [g('config', 'user.email').out].filter(Boolean); emailCache.set(g, e); }
+  return e;
+};
 
 function isMine(g: Git, ref: string, branch: string, tip: string, scan: Scan): { ok: boolean; reason?: string } {
   const { ctx } = scan;
@@ -249,8 +270,9 @@ function mergedWindow(repo: string, ctx: SweepContext, from: number, to: number)
 }
 
 /**
- * Merged PRs of a repo merged in the last `ctx.prDays` days (default 180), fetched once per scan in 14-day windows
- * (a plain `gh pr list --limit` is capped and sorted by creation, so it silently drops merged PRs). An older PR just
+ * Merged PRs of a repo merged in the last `ctx.prDays` days (default 180), fetched once per scan as one search that
+ * `mergedWindow` splits only when a page comes back full (a plain `gh pr list --limit` is capped and sorted by creation,
+ * so it silently drops merged PRs). One call for a normal repo, not one per fortnight. An older PR just
  * reads as not merged. A failed call throws.
  */
 function mergedPrs(repo: string, ctx: SweepContext): PrInfo[] {
@@ -258,9 +280,7 @@ function mergedPrs(repo: string, ctx: SweepContext): PrInfo[] {
   if (!ctx.prCache.has(repo)) {
     const end = Date.parse(day(Date.now())); const start = end - (ctx.prDays ?? 180) * 864e5;
     const byNumber = new Map<number, PrInfo>();
-    for (let from = start; from <= end; from += 14 * 864e5) {
-      for (const p of mergedWindow(repo, ctx, from, Math.min(from + 13 * 864e5, end))) byNumber.set(p.number, p);
-    }
+    for (const p of mergedWindow(repo, ctx, start, end)) byNumber.set(p.number, p);
     ctx.prCache.set(repo, [...byNumber.values()]);
   }
   return ctx.prCache.get(repo) as PrInfo[];
@@ -478,12 +498,30 @@ function protection(g: Git, ctx: SweepContext, targets: string[]): { isProtected
   return { isProtected, refs, protectedRefs };
 }
 
+/** What one listing of the origin refs says about each: its tip, and whether the tip is a plain commit by someone else. */
+interface TipInfo { tip: string; foreignTip: boolean }
+/**
+ * Every origin ref's tip, from one call, so a scan does not run `rev-parse` once per branch. `foreignTip` marks a ref whose tip is
+ * a non-merge commit by an author who is not the user and is not on the mainline: that commit is then one of the branch's own
+ * commits (nothing subtracts it: no protected ref lacking the branch reaches it, and the fork points sit before the first merge
+ * that brought the branch in), so `every own commit is the user's` fails and the branch can never be the user's. A scan of a
+ * repo with a thousand foreign branches skips four git calls for each of them.
+ */
+function tipsOf(g: Git, emails: string[], mainline: Set<string>): Map<string, TipInfo> {
+  const rows = must(g, 'for-each-ref', '--format=%(refname)%09%(objectname)%09%(authoremail)%09%(parent)', 'refs/remotes/origin').split('\n').filter(Boolean);
+  return new Map(rows.map((l) => {
+    const [ref, tip, email, parents] = l.split('\t');
+    const foreignTip = emails.length > 0 && !emails.includes(email.replace(/^<|>$/g, '')) && !(parents ?? '').includes(' ') && !mainline.has(tip);
+    return [ref, { tip, foreignTip }];
+  }));
+}
+
 /** One branch judged: { tip, mine, reason, ev, error }. Evidence is only sought for a branch that is the user's. */
 interface Assessment { tip: string | null; mine: boolean; reason: string; ev: MergedEvidence | null; error: Failure | null }
 function assess(g: Git, ref: string, branch: string, targets: string[], scan: Scan): Assessment {
   const a: Assessment = { tip: null, mine: false, reason: '', ev: null, error: null };
   try {
-    a.tip = must(g, 'rev-parse', ref);
+    a.tip = scan.tips?.get(ref)?.tip ?? must(g, 'rev-parse', ref);
     const own = isMine(g, ref, branch, a.tip, scan);
     a.mine = own.ok; a.reason = own.reason || '';
   } catch (e) { a.error = errorOf(e); return a; }
@@ -513,19 +551,22 @@ export function scanRepo(repoPath: string, ctx: SweepContext): RepoScan {
   try {
     const prot = protection(g, ctx, targets);
     ({ isProtected, refs } = prot);
-    scan = { ctx, protectedRefs: prot.protectedRefs, mainline: mainlineOf(g, prot.protectedRefs) };
+    const mainline = mainlineOf(g, prot.protectedRefs);
+    scan = { ctx, protectedRefs: prot.protectedRefs, mainline, tips: tipsOf(g, emailsFor(g, ctx), mainline) };
     wts = worktrees(g);
   } catch (e) { res.notes.push(`scan stopped: ${errorOf(e).message}`); res.stopped = true; return res; }
 
-  for (const full of ctx.worktreesOnly ? [] : refs) {
+  const candidates = refs.filter((full) => full !== 'refs/remotes/origin/HEAD' && !isProtected(full.slice('refs/remotes/origin/'.length)) && !scan.tips?.get(full)?.foreignTip); // a foreign tip is never listed (see tipsOf)
+  const { shard } = ctx;
+  const mine = shard ? candidates.slice(Math.ceil(candidates.length * shard.index / shard.count), Math.ceil(candidates.length * (shard.index + 1) / shard.count)) : candidates;
+  for (const full of ctx.worktreesOnly ? [] : mine) {
     const branch = full.slice('refs/remotes/origin/'.length);
-    if (full === 'refs/remotes/origin/HEAD' || isProtected(branch)) continue;
     const a = assess(g, full, branch, targets, scan);
     if (a.error) { noteError(res, a.error, `branch ${branch}`); continue; }
     if (!a.ev || a.ev.state === 'no') continue;
     (a.ev.state === 'ok' ? res.items : res.review).push({ id: idOf(name, 'remote-branch', branch, a.tip as string), repo: name, kind: 'remote-branch', name: branch, tip: a.tip as string, why: why(a.ev), prs: links(a.ev) });
   }
-  for (const w of wts) {
+  for (const w of shard && shard.index < shard.count - 1 ? [] : wts) {
     if (w.detached) scanDetached({ g, w, name, scan, live, res });
     else if (!isProtected(w.branch as string)) scanWorktree({ g, w, name, targets, scan, live, res });
   }
@@ -831,12 +872,107 @@ function table(rows: ListedItem[]): string {
   return [head, ...body].map((r) => r.map((c, i) => c.padEnd(w[i])).join(' | ').trimEnd()).join('\n');
 }
 
-function main(): void {
+/** Repos (or slices of a big repo) scanned at once by a multi-repo listing (`--jobs`, or MAESTRO_SWEEP_JOBS). */
+const DEFAULT_JOBS = Math.min(16, availableParallelism());
+/** A repo with more candidate branches than this is scanned in slices of about this size, so one huge repo does not set the wall time. */
+const SHARD_BRANCHES = 200;
+const MAX_SHARDS = 6;
+
+/** Runs `bin args` without blocking, resolving with its exit code and trimmed stdout and stderr. */
+function runAsync(bin: string, args: string[], cwd?: string): Promise<{ code: number | null; out: string; err: string }> {
+  return new Promise((done, fail) => {
+    const c = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], cwd });
+    let out = ''; let err = '';
+    c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { err += d; });
+    c.on('error', fail);
+    c.on('close', (code) => done({ code, out: out.trim(), err: err.trim() }));
+  });
+}
+
+/**
+ * `mergedPrs` for a repo that many slices share, with the fortnights asked of gh at once (a page of merged PRs is slow to
+ * search, and a big repo needs several in sequence). The windows are the same days `mergedWindow` splits into and are joined
+ * in date order, so this is the list a serial scan would have fetched. A failed call throws.
+ */
+export async function mergedPrsParallel(repo: string, prDays: number): Promise<PrInfo[]> {
+  const window = async (from: number, to: number): Promise<PrInfo[]> => {
+    const [bin, binArgs] = toolCommand(process.env.MAESTRO_GH || 'gh', ['pr', 'list', '--state', 'merged', '--search', `merged:${day(from)}..${day(to)}`, '--limit', String(PR_PAGE), '--json', PR_FIELDS]);
+    const r = await runAsync(bin, binArgs, repo);
+    let prs: unknown = null; try { prs = r.code === 0 ? JSON.parse(r.out) : null; } catch { prs = null; }
+    if (!Array.isArray(prs)) throw new SweepError('gh pr list failed: PR evidence unavailable', 'gh');
+    if (prs.length < PR_PAGE || day(from) === day(to)) return prs as PrInfo[];
+    const mid = from + Math.floor((to - from) / 864e5 / 2) * 864e5;
+    return (await Promise.all([window(from, mid), window(mid + 864e5, to)])).flat();
+  };
+  const end = Date.parse(day(Date.now())); const start = end - prDays * 864e5;
+  const spans: [number, number][] = [];
+  for (let from = start; from <= end; from += 14 * 864e5) spans.push([from, Math.min(from + 13 * 864e5, end)]);
+  const byNumber = new Map<number, PrInfo>();
+  for (const p of (await Promise.all(spans.map(([from, to]) => window(from, to)))).flat()) byNumber.set(p.number, p);
+  return [...byNumber.values()];
+}
+
+/** A counting semaphore: `limit(fn)` runs `fn` once fewer than `n` calls are in flight, first come first served. */
+function limiter(n: number): <T>(fn: () => Promise<T>) => Promise<T> {
+  let active = 0; const waiting: (() => void)[] = [];
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (active >= n) await new Promise<void>((go) => waiting.push(go));
+    active++;
+    try { return await fn(); } finally { active--; waiting.shift()?.(); }
+  };
+}
+
+/**
+ * The listing of every repo, in repo order. One repo, or `jobs` of 1, is scanned in this process. Otherwise each repo is fetched
+ * here, then scanned by child runs of this script (`--repo <name> --json --no-fetch`), with at most `jobs` fetches or scans at a
+ * time. A repo of many branches is split into slices (`--shard`) that concatenate to the serial result, and its merged-PR list is
+ * asked of gh once for all of them. Each repo moves on as soon as its own fetch is done, so a slow remote holds up nothing else,
+ * and the biggest repos start first. A scan is synchronous git and gh calls, which is why it is split across processes at all. A
+ * child that fails fails the listing.
+ */
+export async function scanAll(repos: string[], ctx: SweepContext, childArgs: string[], jobs: number): Promise<RepoScan[]> {
+  if (repos.length < 2 || jobs < 2) return repos.map((p) => scanRepo(p, ctx));
+  const limit = limiter(jobs);
+  const git = (p: string, ...a: string[]) => runAsync('git', ['--no-optional-locks', '-C', p, ...a]);
+  const branchCount = (p: string): number => gitIn(p)('for-each-ref', '--format=x', 'refs/remotes/origin').out.split('\n').filter(Boolean).length;
+  const order = repos.map((p, i) => ({ p, i, n: branchCount(p) })).sort((x, y) => y.n - x.n || x.i - y.i);
+  const dir = mkdtempSync(join(tmpdir(), 'branch-sweep-'));
+  const scans: RepoScan[] = new Array(repos.length);
+  try {
+    await Promise.all(order.map(async ({ p, i }) => {
+      const slices = Math.min(MAX_SHARDS, Math.max(1, Math.ceil(branchCount(p) / SHARD_BRANCHES)));
+      const fetched = ctx.fetch ? limit(async () => (await git(p, 'remote', 'get-url', 'origin')).code === 0 && (await git(p, 'fetch', '--prune', 'origin')).code !== 0) : Promise.resolve(false); // no origin: the scan says so itself
+      // Slices of one repo would each ask gh for the same merged-PR list: ask once (while the fetch runs), hand every slice the answer.
+      const asked = slices < 2 ? Promise.resolve([] as string[]) : mergedPrsParallel(p, ctx.prDays).then((list) => {
+        const file = join(dir, `${basename(p)}.json`); writeFileSync(file, JSON.stringify(list)); return ['--prs', file];
+      }, () => [] as string[]); // a slice then asks gh itself and reports the failure as a serial run would
+      const [noteFetch, prs] = await Promise.all([fetched, asked]);
+      const parts = await Promise.all(Array.from({ length: slices }, (_, index) => limit(() => scanChild(p, [...childArgs, '--no-fetch', ...(slices > 1 ? ['--shard', `${index}/${slices}`, ...prs] : [])]))));
+      const notes = [...(noteFetch ? ['git fetch failed; using the refs already here'] : []), ...parts.flatMap((x) => x.notes)];
+      scans[i] = { repo: basename(p), items: parts.flatMap((x) => x.items), review: parts.flatMap((x) => x.review), excluded: parts.flatMap((x) => x.excluded), notes: [...new Set(notes)], envAsks: [] };
+    }));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+  return scans;
+}
+
+/** One child scan of a repo (or a slice of it): the repo's listing as the child printed it with `--json`. */
+async function scanChild(repoPath: string, childArgs: string[]): Promise<RepoScan> {
+  const name = basename(repoPath);
+  const r = await runAsync(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), '--json', '--repo', name, '--container', dirname(repoPath), ...childArgs]);
+  try {
+    const j = JSON.parse(r.out) as { items: ListedItem[]; review: ListedItem[]; excluded: ExcludedItem[]; notes: string[] };
+    // The child's notes carry the repo prefix main adds; strip it so the merged listing matches a serial run.
+    return { repo: name, items: j.items, review: j.review, excluded: j.excluded, notes: j.notes.map((n) => (n.startsWith(`${name}: `) ? n.slice(name.length + 2) : n)), envAsks: [] };
+  } catch { throw new Error(`branch-sweep: scanning ${name} failed (exit ${r.code}): ${r.err.split('\n').pop() ?? ''}`); }
+}
+
+async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const val = (n: string): string | null => { const i = argv.indexOf(`--${n}`); return i !== -1 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
   const container = resolve(val('container') || process.cwd());
   const only = val('repo');
-  const ctx = defaultContext({ fetch: !argv.includes('--no-fetch'), claimsDir: val('claims-dir') ?? undefined, idleMinutes: val('idle-minutes') ? Number(val('idle-minutes')) : undefined, ...(val('pr-days') ? { prDays: Number(val('pr-days')) } : {}) });
+  const [shardIndex, shardCount] = (val('shard') ?? '').split('/').map(Number);
+  const ctx = defaultContext({ fetch: !argv.includes('--no-fetch'), ...(shardCount > 0 ? { shard: { index: shardIndex, count: shardCount } } : {}), claimsDir: val('claims-dir') ?? undefined, idleMinutes: val('idle-minutes') ? Number(val('idle-minutes')) : undefined, ...(val('pr-days') ? { prDays: Number(val('pr-days')) } : {}) });
   if (!(ctx.prDays > 0)) ctx.prDays = SWEEP_PR_DAYS;
   if (ctx.idleMinutes === undefined || Number.isNaN(ctx.idleMinutes)) ctx.idleMinutes = SWEEP_IDLE_MINUTES;
   if (!existsSync(container)) { console.error(`branch-sweep: no such container ${container}`); process.exit(2); }
@@ -853,9 +989,13 @@ function main(): void {
     for (const r of results) console.log(`${r.done ? 'ok     ' : 'REFUSED'} ${r.id}  ${r.message}`);
     process.exit(results.every((r) => r.done) ? 0 : 1);
   }
+  if (val('prs') && only) ctx.prCache = new Map([[join(container, only), JSON.parse(readFileSync(val('prs') as string, 'utf8')) as PrInfo[]]]);
   const explain_ = val('explain');
   if (explain_) { for (const p of findRepos(container, only)) console.log(explain(p, ctx, explain_).join('\n')); return; }
-  const scans = findRepos(container, only).map((p) => scanRepo(p, ctx));
+  const jobs = Number(val('jobs') ?? process.env.MAESTRO_SWEEP_JOBS ?? DEFAULT_JOBS) || DEFAULT_JOBS;
+  const passthrough = ['--pr-days', '--idle-minutes', '--claims-dir'].flatMap((f) => { const i = argv.indexOf(f); return i !== -1 && argv[i + 1] ? [f, argv[i + 1]] : []; });
+  let scans: RepoScan[];
+  try { scans = await scanAll(findRepos(container, only), ctx, passthrough, jobs); } catch (e) { console.error(errorOf(e).message); process.exit(2); }
   const items = scans.flatMap((s) => s.items);
   const review = scans.flatMap((s) => s.review);
   const excluded = scans.flatMap((s) => s.excluded);
@@ -870,4 +1010,4 @@ function main(): void {
 
 const isMain = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
 
-if (process.argv[1] && isMain()) main();
+if (process.argv[1] && isMain()) await main();
