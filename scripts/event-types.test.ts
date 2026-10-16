@@ -231,7 +231,8 @@ test('dry run: each type through tick() emits its fixture event and digests it',
     if (cmd === 'gh' && args[0] === 'run') return ok(JSON.stringify({ status: phase ? 'completed' : 'queued', conclusion: phase ? 'success' : null, name: 'ci' }));
     if (cmd === 'reader') return ok(phase ? 'hello\n' : '');
     if (cmd === 'gh' && args[1] === 'user') return ok('me');
-    return ok(JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [prNode(1, phase ? { reviewThreads: { nodes: [{ id: 't', isResolved: false, comments: { nodes: [{ author: { login: 'rev' }, url: 'https://x/t' }] }, last: { nodes: [{ id: 'c', author: { login: 'rev' }, url: 'https://x/t' }] } }] } } : {})] } } }));
+    const node = prNode(1, phase ? { reviewThreads: { nodes: [{ id: 't', isResolved: false, comments: { nodes: [{ author: { login: 'rev' }, url: 'https://x/t' }] }, last: { nodes: [{ id: 'c', author: { login: 'rev' }, url: 'https://x/t' }] } }] } } : {});
+    return ok(JSON.stringify({ data: args.join(' ').includes('nodes(ids:') ? { nodes: [node] } : { search: { pageInfo: { hasNextPage: false }, nodes: [node] } } }));
   };
   const ctx = { run, dir, config: { inboxCommand: ['reader'] } };
   addWatch(dir, { id: 'c', type: 'pr-checks', target: 'org/repo#1' }, NOON);
