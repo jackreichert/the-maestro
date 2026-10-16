@@ -105,9 +105,9 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .s5 { background: var(--series-5); } .s6 { background: var(--series-6); } .s7 { background: var(--series-7); } .s8 { background: var(--series-8); }
   .so { background: var(--series-other); }
   .stream-title .mark { width: 12px; height: 12px; border-radius: 3px; }
-  /* Side by side, the priorities panel is one compact line per priority and takes the height it needs, top-aligned beside the headline. */
-  @media (min-width: 901px) { .lead-grid > priority-list { align-self: start; } }
-  @media (min-width: 1100px) { .lead-grid > :first-child { grid-column: span 8; } .lead-grid > :last-child { grid-column: span 4; } }
+  /* Side by side (from 1100px), the priorities panel is one compact line per priority and takes the height it needs, top-aligned beside the headline. */
+  @media (min-width: 1100px) { .lead-grid > priority-list { align-self: start; } }
+  @media (min-width: 1100px) { .lead-grid > .two-thirds { grid-column: span 8; } .lead-grid > .third { grid-column: span 4; } }
 
   @media (forced-colors: active) {
     [role=tab][aria-selected=true]::after { forced-color-adjust: none; background: Highlight; height: 4px; bottom: 0; }
@@ -595,7 +595,10 @@ export class PodiumApp extends HTMLElement {
       rule,
       buckets.asks.length ? h('p', { class: 'lede' }, 'The oldest ask has waited ', h('strong', {}, `${oldest} ${oldest === 1 ? 'day' : 'days'}`), stale ? `, and ${stale} ${stale === 1 ? 'is' : 'are'} past the 3 day mark` : '', '. ', oneWay ? `${oneWay} ${oneWay === 1 ? 'is a one-way door' : 'are one-way doors'}. ` : '', `${queued} ${queued === 1 ? 'task is' : 'tasks are'} queued behind your answers.`) : null);
     if (this.#filter) return lead;
-    return h('section', { class: 'grid lead-grid' }, lead, stream === null ? this.#priorities(st) : todayPanel(st.priorities.state === 'ok' ? st.priorities.items : [], this.#projects.state === 'ok' ? this.#projects.data : null, stream));
+    lead.classList.add('two-thirds');
+    const side = stream === null ? this.#priorities(st) : todayPanel(st.priorities.state === 'ok' ? st.priorities.items : [], this.#projects.state === 'ok' ? this.#projects.data : null, stream);
+    side.classList.add('third');
+    return h('section', { class: 'grid lead-grid' }, lead, side);
   }
 
   /** The project names a stream's rows cover, as one mono line; empty until the projects payload has loaded or when it lists none. */
@@ -865,8 +868,8 @@ function skeleton(): HTMLElement {
     h('div', { class: 'sk-tabs', 'aria-hidden': 'true' }, h('div', { class: 'wrap' }, line('72px'), line('104px'), line('56px'))),
     h('div', { class: 'wrap sk-panel', 'aria-hidden': 'true' },
       h('div', { class: 'board' },
-        h('div', { class: 'sk-stack' }, line('120px'), h('span', { class: 'sk-hint' }, line('340px')), rows(['62%', '48%', '55%', '40%']), line('96px'), rows(['44%'])),
-        h('div', { class: 'sk-stack' }, line('110px'), rows(['80%', '66%', '72%'])))));
+        h('div', { class: 'sk-stack two-thirds' }, line('120px'), h('span', { class: 'sk-hint' }, line('340px')), rows(['62%', '48%', '55%', '40%']), line('96px'), rows(['44%'])),
+        h('div', { class: 'sk-stack third' }, line('110px'), rows(['80%', '66%', '72%'])))));
 }
 
 /** The cue line's placeholder: a five-line staff with one note head gliding along it while the board loads. */

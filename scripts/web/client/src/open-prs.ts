@@ -14,7 +14,7 @@ const CSS = `${BASE_CSS}
   :host { display: block; }
   .cue { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--space-6) var(--col-gap); align-items: end; padding-bottom: var(--space-6); border-bottom: var(--hairline); }
   .cue > * { grid-column: 1 / -1; }
-  @media (min-width: 1100px) { .cue > :first-child { grid-column: span 8; } .cue > :last-child:not(:first-child) { grid-column: span 4; } }
+  @media (min-width: 1100px) { .cue > .two-thirds { grid-column: span 8; } .cue > .third { grid-column: span 4; } }
   .kicker { font-size: var(--text-sm); color: var(--text-muted); }
   .cueline { margin: var(--space-4) 0 0; font: 400 clamp(2rem, 3.6vw, 3.25rem)/1.08 var(--font-display); letter-spacing: -0.02em; color: var(--text-muted); }
   .cue-item { white-space: nowrap; }
@@ -312,7 +312,7 @@ export class OpenPrs extends HTMLElement {
     const oldest = units.filter((u) => unitMove(u) === 'yours').map((u) => u.lead).sort((a, b) => (b.ageDays ?? 0) - (a.ageDays ?? 0))[0];
     const short = (repo: string): string => repo.split('/')[1] ?? repo;
     return h('section', { class: 'cue' },
-      h('div', {},
+      h('div', { class: 'two-thirds' },
         h('span', { class: 'kicker' }, 'Open pull requests'),
         line,
         h('p', { class: 'lede' }, `${all.length} open across ${repos} ${repos === 1 ? 'repo' : 'repos'}.`,

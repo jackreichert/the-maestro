@@ -35,6 +35,14 @@ test('Home is ordered by what needs acting on: cues, open work, open PRs, blocke
   assert.deepEqual([...el.querySelectorAll('.sec-title .instrument')].every((i) => i.getAttribute('aria-hidden') === 'true'), true);
 });
 
+test('Home is one grid whose children are placed as thirds or two thirds', () => {
+  const el = draw(state(), charts(), { state: 'ok', data: projects() });
+  const home = el;
+  assert.ok(home.classList.contains('grid'));
+  assert.ok(home.querySelector(':scope > section.two-thirds'), 'the cues take two thirds');
+  assert.ok(home.querySelectorAll(':scope > .third').length >= 3, 'the side column and the gauges sit in thirds');
+});
+
 test('the score has a row per stream with a state word, and a missing charts payload says so instead of a blank', () => {
   const el = draw(state(), charts(), { state: 'ok', data: projects() });
   assert.ok(el.querySelectorAll('.staff-row').length >= 2, 'one staff per stream');
@@ -136,8 +144,10 @@ test('with no asks, rows for PRs and reviews replace the empty sentence', () => 
 
 test('the gauges say how many asks are open and how many PRs are open, with words and not colour alone', () => {
   const el = draw(state(), charts(), { state: 'ok', data: projects() });
-  assert.match(text(el.querySelector('section.gauge')), /Open asks by age/);
-  assert.match(text(el), /Open PRs/);
+  const gauges = [...el.querySelectorAll('section.gauge')];
+  assert.equal(gauges.length, 2);
+  assert.match(text(gauges[0]), /Open asks by age/);
+  assert.match(text(gauges[1]), /Open PRs/);
 });
 
 test('the Stream order groups the asks by stream and the choice survives a redraw', () => {

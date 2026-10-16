@@ -1,6 +1,7 @@
 /**
- * The Home tab, laid out as the concept's score: the staves across the top, the cues beside what is held, shipped and in flight,
- * the epics beside the local review queue, the deck beside the cost, and the open-work gauges. Draws what home-model works out.
+ * The Home tab, laid out as the concept's score but ordered by what needs acting on: the cues beside what is blocked and in flight,
+ * then open asks by age, open PRs and the local review queue, and then the reporting views (the score, the movements beside the coda,
+ * the deck beside the cost). Draws what home-model works out.
  */
 import { AMBIENCE_CSS } from './home-ambience.ts';
 import { COST_CSS, costSection } from './cost-widget.ts';
@@ -76,7 +77,7 @@ export function homeTab(st: PodiumState, charts: ChartsData | null, opts: HomeOp
   return h('div', { class: takeEntrance() ? 'home grid enter' : 'home grid' },
     opts.projects.state === 'error' ? h('p', { class: 'home-note', role: 'alert' }, `Project names and notes could not be loaded (${opts.projects.message}). The rest of Home is current; reload to try again.`) : null,
     cues,
-    h('div', { class: 'third side' }, flight, held),
+    h('div', { class: 'third side' }, held, flight),
     ages, prs, rehearsal,
     score ? scoreSection(score, pickedStream(st, opts.needs ?? [])) : h('p', { class: 'home-note', role: 'status' }, 'The 14-day score is missing: the charts data did not load.'),
     movements, coda,
