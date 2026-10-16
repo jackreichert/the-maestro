@@ -28,6 +28,8 @@ export interface Item { id: string; date: string; ts?: string; stateTs?: string;
   blocked?: unknown; context?: unknown; options?: unknown; links?: unknown; searched?: unknown;
   /** A paste ask's block file: set only on `status.paste` rows. */
   paste?: unknown;
+  /** A registered script's id: set on the run-this ask `journal.ts script add` raises. */
+  script?: unknown;
   /** The latest answer recorded for an open ask (an `answer` row), and its discuss topic; the page puts the answer in the ask's stub. */
   answer?: string; discussing?: string }
 export interface Pr {
