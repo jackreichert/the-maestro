@@ -13,17 +13,18 @@ import { isSelfReview } from '../self-review.ts';
 import { PR_STALE_MS } from './state.ts';
 import type { OthersPrRow, OthersPrsData } from '../../web/client/src/types.ts';
 
-const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
 
 export interface OthersScopeOptions { statusDir: string; owners: readonly string[]; selfRepos: readonly string[]; self: string; guard?: Guard;
-  /** A PR whose latest ask (Slack activity, or its own opened time when never posted) is older than this many days is marked stale, unless you are asked for review or @-mentioned. Absent means no cutoff. */
-  maxAgeDays?: number;
-  /** A PR whose latest ask is older than this many days leaves the tab entirely (Stale included), with the same exemptions as the stale gate: a direct ask or an @-mention is never dropped. Absent means nothing is dropped. */
+  /** A PR opened less than this many hours ago is never stale or dropped. Absent (with `activeHours`) means no staleness gate. */
+  openHours?: number;
+  /** A PR opened longer ago is active only with activity in the last this many hours; otherwise it is stale. */
+  activeHours?: number;
+  /** A PR with no activity for more than this many days (and past `openHours`) leaves the tab entirely, Stale included. Never below the stale gate. Absent means nothing is dropped. */
   dropDays?: number;
   /** The folder of the slack-watch engineering notes (`<vault_root>/Projects/<container>/Slack`); absent means no Slack ask is known. */
-  slackDir?: string;
-  /** Names that count as @-mentioning you in Slack (`others_prs_mention_names`). */
-  mentionNames?: readonly string[] }
+  slackDir?: string }
 
 const reviewOf = (decision: string | null): OthersPrRow['review'] => (decision === 'APPROVED' ? 'approved' : decision === 'CHANGES_REQUESTED' ? 'changes-requested' : 'review-required');
 
@@ -41,12 +42,12 @@ const awaiting = (p: OtherPr): boolean => {
   return Date.parse(p.headAt) <= Date.parse(r.at);
 };
 
-function row(p: OtherPr, self: string, guard: Guard, now: Date, slack: ReadonlyMap<string, SlackActivity>, cutoff: number | null): OthersPrRow {
+function row(p: OtherPr, self: string, guard: Guard, now: Date, slack: ReadonlyMap<string, SlackActivity>, gate: Gate): OthersPrRow {
   const opened = Date.parse(p.createdAt);
   const youAsked = self !== '' && p.requested.some((r) => r.toLowerCase() === self.toLowerCase());
   return {
     repo: p.repo, number: p.number, title: p.title, url: p.url, author: p.author, ...(p.authorName ? { authorName: p.authorName } : {}), base: p.base, updatedAt: p.updatedAt,
-    ...(Number.isFinite(opened) ? { ageDays: Math.max(0, Math.floor((now.getTime() - opened) / DAY_MS)) } : {}),
+    ...(Number.isFinite(opened) ? { openedAt: new Date(opened).toISOString(), ageDays: Math.max(0, Math.floor((now.getTime() - opened) / DAY_MS)) } : {}),
     youAsked, ...(isGuard(p.repo, p.author, guard) && !youAsked ? { handsOff: true } : {}),
     review: reviewOf(p.decision), unresolved: p.unresolved, copilotThreads: p.copilotThreads,
     ...(typeof p.isDraft === 'boolean' ? { isDraft: p.isDraft } : {}),
@@ -55,56 +56,63 @@ function row(p: OtherPr, self: string, guard: Guard, now: Date, slack: ReadonlyM
     ...(p.head.startsWith('release/') ? { block: 'release' as const } : (p.labels ?? []).some((l) => BLOCK_LABEL.test(l)) ? { block: 'blocked' as const } : {}),
     ...(awaiting(p) ? { awaitingAuthor: true } : {}),
     ...(notAsked(p, youAsked, slack) ? { notAsked: true } : {}),
-    ...ask(p, youAsked, slack, now, cutoff),
+    ...ask(p, slack, now, gate),
   };
 }
 
 /**
- * The latest ask for review: the newest Slack post or reply carrying the PR link, or, when it was never posted, the PR's own opening time (GitHub gives no ready or
- * re-request time to this tab). Past the cutoff the PR is stale, unless you are asked for review or @-mentioned: a direct ask never goes stale.
+ * The latest ask for review (`askedAt`): the newest Slack post or reply carrying the PR link, or, when it was never posted, the PR's own opening time.
+ * Whether the PR is stale is a separate question, answered by `lapsed` from its activity.
  */
-function ask(p: OtherPr, youAsked: boolean, slack: ReadonlyMap<string, SlackActivity>, now: Date, cutoff: number | null): Pick<OthersPrRow, 'askedAt' | 'stale' | 'staleWhy'> {
+function ask(p: OtherPr, slack: ReadonlyMap<string, SlackActivity>, now: Date, gate: Gate): Pick<OthersPrRow, 'askedAt' | 'stale' | 'staleWhy'> {
   const s = slack.get(p.url.toLowerCase());
-  const at = latestAskAt(p, s);
+  const at = s ? s.at : Date.parse(p.createdAt);
   if (!Number.isFinite(at)) return {};
-  const days = Math.round((now.getTime() - at) / DAY_MS);
-  const stale = pastCutoff(at, cutoff, youAsked, s);
-  const why = s ? (s.replied ? `last Slack reply ${days}d ago` : `Slack post ${days}d, no reply`) : `never posted, opened ${days}d ago`;
-  return { askedAt: new Date(at).toISOString(), ...(stale ? { stale: true, staleWhy: why } : {}) };
+  const last = lastActivityAt(p, s);
+  const why = lapsed(p, last, now, gate) ? `no activity for ${span(now.getTime() - last)}, opened ${span(now.getTime() - Date.parse(p.createdAt))} ago` : null;
+  return { askedAt: new Date(at).toISOString(), ...(why ? { stale: true, staleWhy: why } : {}) };
 }
 
-/** When the PR was last asked about: its newest Slack post or reply, else the PR's opening time. NaN when neither is a date. */
-const latestAskAt = (p: OtherPr, s: SlackActivity | undefined): number => (s ? s.at : Date.parse(p.createdAt));
+/** The staleness thresholds in milliseconds; a null gate disables that check. */
+interface Gate { open: number | null; active: number | null; drop: number | null }
 
-/** The one rule both gates share: an ask older than the cutoff counts, unless you were asked for review or @-mentioned. */
-const pastCutoff = (at: number, cutoff: number | null, youAsked: boolean, s: SlackActivity | undefined): boolean =>
-  cutoff !== null && at < cutoff && !youAsked && !s?.mentioned;
+/** The newest sign of life: a push, review, comment or re-request (GitHub's updatedAt), or a Slack post or reply carrying the link. NaN when neither is a date. */
+const lastActivityAt = (p: OtherPr, s: SlackActivity | undefined): number => Math.max(Date.parse(p.updatedAt) || 0, s?.at ?? 0, Date.parse(p.createdAt) || 0) || Number.NaN;
 
-/** True when the PR's latest ask is past the drop cutoff and nobody asked you directly. Shares `pastCutoff` with the stale gate, so the two cannot disagree on the clock or the exemptions. */
-function dropped(p: OtherPr, self: string, slack: ReadonlyMap<string, SlackActivity>, cutoff: number | null): boolean {
-  const youAsked = self !== '' && p.requested.some((r) => r.toLowerCase() === self);
-  const s = slack.get(p.url.toLowerCase());
-  const at = latestAskAt(p, s);
-  return Number.isFinite(at) && pastCutoff(at, cutoff, youAsked, s);
+/** Hours under three days, days beyond ("5 h", "30 h", "4 d"), matching what the tab shows. */
+const span = (ms: number): string => (ms < 3 * DAY_MS ? `${Math.max(0, Math.floor(ms / HOUR_MS))} h` : `${Math.floor(ms / DAY_MS)} d`);
+
+/** Opened inside the open window: too new to be stale whatever its activity. */
+const young = (p: OtherPr, now: Date, gate: Gate): boolean => gate.open !== null && now.getTime() - Date.parse(p.createdAt) < gate.open;
+
+/** True when the PR is neither young nor active: no push, review, comment, re-request or Slack mention inside the active window. A request for you is activity like any other, not an exemption. */
+function lapsed(p: OtherPr, last: number, now: Date, gate: Gate): boolean {
+  if (gate.active === null || !Number.isFinite(last) || young(p, now, gate)) return false;
+  return now.getTime() - last >= gate.active;
+}
+
+/** True when the PR has had no activity for longer than the drop window (never shorter than the active window) and is past the open window. */
+function dropped(p: OtherPr, slack: ReadonlyMap<string, SlackActivity>, now: Date, gate: Gate): boolean {
+  if (gate.drop === null || young(p, now, gate)) return false;
+  const last = lastActivityAt(p, slack.get(p.url.toLowerCase()));
+  return Number.isFinite(last) && now.getTime() - last > Math.max(gate.drop, gate.active ?? 0);
 }
 
 export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData {
   const cache = readOthersCache(o.statusDir);
   const owners = new Set(o.owners.map((x) => x.toLowerCase()));
   const self = o.self.toLowerCase();
-  const slack = slackActivity(o.slackDir, o.mentionNames);
-  // Never earlier than the stale gate, so a dropped PR was always stale first.
-  const dropCutoff = o.dropDays === undefined ? null : now.getTime() - Math.max(o.dropDays, o.maxAgeDays ?? 0) * DAY_MS;
+  const slack = slackActivity(o.slackDir);
+  const gate: Gate = { open: o.openHours === undefined ? null : o.openHours * HOUR_MS, active: o.activeHours === undefined ? null : o.activeHours * HOUR_MS, drop: o.dropDays === undefined ? null : o.dropDays * DAY_MS };
   const kept = (cache?.prs ?? [])
     .filter((p) => p.author.toLowerCase() !== self && owners.has((p.repo.split('/')[0] ?? '').toLowerCase()) && !isSelfReview(p.repo, o.selfRepos))
-    .filter((p) => !dropped(p, self, slack, dropCutoff))
+    .filter((p) => !dropped(p, slack, now, gate))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const cutoff = o.maxAgeDays === undefined ? null : now.getTime() - o.maxAgeDays * DAY_MS;
   const fetchedAt = cache?.fetchedAt ?? null;
   const stale = !fetchedAt || now.getTime() - fetchedAt.getTime() > PR_STALE_MS;
   return {
     generatedAt: now.toISOString(),
     prData: { fetchedAt: fetchedAt ? fetchedAt.toISOString() : null, stale, ...(cache?.failure ? { failure: cache.failure } : {}) },
-    total: kept.length, prs: kept.map((p) => row(p, o.self, o.guard ?? NO_GUARD, now, slack, cutoff)),
+    total: kept.length, prs: kept.map((p) => row(p, o.self, o.guard ?? NO_GUARD, now, slack, gate)),
   };
 }

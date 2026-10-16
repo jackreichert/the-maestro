@@ -514,12 +514,16 @@ export const SELF_REVIEW_REPOS = [...repoGlobs(globList('MAESTRO_SELF_REVIEW_REP
 export const HANDS_OFF_REPOS = globList('MAESTRO_HANDS_OFF_REPOS', 'hands_off_repos').map((g) => (g.includes('/') ? g : `*/${g}`));
 export const HANDS_OFF_OWNER = pick('MAESTRO_HANDS_OFF_OWNER', 'hands_off_owner').trim();
 
-/** Others' PRs tab: a PR whose latest Slack activity (a post with its link or a reply under it; its own opening time when never posted) is more than this many days old goes to the Stale sub-tab. Default 2. */
-export const OTHERS_PRS_MAX_AGE_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_MAX_AGE_DAYS', 'others_prs_max_age_days'), 2);
-/** Days since a teammate PR's latest ask after which it leaves the Others' PRs tab entirely (Stale included). Never below `others_prs_max_age_days`, so Stale is never skipped. */
-export const OTHERS_PRS_DROP_DAYS = Math.max(positiveInt(pick('MAESTRO_OTHERS_PRS_DROP_DAYS', 'others_prs_drop_days'), 3), OTHERS_PRS_MAX_AGE_DAYS);
-/** Names that count as an @-mention of you in the Slack notes (comma-separated, no `@`). A PR whose thread mentions one never goes stale. Default none. */
-export const OTHERS_PRS_MENTION_NAMES = globList('MAESTRO_OTHERS_PRS_MENTION_NAMES', 'others_prs_mention_names');
+/** Others' PRs tab: a PR opened less than this many hours ago is never stale or dropped. Default 72. */
+export const OTHERS_PRS_OPEN_HOURS = positiveInt(pick('MAESTRO_OTHERS_PRS_OPEN_HOURS', 'others_prs_open_hours'), 72);
+/**
+ * A PR opened longer ago stays in the active sub-tabs only with activity (a push, review, comment, re-request, or a Slack post or reply carrying the link) in this many hours; otherwise it is Stale. Default 48.
+ * The older `others_prs_max_age_days` still works when this one is not set (days times 24).
+ */
+const LEGACY_MAX_AGE_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_MAX_AGE_DAYS', 'others_prs_max_age_days'), 0);
+export const OTHERS_PRS_ACTIVE_HOURS = positiveInt(pick('MAESTRO_OTHERS_PRS_ACTIVE_HOURS', 'others_prs_active_hours'), LEGACY_MAX_AGE_DAYS > 0 ? LEGACY_MAX_AGE_DAYS * 24 : 48);
+/** Days without activity after which a teammate PR leaves the Others' PRs tab entirely (Stale included). Never below the stale gate. Default 3. */
+export const OTHERS_PRS_DROP_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_DROP_DAYS', 'others_prs_drop_days'), 3);
 
 /** Teammate PR helper: minutes a ready PR by someone else may wait with no review before pr-watch reports `REVIEW-WAIT` for it (the orchestrator then drafts review comments for your approval; see playbooks/teammate-review.md). Unset or 0 turns it off, the default. */
 export const TEAMMATE_REVIEW_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim()) ? Number(raw) : 0))(pick('MAESTRO_TEAMMATE_REVIEW_MINUTES', 'teammate_review_minutes'));

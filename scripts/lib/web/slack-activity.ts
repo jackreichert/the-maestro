@@ -1,5 +1,5 @@
 /**
- * What the slack-watch engineering notes (`engineering*.md`) say about a PR: when its thread last had a post or reply, and whether the thread @-mentions a configured name.
+ * What the slack-watch engineering notes (`engineering*.md`) say about a PR: when its thread last had a post or reply, and whether it has a reply.
  * A local file read only, never a network call; each note is parsed once and re-read when it changes.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -23,34 +23,31 @@ export function etMs(y: number, mo: number, d: number, h: number, mi: number): n
   return guess - off * 60_000;
 }
 
-/** What the Slack notes say about one PR: when its thread last had a post or reply, and whether the thread @-mentions one of the configured names. */
-export interface SlackActivity { at: number; mentioned: boolean; replied: boolean }
-interface Thread { urls: Set<string>; at: number; mentioned: boolean; replied: boolean }
-const slackCache = new Map<string, { mtimeMs: number; size: number; names: string; threads: Thread[] }>();
+/** What the Slack notes say about one PR: when its thread last had a post or reply, and whether that thread has a reply. */
+export interface SlackActivity { at: number; replied: boolean }
+interface Thread { urls: Set<string>; at: number; replied: boolean }
+const slackCache = new Map<string, { mtimeMs: number; size: number; threads: Thread[] }>();
 
 /** Threads in one note: a post and the replies (`↳`) under it. Every PR link in any line belongs to the whole thread, so a reply re-ups the PR. */
-function parseThreads(text: string, mention: RegExp | null): Thread[] {
+function parseThreads(text: string): Thread[] {
   const out: Thread[] = [];
   let cur: Thread | null = null;
   for (const line of text.split('\n')) {
     const m = POST.exec(line);
     if (!m) continue;
     const at = etMs(Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5]));
-    if (!m[6] || !cur) { cur = { urls: new Set(), at, mentioned: false, replied: false }; out.push(cur); }
+    if (!m[6] || !cur) { cur = { urls: new Set(), at, replied: false }; out.push(cur); }
     if (m[6]) cur.replied = true;
     cur.at = Math.max(cur.at, at);
     for (const u of m[7]?.match(PR_URL) ?? []) cur.urls.add(u.toLowerCase());
-    if (mention && mention.test(m[7] ?? '')) cur.mentioned = true;
   }
   return out.filter((t) => t.urls.size > 0);
 }
 
 /** PR links in the slack-watch engineering notes (`engineering*.md`), each with its newest thread activity. A local read only, re-read when a file changes; a missing folder is nothing. */
-export function slackActivity(dir: string | undefined, names: readonly string[] = []): Map<string, SlackActivity> {
+export function slackActivity(dir: string | undefined): Map<string, SlackActivity> {
   const out = new Map<string, SlackActivity>();
   if (!dir) return out;
-  const key = names.join('|');
-  const mention = names.length ? new RegExp(`(?<![\\w.])@(?:${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![\\w])`, 'i') : null;
   let files: string[];
   try { files = readdirSync(dir).filter((f) => /^engineering.*\.md$/i.test(f)); } catch { return out; }
   for (const f of files) {
@@ -58,13 +55,13 @@ export function slackActivity(dir: string | undefined, names: readonly string[] 
     try {
       const st = statSync(file);
       let hit = slackCache.get(file);
-      if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size || hit.names !== key) {
-        hit = { mtimeMs: st.mtimeMs, size: st.size, names: key, threads: parseThreads(readFileSync(file, 'utf8'), mention) };
+      if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
+        hit = { mtimeMs: st.mtimeMs, size: st.size, threads: parseThreads(readFileSync(file, 'utf8')) };
         slackCache.set(file, hit);
       }
       for (const t of hit.threads) for (const u of t.urls) {
         const prev = out.get(u);
-        out.set(u, { at: Math.max(prev?.at ?? 0, t.at), mentioned: (prev?.mentioned ?? false) || t.mentioned, replied: t.at >= (prev?.at ?? 0) ? t.replied : (prev?.replied ?? false) });
+        out.set(u, { at: Math.max(prev?.at ?? 0, t.at), replied: t.at >= (prev?.at ?? 0) ? t.replied : (prev?.replied ?? false) });
       }
     } catch { /* an unreadable note adds no links */ }
   }

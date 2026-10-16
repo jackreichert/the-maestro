@@ -53,30 +53,10 @@ const slackDir = (lines: string[]): string => {
   return d;
 };
 const url = (n: number): string => `https://github.com/acme/app/pull/${n}`;
-const gated = (prs: OtherPr[], lines: string[], extra: Record<string, unknown> = {}) => buildOthersPrs({ ...opts(cacheWith(prs)), slackDir: slackDir(lines), maxAgeDays: 2, ...extra }, NOW);
+const gated = (prs: OtherPr[], lines: string[], extra: Record<string, unknown> = {}) => buildOthersPrs({ ...opts(cacheWith(prs)), slackDir: slackDir(lines), openHours: 72, activeHours: 48, dropDays: 3, ...extra }, NOW);
 const staleOf = (out: ReturnType<typeof buildOthersPrs>): Record<number, boolean> => Object.fromEntries(out.prs.map((p) => [p.number, p.stale === true]));
 
 const numbers = (out: ReturnType<typeof buildOthersPrs>): number[] => out.prs.map((p) => p.number).sort((a, b) => a - b);
-
-test('a PR whose last ask is past the drop age leaves the tab, Stale included; the boundary is exact', () => {
-  const inside = gated([pr(1)], [`- 2026-10-12 08:11 ET **Pat F**: ${url(1)}`], { dropDays: 3 });
-  const past = gated([pr(1)], [`- 2026-10-12 08:09 ET **Pat F**: ${url(1)}`], { dropDays: 3 });
-  assert.deepEqual([numbers(inside), staleOf(inside)[1], numbers(past), past.total], [[1], true, [], 0], 'inside the drop age it stays (and is stale); past it, gone');
-});
-
-test('a re-up brings a dropped PR back; a PR never posted ages from its opening', () => {
-  const reup = gated([pr(1)], [`- 2026-10-01 08:09 ET **Pat F**: ${url(1)}`, '- 2026-10-15 07:00 ET ↳ **Pat F**: ping'], { dropDays: 3 });
-  assert.deepEqual(numbers(reup), [1]);
-  const never = gated([pr(1, { createdAt: '2026-10-11T12:10:00Z' }), pr(2, { createdAt: '2026-10-13T12:10:00Z' })], [], { dropDays: 3 });
-  assert.deepEqual(numbers(never), [2]);
-});
-
-test('a direct review request or an @-mention is never dropped; with no drop age nothing is', () => {
-  const old = '2026-10-01T12:10:00Z';
-  const out = gated([pr(1, { createdAt: old, requested: ['me-fake'] }), pr(2, { createdAt: old }), pr(3, { createdAt: old })], [`- 2026-10-01 09:00 ET **Pat F**: ${url(3)} ⏎ @Mina can you look`], { dropDays: 3, mentionNames: ['mina'] });
-  assert.deepEqual(numbers(out), [1, 3]);
-  assert.deepEqual(numbers(gated([pr(1, { createdAt: old })], [])), [1]);
-});
 
 test('Eastern times honour daylight saving', () => {
   assert.equal(new Date(etMs(2026, 10, 15, 8, 10)).toISOString(), '2026-10-15T12:10:00.000Z');
@@ -85,31 +65,50 @@ test('Eastern times honour daylight saving', () => {
   assert.equal(new Date(etMs(2026, 11, 1, 5, 0)).toISOString(), '2026-11-01T10:00:00.000Z', 'after the autumn change');
 });
 
-test('a Slack post three days old with a reply yesterday is not stale; with no reply it is, and says why', () => {
-  const out = gated([pr(1), pr(2)], [
-    `- 2026-10-12 09:00 ET **Pat F**: please review ${url(1)}`, '- 2026-10-14 15:00 ET ↳ **Kim F**: bump',
-    `- 2026-10-12 09:00 ET **Pat F**: and this ${url(2)}`,
-  ]);
+const hoursAgo = (h: number): string => new Date(NOW.getTime() - h * 3_600_000).toISOString();
+const old = (over: Partial<OtherPr> = {}): Partial<OtherPr> => ({ createdAt: hoursAgo(24 * 30), updatedAt: hoursAgo(24 * 30), ...over });
+
+test('a PR opened inside 72 hours is never stale; at 72 hours it needs activity', () => {
+  const out = gated([pr(1, { createdAt: hoursAgo(71.9), updatedAt: hoursAgo(60) }), pr(2, { createdAt: hoursAgo(72), updatedAt: hoursAgo(60) })], []);
   assert.deepEqual(staleOf(out), { 1: false, 2: true });
-  assert.equal(out.prs.find((p) => p.number === 2)?.staleWhy, 'Slack post 3d, no reply');
-  assert.equal(out.prs.find((p) => p.number === 1)?.askedAt, new Date(etMs(2026, 10, 14, 15, 0)).toISOString());
 });
 
-test('the cutoff is exact: an ask just inside two days stays, just past it goes stale; a re-up brings it back', () => {
-  const inside = gated([pr(1)], [`- 2026-10-13 08:11 ET **Pat F**: ${url(1)}`]);
-  const past = gated([pr(1)], [`- 2026-10-13 08:09 ET **Pat F**: ${url(1)}`]);
-  assert.deepEqual([staleOf(inside)[1], staleOf(past)[1]], [false, true]);
-  const reup = gated([pr(1)], [`- 2026-10-13 08:09 ET **Pat F**: ${url(1)}`, '- 2026-10-15 07:00 ET ↳ **Pat F**: still blocked on this']);
-  assert.equal(staleOf(reup)[1], false);
+test('activity inside 48 hours keeps an older PR active; at 48 hours it is stale', () => {
+  const out = gated([pr(1, old({ updatedAt: hoursAgo(47.9) })), pr(2, old({ updatedAt: hoursAgo(48) }))], []);
+  assert.deepEqual([numbers(out), staleOf(out)], [[1, 2], { 1: false, 2: true }]);
 });
 
-test('a PR never posted ages from its opening; one you are asked on, or @-mentioned on, never goes stale', () => {
-  const out = gated([
-    pr(1, { createdAt: '2026-10-11T12:10:00Z' }), pr(2, { createdAt: '2026-10-11T12:10:00Z', requested: ['me-fake'] }), pr(3, { createdAt: '2026-10-14T12:10:00Z' }),
-    pr(4, { createdAt: '2026-10-01T12:10:00Z' }),
-  ], [`- 2026-10-10 09:00 ET **Pat F**: ${url(4)} ⏎ @Mina can you confirm`], { mentionNames: ['mina'] });
-  assert.deepEqual(staleOf(out), { 1: true, 2: false, 3: false, 4: false });
-  assert.equal(out.prs.find((p) => p.number === 1)?.staleWhy, 'never posted, opened 4d ago');
+test('no activity for more than three days drops the PR, Stale included; exactly three days stays, stale', () => {
+  const out = gated([pr(1, old({ updatedAt: hoursAgo(72) })), pr(2, old({ updatedAt: hoursAgo(72.1) }))], []);
+  assert.deepEqual([numbers(out), staleOf(out)[1]], [[1], true]);
+});
+
+test('a Slack post or reply carrying the link is activity: it brings an old PR back, and an old post does not', () => {
+  const fresh = gated([pr(1, old())], [`- 2026-10-15 07:00 ET **Pat F**: ${url(1)}`]);
+  assert.deepEqual([numbers(fresh), staleOf(fresh)[1]], [[1], false]);
+  const reply = gated([pr(1, old())], [`- 2026-10-01 08:09 ET **Pat F**: ${url(1)}`, '- 2026-10-15 07:00 ET ↳ **Pat F**: still blocked on this']);
+  assert.deepEqual([numbers(reply), staleOf(reply)[1]], [[1], false]);
+  const post = gated([pr(1, old())], [`- 2026-10-13 08:09 ET **Pat F**: ${url(1)}`]);
+  assert.deepEqual([numbers(post), staleOf(post)[1]], [[1], true]);
+});
+
+test('a request for you is not an exemption: an ancient PR you were asked on is dropped, an older one that is only quiet goes stale', () => {
+  // The shape of a real one: opened 167 days ago, last touched 114 days ago, you were requested back then.
+  const out = gated([pr(579, { createdAt: hoursAgo(24 * 167), updatedAt: hoursAgo(24 * 114), requested: ['me-fake'] }), pr(2, old({ updatedAt: hoursAgo(60), requested: ['me-fake'] }))], []);
+  assert.deepEqual([numbers(out), staleOf(out)[2]], [[2], true]);
+});
+
+test('a PR never posted keeps its opening as the ask, and the stale reason is in hours under three days', () => {
+  const out = gated([pr(1, old({ updatedAt: hoursAgo(60) }))], []);
+  const row = out.prs[0]!;
+  assert.equal(row.staleWhy, 'no activity for 60 h, opened 30 d ago');
+  assert.equal(row.openedAt, hoursAgo(24 * 30));
+  assert.equal(row.askedAt, hoursAgo(24 * 30));
+});
+
+test('with no gate configured nothing is stale or dropped', () => {
+  const out = buildOthersPrs({ ...opts(cacheWith([pr(1, old())])) }, NOW);
+  assert.deepEqual([numbers(out), staleOf(out)[1]], [[1], false]);
 });
 
 test('a non-draft PR nobody has asked about or reviewed is marked not asked until it is requested, reviewed or posted', () => {
