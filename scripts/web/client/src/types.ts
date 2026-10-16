@@ -151,6 +151,13 @@ export interface RailGroup { group: 'pinned' | 'epics' | 'docs' | 'prs' | 'runbo
 /** A document the user shared for a project. `url` (http, https or `obsidian://open`) is re-checked by the client before it becomes an href; `path` is relative, never absolute. */
 export interface SharedDoc { title: string; kind: 'web' | 'note' | 'file'; url?: string; path?: string; why?: string; by: string; project: string; date: string }
 
+/** One written definition of done: an open epic's or a project's "What done looks like", as the server parsed it. */
+export interface DoneCriterion { text: string; checked: boolean | null }
+export interface DoneSource {
+  kind: 'epic' | 'project'; name: string; ref: Ref; items: DoneCriterion[]; prose: string | null; more: number;
+  progress: { done: number; total: number; unit: 'checked' | 'tickets' } | null; finished: boolean;
+}
+
 /** The part of `GET /api/streams/:name/home` this client draws; fields it does not read are left out here and ignored on arrival. */
 export interface StreamHome {
   stream: string;
@@ -158,6 +165,7 @@ export interface StreamHome {
   loose: HomeTicket[];
   left: { inProgress: HomeTicket[]; blocked: HomeTicket[]; notStarted: HomeTicket[]; truncated: number };
   doneMeans: { epic: string; text: string }[];
+  done: { sources: DoneSource[]; fix: string | null };
   links: RailGroup[];
   shared: SharedDoc[]; sharedMore: number;
   unknowns: HomeUnknown[];
