@@ -41,7 +41,7 @@ export function targetOf(hash: string): string | null {
 }
 
 /**
- * <script-queue>: the scripts Jack is blocked on. "Blocked on you" first (each with its Needs-you ask), then "Reusable", then a collapsed "History".
+ * <script-queue>: the scripts the user is blocked on. "Blocked on you" first (each with its Needs-you ask), then "Reusable", then a collapsed "History".
  * Every card shows what it does, why it is needed and what happens after, then the exact command in a code block with a copy button. The page never runs
  * a command: the Run button lives on the ask's card (reviewed-run route), and "Mark done (I ran it)" only records that you ran it yourself.
  */

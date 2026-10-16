@@ -1,8 +1,8 @@
 /**
- * The script registry: commands only Jack can run (a denied tool call, an allow rule, a ticket close), each with what it does and why it is needed.
+ * The script registry: commands only the user can run (a denied tool call, an allow rule, a ticket close), each with what it does and why it is needed.
  *
  * Storage is an append-only JSONL file beside the ledger (`<ledger root>/Projects/<project>/Journal/scripts.jsonl`), like drafts.jsonl: an `add` row
- * holds the entry, a `ran` row records that Jack ran it (the Podium's own runs are read from the ledger's `run` rows, see view.ts). Nothing is rewritten.
+ * holds the entry, a `ran` row records that the user ran it (the Podium's own runs are read from the ledger's `run` rows, see view.ts). Nothing is rewritten.
  * The command is stored as plain text and written once more to a block file (`Journal/script-blocks/<id>.sh`), which is what the entry's run-this
  * ask points at, so the existing reviewed-run route (run-source.ts) is the only thing that can ever execute it. This module never runs anything.
  * `validateScript` refuses a command the reviewed-run guard would refuse, a secret-shaped value anywhere in the entry, and anything over a length cap.
@@ -113,7 +113,7 @@ export function appendEntry(o: { vault: string; project: string; id: string; scr
   return entry;
 }
 
-/** Records that Jack ran a script. One row per call: a reusable script is run again and again, each leaves its own. */
+/** Records that the user ran a script. One row per call: a reusable script is run again and again, each leaves its own. */
 export function recordRan(o: { vault: string; project: string; id: string; result: RanResult; via: RanEvent['via']; now: Date }): void {
   append(scriptsPath(o.vault, o.project), { ev: 'ran', id: o.id, at: o.now.toISOString(), result: o.result, via: o.via });
 }

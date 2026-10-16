@@ -1,7 +1,7 @@
 /**
  * The scripts as the Scripts tab shows them: each entry with where it stands, folded from the registry and the ledger.
  *
- * Nothing here is stored twice. A script is `blocked` while the run-this ask raised for it is open; once that ask closes (the Podium ran it, Jack
+ * Nothing here is stored twice. A script is `blocked` while the run-this ask raised for it is open; once that ask closes (the Podium ran it, the user
  * marked it done, the CLI did, anyone dropped it) a one-time script moves to `history` and a reusable one to `reusable`. The last run is the newest of
  * the registry's `ran` rows and the ledger's `run` rows for the script's ask (what the Podium's Run button leaves), so the two paths agree.
  */

@@ -1,12 +1,12 @@
 /**
- * `journal.ts script add|list|ran`: register a command Jack has to run, list the registry, or record that it was run.
+ * `journal.ts script add|list|ran`: register a command the user has to run, list the registry, or record that it was run.
  *
  *   script add --kind one-time|reusable --title "<t>" --what "<what it does>" --why "<why we need it>" --after "<what happens after>" --blocks <id> [--blocked-by "<agent: task>"] -- <command>
- *   script list [--all] [--json]       the scripts waiting on Jack and the reusable ones (--all adds History)
- *   script ran <id> [--result done|failed]   record that Jack ran it; `done` also resolves its ask
+ *   script list [--all] [--json]       the scripts waiting on the user and the reusable ones (--all adds History)
+ *   script ran <id> [--result done|failed]   record that the user ran it; `done` also resolves its ask
  *
  * The command comes after `--` (one quoted word, or several that are re-quoted), or from `--command "<text>"` or `--command-file <path>`.
- * Nothing here runs the command: Jack runs it from the Podium's Run button (the reviewed-run route) or copies it.
+ * Nothing here runs the command: the user runs it from the Podium's Run button (the reviewed-run route) or copies it.
  */
 import { readFileSync } from 'node:fs';
 import type { Store } from '../journal/store.ts';
@@ -19,7 +19,7 @@ import type { ScriptView } from './view.ts';
 
 export const SCRIPT_USAGE: readonly string[] = [
   'journal.ts script add --kind one-time|reusable --title "<t>" --what "<what it does>" --why "<why we need it>" --after "<what happens after>" --blocks <ledger or ticket id> [--blocked-by "<agent: task>"] [--stream <name>] [--command "<text>" | --command-file <path> | -- <command>]',
-  '    registers a command only Jack can run and raises a Needs-you run-this ask that links to it on the Scripts tab; the command is shown verbatim, never run by this tool',
+  '    registers a command only the user can run and raises a Needs-you run-this ask that links to it on the Scripts tab; the command is shown verbatim, never run by this tool',
   'journal.ts script list [--all] [--json]       blocked and reusable scripts (--all adds History)',
   'journal.ts script ran <id> [--result done|failed]   record a run; done also resolves the ask',
 ];
@@ -60,7 +60,7 @@ function add(c: ScriptCli): number {
   const out = registerScript({ store: c.store, vault: c.vault, project: c.project, script, now: c.now(), today: c.today(), askExtras: { ...(stream ? { stream } : {}), ...c.usage() } });
   if (!out.ok) { c.err(`script add: refused, nothing written.\n${out.errors.map((e) => `  - ${e}`).join('\n')}`); return 1; }
   c.out(`script  ${out.entry.id}  ${out.entry.title}${out.created ? '' : '  (already registered)'}`);
-  c.out(`      ask ${out.entry.ask} is waiting on Jack (${out.entry.kind}); it links to the Scripts tab`);
+  c.out(`      ask ${out.entry.ask} is waiting on the user (${out.entry.kind}); it links to the Scripts tab`);
   return 0;
 }
 
@@ -70,7 +70,7 @@ function list(c: ScriptCli): number {
   const all = viewsFor(c.store, c);
   const shown = c.has('all') ? all : all.filter((v) => v.status !== 'history');
   if (c.has('json')) c.out(JSON.stringify({ scripts: shown }, null, 2));
-  else if (!shown.length) c.out('No scripts are waiting on Jack.');
+  else if (!shown.length) c.out('No scripts are waiting on the user.');
   else shown.forEach((v) => c.out(line(v)));
   return 0;
 }
