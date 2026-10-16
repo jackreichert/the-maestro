@@ -60,8 +60,13 @@ const ORDERS: [AskOrder, string][] = [['oldest', 'Oldest first'], ['oneway', 'On
 export const pickedStream = (st: PodiumState, extra: NeedsItem[]): string | null =>
   homeUi.stream && [...st.asks, ...extra].some((a) => a.stream === homeUi.stream) ? homeUi.stream : null;
 
+/** The first of each id or key, in order: a source that lists the same ask twice (or two sources that both list it) is still one cue. */
+const uniqueBy = <T>(rows: T[], key: (r: T) => string): T[] => { const seen = new Set<string>(); return rows.filter((r) => { const k = key(r); if (seen.has(k)) return false; seen.add(k); return true; }); };
+
 /** The Cues section. `redraw` rebuilds Home after a control changes; `extra` are the PRs and reviews that wait on you, listed after the asks. */
-export function cuesSection(st: PodiumState, live: boolean, redraw: () => void, extra: NeedsItem[] = []): HTMLElement {
+export function cuesSection(st: PodiumState, live: boolean, redraw: () => void, needs: NeedsItem[] = []): HTMLElement {
+  const extra = uniqueBy(needs, (n) => n.key);
+  st = { ...st, asks: uniqueBy(st.asks, (a) => a.id) };
   const total = st.asks.length + extra.length;
   const picked = pickedStream(st, extra);
   const shown = picked ? st.asks.filter((a) => a.stream === picked) : st.asks;

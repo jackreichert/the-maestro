@@ -154,7 +154,7 @@ const CI_LABEL: Record<CiKey, string> = { pass: 'Passing', pending: 'Pending', f
 export function agesSection(st: PodiumState): HTMLElement {
   const bars = askAgeBars(st.asks);
   const top = Math.max(1, ...bars.map((b) => b.n));
-  return conceptSection('gauge continuo', { instrument: 'Continuo', title: 'Open asks by age', n: null, hint: 'Past 3 days is stale, shown in amber.' },
+  return conceptSection('continuo', { instrument: 'Continuo', title: 'Open asks by age', n: null, hint: 'Past 3 days is stale, shown in amber.' },
     h('ul', { class: 'bars', role: 'list' }, ...bars.map((b) => h('li', { class: b.stale ? 'stale' : undefined },
       h('span', {}, b.label), h('span', { class: 'track', 'aria-hidden': 'true' }, fill(b.n / top)), h('span', { class: 'v' }, String(b.n))))));
 }
@@ -165,7 +165,7 @@ export function prsSection(st: PodiumState, charts: ChartsData | null): HTMLElem
   const keys: CiKey[] = ['pass', 'pending', 'fail', 'none'];
   const over = g.queue !== null && g.queue.count > g.queue.cap;
   const fact = (n: number, text: string, warn = false): HTMLElement => h('div', { class: warn ? 'warn' : undefined }, h('b', {}, String(n)), text);
-  return conceptSection('gauge continuo', { instrument: 'Continuo', title: 'Open PRs', n: g.total, hint: h('span', {}, 'CI state across every stream. ', h('a', { href: formatFragment(OPEN_PRS) }, 'Open the PR board')) },
+  return conceptSection('continuo', { instrument: 'Continuo', title: 'Open PRs', n: g.total, hint: h('span', {}, 'CI state across every stream. ', h('a', { href: formatFragment(OPEN_PRS) }, 'Open the PR board')) },
     h('div', { class: 'cibar', 'aria-hidden': 'true' }, ...keys.filter((k) => g.ci[k] > 0).map((k) => grow(`ci-${k}`, g.ci[k]))),
     h('ul', { class: 'ci-legend', role: 'list' }, ...keys.map((k) => h('li', {}, h('i', { class: `ci-${k}`, 'aria-hidden': 'true' }), `${CI_LABEL[k]} ${g.ci[k]}`))),
     h('div', { class: 'facts3' },

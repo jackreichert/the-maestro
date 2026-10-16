@@ -35,7 +35,7 @@ export const COST_CSS = `
   }
   @media (max-width: 560px) { .dyn { grid-template-columns: minmax(0, 1fr) 48px 64px; } .dyn .spark-cell { display: none; } }
 
-  .metro-wrap { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-5); align-items: center; margin-top: var(--space-5); }
+  .metro-wrap { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-5); align-items: center; }
   .metro { width: 96px; height: 112px; color: var(--ink); }
   .metro .body { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
   .metro .tick { stroke: var(--staff); stroke-width: 1; }
@@ -50,15 +50,14 @@ export const COST_CSS = `
   .metro-read .big { margin: 0; font-family: var(--font-display); font-size: var(--text-2xl); line-height: 1; font-variant-numeric: tabular-nums; }
   .metro-read span { font-size: var(--text-sm); color: var(--text-secondary); }
 
-  .mix { margin-top: var(--space-5); display: grid; gap: var(--space-2); --mix-1: var(--text-primary); --mix-2: color-mix(in srgb, var(--text-primary) 50%, transparent); --mix-3: color-mix(in srgb, var(--text-primary) 40%, transparent); }
+  .mix { display: grid; gap: var(--space-2); --mix-1: var(--text-primary); --mix-2: color-mix(in srgb, var(--text-primary) 50%, transparent); --mix-3: color-mix(in srgb, var(--text-primary) 40%, transparent); }
   .mix h3 { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-medium); }
   /* Series colours mean "stream" everywhere else on the page, so models get an ink ramp instead: darkest is the most expensive. The goal ticks are the accent, so it reads against all three. */
   .mix-legend { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: 0; padding: 0; list-style: none; font-size: var(--text-sm); color: var(--text-secondary); }
   .mix-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 1px; }
   .mix-legend .m-opus { background: var(--mix-1); } .mix-legend .m-sonnet { background: var(--mix-2); } .mix-legend .m-haiku { background: var(--mix-3); }
   .cost-mix-facts { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-5); font-size: var(--text-sm); color: var(--text-secondary); }
-  .exp-h { margin: var(--space-5) 0 0; font-size: var(--text-sm); font-weight: var(--weight-medium); }
-  .cost-reg { margin: var(--space-2) 0 0; padding: 0; list-style: none; display: grid; gap: var(--space-2); font-size: var(--text-sm); }
+  .cost-reg { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-2); font-size: var(--text-sm); }
   .cost-reg li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; border-top: var(--hairline); padding-top: var(--space-2); }
   .cost-reg .id { font-family: var(--font-mono); color: var(--text-muted); }
   .cost-reg .chip { padding: 1px var(--space-2); border-radius: var(--radius-sm); font-size: var(--text-xs); background: var(--surface-2); color: var(--text-secondary); }
@@ -69,9 +68,9 @@ export const COST_CSS = `
   .brass.stale { --accent: var(--text-muted); --critical: var(--text-secondary); --critical-soft: var(--surface-2); --success: var(--text-secondary); --success-soft: var(--surface-2); }
   .brass.stale .dyn-mark { color: var(--text-secondary); }
   .brass.stale .donut line.goal { stroke: var(--text-secondary); }
-  .gauge { display: grid; gap: var(--space-2); }
-  .gauge h3 { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-medium); }
-  .gauges { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); margin-top: var(--space-5); }
+  .cost-gauge { display: grid; gap: var(--space-2); }
+  .cost-gauge h3 { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+  .gauges { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
   .tempo-wrap { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-5); align-items: center; }
   .tempo-read { display: grid; gap: var(--space-1); }
   .tempo-read .big { margin: 0; font-family: var(--font-display); font-size: var(--text-2xl); line-height: 1; font-variant-numeric: tabular-nums; }
@@ -216,7 +215,7 @@ function tempo(t: Tempo | null, liveDate: string | null): HTMLElement {
 }
 
 /** A small heading over one gauge. */
-const gauge = (title: string, body: HTMLElement): HTMLElement => h('div', { class: 'gauge' }, h('h3', {}, title), body);
+const gauge = (title: string, body: HTMLElement): HTMLElement => h('div', { class: 'cost-gauge' }, h('h3', {}, title), body);
 
 const TAU = Math.PI * 2;
 const RING = 44;
@@ -248,7 +247,6 @@ function mixBlock(mix: NonNullable<CostData['mix']>, date: string | null, stale:
     s('text', { class: 'c1', x: '60', y: '60' }, `Opus ${pct(mix.opus)}`),
     s('text', { class: 'c2', x: '60', y: '74' }, Number.isFinite(mix.opusMax) ? `goal \u2264${tg(mix.opusMax)}` : 'no goal'));
   return h('div', { class: 'mix' },
-    h('h3', {}, 'Model mix'),
     h('div', { class: 'donut-wrap' }, ring,
       h('div', {},
         h('ul', { class: 'mix-legend', role: 'list', 'aria-hidden': 'true' }, ...parts.map(([name, cls, n]) => h('li', {}, h('i', { class: `m-${cls}` }), `${name} ${pct(n)}`))),
@@ -261,17 +259,28 @@ function mixBlock(mix: NonNullable<CostData['mix']>, date: string | null, stale:
 
 const expLine = (e: CostExperiment, lead = false): HTMLElement => h('li', {}, lead ? h('span', { class: 'chip good' }, 'Today') : null, h('span', { class: 'id' }, e.id), h('span', { class: 'chip' }, e.status), h('span', {}, e.practice), e.result && e.result !== '-' ? h('span', { class: 'vs' }, e.result) : null);
 
-/** The Cost section. Null when the server sent none (an old server): a page without the widget is complete. */
-export function costSection(c: CostData | null, tempoData: Tempo | null = null): HTMLElement | null {
+/** The Cost widgets Home places separately, so no one of them towers over its neighbour. `rest` is empty when there is no measurement to split. */
+export interface CostSections { cost: HTMLElement; rest: HTMLElement[] }
+
+/**
+ * Cost as four widgets from the sections it always had: the metrics (Cost), the day's tempo with the daily limit (Tempo), the model mix, and the experiments.
+ * Null when the server sent none (an old server): a page without the widgets is complete. With no measurement only the Cost widget is drawn, saying why.
+ */
+export function costSections(c: CostData | null, tempoData: Tempo | null = null): CostSections | null {
   if (!c) return null;
-  if (c.state === 'empty') return conceptSection('brass half', { instrument: 'Brass', title: 'Cost', n: null, hint: 'Tokens per day against the 7-day median' }, tacet(c.reason ?? 'No token history yet.', 'tacet'));
+  if (c.state === 'empty') return { cost: conceptSection('brass half', { instrument: 'Brass', title: 'Cost', n: null, hint: 'Tokens per day against the 7-day median' }, tacet(c.reason ?? 'No token history yet.', 'tacet')), rest: [] };
   const aside = c.regressions.length ? `${c.date}: ${c.regressions.length} regressed (${c.regressions.join(', ')})` : `${c.date}: nothing regressed`;
   const head = c.stale ? `Last measured ${c.date}; no fresh measurement` : aside;
   const exps = [...(c.today ? [c.today] : []), ...c.running.filter((r) => r.id !== c.today?.id), ...c.recent];
-  return conceptSection(`brass half${c.stale ? ' stale' : ''}`, { instrument: 'Brass', title: 'Cost', n: null, hint: head },
+  const cls = (size: string): string => `brass ${size}${c.stale ? ' stale' : ''}`;
+  const cost = conceptSection(cls('half'), { instrument: 'Brass', title: 'Cost', n: null, hint: head },
     c.stale ? h('p', { class: 'cost-stale', role: 'status' }, `Last measured ${c.date}. There is no fresh measurement, so the numbers below are from that day, not today. Run token-metrics.ts --write to bring them up to date.`) : null,
-    h('ul', { class: 'dyn-list', role: 'list', 'aria-label': 'Cost metrics, today against the 7-day median' }, ...c.metrics.map((m) => dynamic(m, c.days))),
-    h('div', { class: 'gauges' }, gauge("Day's tempo", tempo(tempoData, c.stale ? null : c.date)), gauge('Daily limit', metronome(c)), c.mix ? mixBlock(c.mix, c.date, c.stale) : tacet('The model mix is not available for this day.', 'tacet')),
-    h('h3', { class: 'exp-h' }, 'Experiments'),
+    h('ul', { class: 'dyn-list', role: 'list', 'aria-label': 'Cost metrics, today against the 7-day median' }, ...c.metrics.map((m) => dynamic(m, c.days))));
+  const rhythm = conceptSection(cls('third'), { instrument: 'Brass', title: 'Tempo', n: null, hint: "Today's work and the daily limit" },
+    h('div', { class: 'gauges' }, gauge("Day's tempo", tempo(tempoData, c.stale ? null : c.date)), gauge('Daily limit', metronome(c))));
+  const mix = conceptSection(cls('third'), { instrument: 'Brass', title: 'Model mix', n: null, hint: c.date && !c.stale ? `Measured for ${c.date}` : null },
+    c.mix ? mixBlock(c.mix, c.date, c.stale) : tacet('The model mix is not available for this day.', 'tacet'));
+  const experiments = conceptSection(cls('third'), { instrument: 'Brass', title: 'Experiments', n: exps.length || null },
     h('ul', { class: 'cost-reg', role: 'list', 'aria-label': 'Cost experiments' }, ...(exps.length ? exps.map((e) => expLine(e, e.id === c.today?.id)) : []), ...(c.today ? [] : [h('li', {}, 'No experiment proposed today.')])));
+  return { cost, rest: [rhythm, mix, experiments] };
 }

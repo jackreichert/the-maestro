@@ -171,7 +171,7 @@ test('with no asks, rows for PRs and reviews replace the empty sentence', () => 
 
 test('the gauges say how many asks are open and how many PRs are open, with words and not colour alone', () => {
   const el = draw(state(), charts(), { state: 'ok', data: projects() });
-  const gauges = [...el.querySelectorAll('section.gauge')];
+  const gauges = [...el.querySelectorAll('section.continuo')];
   assert.equal(gauges.length, 2);
   assert.match(text(gauges[0]), /Open asks by age/);
   assert.match(text(gauges[1]), /Open PRs/);
@@ -225,4 +225,15 @@ test('the PRs and reviews waiting on you are bounded to a page, with a count and
   assert.match(text(cues.querySelector('.needs-count')), /9 items wait on you, 3 to a page/);
   assert.match(cues.querySelector('.needs-count a')!.getAttribute('href')!, /^#tab=others/);
   assert.match(text(cues.querySelector('.needs-count a')), /All 9 reviews are on the Others' PRs tab/);
+});
+
+test('an ask that arrives twice, even under the other stream, is one cue; a repeated needs item is one row', () => {
+  const st = state();
+  const first = st.asks[0]!;
+  st.asks.push(structuredClone(first), { ...structuredClone(first), stream: 'other' });
+  const el = draw(st, charts(), { state: 'ok', data: projects() });
+  const cues = sec(el, 'Cues');
+  const ids = [...cues.querySelectorAll('ask-card')].map((c) => (c as unknown as { ask: { id: string } }).ask.id);
+  assert.equal(new Set(ids).size, ids.length, `no ask id repeats: ${ids.join(',')}`);
+  assert.equal(ids.length, state().asks.length);
 });

@@ -70,6 +70,10 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .stale-note { margin: var(--space-1) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--warning); }
   /* The template's sections, each under its own heading, in a fixed order; an older free-text ask has none of these and keeps the layout above. */
   .sec { max-width: 70ch; }
+  /* The recommendation is the one thing the reader acts on, so it sits apart from the question and its context: its own block, an accent rule and a tinted ground. */
+  .recommend { max-width: 70ch; margin: var(--space-2) 0; padding: var(--space-2) var(--space-3); border-left: 3px solid var(--accent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--accent-soft); }
+  .sec.recommend h4, .recommend .rec-label { display: block; margin: 0 0 var(--space-1); font-size: var(--text-xs); line-height: var(--leading-xs); font-weight: var(--weight-semibold); letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); }
+  .recommend p { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; text-wrap: pretty; }
   .sec h4 { margin: 0 0 var(--space-1); font-size: var(--text-xs); line-height: var(--leading-xs); font-weight: var(--weight-semibold); letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
   .sec p, .sec ul, .sec ol { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; text-wrap: pretty; }
   .sec ul, .sec ol { padding-left: 1.25em; display: grid; gap: var(--space-1); }
@@ -139,16 +143,26 @@ function templateSections(a: AskCard, uid: string, links: { label: string; url?:
     section(uid, 'blocked', 'What is blocked', h('p', {}, t.blocked)),
     ...(t.context.length ? [section(uid, 'context', 'Context', h('ul', {}, ...t.context.map((c) => h('li', {}, c))))] : []),
     section(uid, 'options', 'Options', h('ol', {}, ...t.options.map((o) => h('li', {}, o.option, o.cost ? h('span', { class: 'cost' }, ` (cost: ${o.cost})`) : null)))),
-    ...(a.recommend ? [section(uid, 'recommendation', 'Recommendation', h('p', {}, a.recommend))] : []),
+    ...(a.recommend ? [recommendBlock(section(uid, 'recommendation', 'Recommend', h('p', {}, a.recommend)))] : []),
     section(uid, 'links', 'Links', h('ul', { class: 'links', role: 'list' }, ...links.map((r) => h('li', {}, refLink(r))))),
     ...(a.searched ? [section(uid, 'checked', 'What I checked', h('p', {}, a.searched))] : []),
   ];
 }
 
+/** Marks a recommendation section as the emphasised block (see `.recommend`). */
+function recommendBlock(sec: HTMLElement): HTMLElement {
+  sec.classList.add('recommend');
+  return sec;
+}
+
+/** The recommendation of a free-text ask, as its own labelled block above the decision details. Null when there is none. */
+function legacyRecommend(a: AskCard): HTMLElement | null {
+  return a.recommend && !a.sections ? h('div', { class: 'recommend' }, h('span', { class: 'rec-label' }, 'Recommend'), h('p', {}, a.recommend)) : null;
+}
+
 /** What the ask recommends, how reversible it is, what silence does and by when, as a list of labelled lines; null when it carries none. The templated card shows the recommendation in its own section. */
 function decisionFields(a: AskCard): HTMLElement | null {
   const rows: [string, string][] = [
-    ...(a.recommend && !a.sections ? [['Recommend', a.recommend] as [string, string]] : []),
     ...(a.door ? [['Door', a.door === 'one-way' ? 'one-way (silence never decides it)' : 'two-way (reversible)'] as [string, string]] : []),
     ...(a.default ? [['If silent', a.default] as [string, string]] : []),
     ...(a.by ? [['Decide by', a.by] as [string, string]] : []),
@@ -237,6 +251,7 @@ export class AskCardElement extends HTMLElement {
     if (panel) panel.source = { source: 'ask', id: a.id };
     const body = h('div', { class: 'body', id: `${uid}-b`, hidden: true },
       ...(structured.length ? structured : []),
+      legacyRecommend(a),
       decisionFields(a),
       structured.length ? null : (a.context ? context(a.context, `${uid}-c`) : null),
       a.paste ? h('p', { class: 'paste' }, this.#locked ? 'Run this block, then answer with what it printed: ' : 'Review the block, then run it here. It is read from: ', h('code', {}, a.paste)) : null,
