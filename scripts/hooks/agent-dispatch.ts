@@ -21,7 +21,7 @@ import { briefLinkRow } from '../lib/journal/brief-link.ts';
 import { failOpen, hookWindow, HOOK_MARKS, idSource, readInput, realLedger } from './ledger-hook.ts';
 import type { HookLedger } from './ledger-hook.ts';
 
-export interface AgentCall { session_id?: string; /** Set by the harness on a call a subagent makes itself; absent on the orchestrator's own. */ agent_id?: string; tool_input?: { description?: string; prompt?: string; subagent_type?: string } }
+export interface AgentCall { session_id?: string; /** Set by the harness on a call a subagent makes itself; absent on the orchestrator's own. */ agent_id?: string; tool_use_id?: string; tool_input?: { description?: string; prompt?: string; subagent_type?: string } }
 
 /**
  * Appends the dispatch rows and returns them. A dispatch the orchestrator makes opens a row when none matches and keeps the prompt
@@ -34,7 +34,7 @@ export function dispatch(input: AgentCall, ledger: HookLedger): LedgerRow[] {
   const call = input.tool_input ?? {};
   const nextId = idSource(rows, ledger.newId);
   const window = hookWindow(input.session_id);
-  const out = dispatchRows(rows, fold(rows, null).items, { window, description: call.description, prompt: call.prompt, agentType: call.subagent_type }, ledger.now(), nextId, HOOK_MARKS);
+  const out = dispatchRows(rows, fold(rows, null).items, { window, description: call.description, prompt: call.prompt, agentType: call.subagent_type, toolUseId: input.tool_use_id }, ledger.now(), nextId, HOOK_MARKS);
   const opened = out.find((r) => r.kind === 'wip' && r.hookOpened === true);
   const file = opened && call.prompt && ledger.saveBrief ? ledger.saveBrief(call.prompt, String(opened.text ?? ''), String(opened.id), String(opened.date)) : null;
   if (opened && file) out.splice(1, 0, { ...HOOK_MARKS, ts: opened.ts, date: opened.date, window, id: nextId(), ...briefLinkRow(String(opened.id), file, { repo: undefined }) } as LedgerRow);

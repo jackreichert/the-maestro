@@ -30,6 +30,7 @@ export function footerOneLine({ rows, queue, loop, session, window, leases, done
         `${sum((r) => r.done)} ${doneLabel}`,
         `${sum((r) => r.inflight)} in flight`,
         ...(sum((r) => r.stale ?? 0) ? [`${sum((r) => r.stale ?? 0)} stale`] : []),
+        ...(sum((r) => r.verify ?? 0) ? [`${sum((r) => r.verify ?? 0)} to verify`] : []),
         ...(sum((r) => r.queued) ? [`${sum((r) => r.queued)} queued`] : []),
         `${sum((r) => r.awaiting)} awaiting`,
         ...(sum((r) => r.paste) ? [`${sum((r) => r.paste)} to run`] : []),

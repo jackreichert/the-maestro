@@ -2,6 +2,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { activeDeferrals, isOpen, isQueued, isInFlight } from '../ledger-core.ts';
 import type { LedgerItem, LedgerRow, fold as foldRows } from '../ledger-core.ts';
+import { AGENT_RETURNED_STEP } from './agent-rows.ts';
 import { visibleTo } from './scope.ts';
 import type { Args } from './args.ts';
 import type { Store } from './store.ts';
@@ -121,6 +122,8 @@ export interface FooterRow {
     sinceRoll?: number;
     /** Rows at least `stale_wip_days` old with no live lease: nothing is known to be working on them. Counted apart from `inflight`, never inside it. Present only when the caller supplied the leases and some row qualifies. */
     stale?: number;
+    /** In-flight rows whose agent has stopped and whose hand-back nobody has verified yet (`returned, verify`). Counted apart from `inflight`, never inside it, so the footer moves when an agent finishes. Present only when some row qualifies. */
+    verify?: number;
     /** Of the awaiting asks that carry decision fields, how many are one-way doors; absent when none carry them. */
     oneWay?: number;
     /** The soonest decide-by among them, as stored; absent when none names one. */
@@ -166,8 +169,10 @@ export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | '
     const row = (name: string | null, pick: (i: LedgerItem) => boolean): FooterRow => {
         const n = (arr: LedgerItem[]): number => arr.filter(pick).length;
         const asks = askSummary(g.awaiting.filter(pick));
-        const stale = live ? staleInflight(g.inflight.filter(pick), live).length : 0;
-        return { name, done: n(done), inflight: n(g.inflight) - stale, ...(stale ? { stale } : {}), queued: n(g.queued), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked), ...(sinceRoll ? { sinceRoll: n(sinceRoll) } : {}), ...(asks.oneWay ? { oneWay: asks.oneWay } : {}), ...(asks.nextBy ? { nextBy: asks.nextBy } : {}) };
+        const staleIds = new Set(live ? staleInflight(g.inflight.filter(pick), live).map((i) => i.id) : []);
+        const stale = staleIds.size;
+        const verify = g.inflight.filter((i) => pick(i) && !staleIds.has(i.id) && i.nextStep === AGENT_RETURNED_STEP).length;
+        return { name, done: n(done), inflight: n(g.inflight) - stale - verify, ...(stale ? { stale } : {}), ...(verify ? { verify } : {}), queued: n(g.queued), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked), ...(sinceRoll ? { sinceRoll: n(sinceRoll) } : {}), ...(asks.oneWay ? { oneWay: asks.oneWay } : {}), ...(asks.nextBy ? { nextBy: asks.nextBy } : {}) };
     };
     if (!streams.length) return [row(null, () => true)];
     const rows = streams.map((s) => row(s, (i) => i.stream === s));
@@ -177,7 +182,7 @@ export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | '
 }
 
 const footerLine = (r: FooterRow, staleDays = FOOTER_STALE_DAYS, doneLabel = 'done today'): string =>
-    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} ${doneLabel}${r.sinceRoll !== undefined ? ` · ${r.sinceRoll} since last roll` : ''} · ${r.inflight} in flight${r.stale ? ` · ${r.stale} stale (${staleDays}d+, no lease)` : ''}${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
+    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} ${doneLabel}${r.sinceRoll !== undefined ? ` · ${r.sinceRoll} since last roll` : ''} · ${r.inflight} in flight${r.stale ? ` · ${r.stale} stale (${staleDays}d+, no lease)` : ''}${r.verify ? ` · ${r.verify} to verify` : ''}${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
 
 /** The reply-footer Ledger lines, one per `footerRows` row. `sinceRoll` is shown only when the caller passes that day's post-roll slice. */
 export const footerLines = (g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[], live?: FooterLiveness): string[] => footerRows(g, done, sinceRoll, live).map((r) => footerLine(r, live?.staleDays, live?.doneLabel));
