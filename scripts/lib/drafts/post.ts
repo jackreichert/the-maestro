@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { toolCommand } from '../tool-bin.ts';
 import { randomBytes } from 'node:crypto';
 import { appendRow, eventOf, listDrafts, refuse, revOf, textProblem, withLock } from './queue.ts';
-import type { Draft, Outcome } from './queue.ts';
+import type { Draft, Outcome, ReviewEvent } from './queue.ts';
 import { fetchThreads } from '../replies/threads.ts';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -32,12 +32,12 @@ export const spawnGh: GhRun = (args, input) => {
 export interface GhCall { args: string[]; input?: string }
 
 /** The call that posts this draft's text: an inline review comment, a reply in a review thread, a plain PR comment, or a whole review. */
-export function ghCall(d: Draft, text: string): GhCall {
+export function ghCall(d: Draft, text: string, event?: ReviewEvent | 'COMMENT'): GhCall {
   const base = `repos/${d.repo}`;
   const t = d.target;
   const body = ['-f', `body=${text}`];
   if (t.kind === 'review' && d.review) {
-    const input = JSON.stringify({ commit_id: t.commitId, event: eventOf(d.review), body: text, comments: d.review.comments.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', body: c.text })) });
+    const input = JSON.stringify({ commit_id: t.commitId, event: event ?? eventOf(d.review), body: text, comments: d.review.comments.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', body: c.text })) });
     return { args: ['api', '-X', 'POST', `${base}/pulls/${d.pr}/reviews`, '--input', '-'], input };
   }
   if (t.kind === 'inline') return { args: ['api', '-X', 'POST', `${base}/pulls/${d.pr}/comments`, ...body, '-f', `commit_id=${t.commitId}`, '-f', `path=${t.path}`, '-F', `line=${t.line}`, '-f', 'side=RIGHT'] };
@@ -79,6 +79,31 @@ function liveHead(run: GhRun, repo: string, pr: number): string | null {
   const sha = r.stdout.trim().toLowerCase();
   return r.status === 0 && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
+/**
+ * How many unresolved review threads Copilot opened on the PR, read live from GitHub now; null when GitHub cannot say (the caller then fails closed).
+ * Every unresolved thread counts, whoever spoke last, because the rule is about what is still open on the PR.
+ */
+export function openCopilotThreads(run: GhRun, repo: string, pr: number): number | null {
+  try { return fetchThreads(repo, pr, '', run).threads.filter((t) => /copilot/i.test(t.comments[0]?.author ?? '')).length; } catch { return null; }
+}
+
+/** A backmerge PR is one whose head branch is named for it (`backmerge/...`, `back-merge-...`): the repo convention, and not something a title can claim. */
+const BACKMERGE_HEAD = /^(backmerge\/|back-merge-)/i;
+function isBackmerge(run: GhRun, repo: string, pr: number): boolean {
+  let r: GhResult;
+  try { r = run(['api', `repos/${repo}/pulls/${pr}`, '--jq', '.head.ref']); } catch { return false; }
+  return r.status === 0 && BACKMERGE_HEAD.test(r.stdout.trim());
+}
+
+/** The refusal that stops an approving review while Copilot threads are open, or null when the review may go out as it is. Backmerges are exempt; an unreadable PR is not. */
+function copilotRefusal(run: GhRun, d: Draft): ReturnType<typeof refuse> | null {
+  const open = openCopilotThreads(run, d.repo, d.pr);
+  if (open === 0) return null;
+  if (open !== null && isBackmerge(run, d.repo, d.pr)) return null;
+  const why = open === null ? 'Could not read the PR\'s review threads from GitHub, so an approval is not posted.' : `${open} Copilot thread${open === 1 ? ' is' : 's are'} still open on this PR, so an approval is not posted.`;
+  return refuse('copilot', `${why} Post it as a comment instead, or resolve the threads first. Nothing was posted.`);
+}
+
 function urlOf(stdout: string): string | undefined {
   try {
     const u = (JSON.parse(stdout) as { html_url?: unknown }).html_url;
@@ -86,7 +111,8 @@ function urlOf(stdout: string): string | undefined {
   } catch { return undefined; }
 }
 
-export interface PostOptions { run?: GhRun; now?: () => Date }
+/** `asComment` posts an approving review as a COMMENT review: the way through when open Copilot threads forbid the approval. */
+export interface PostOptions { run?: GhRun; now?: () => Date; asComment?: boolean }
 
 /** Approve this draft as the text shown and post it. The one posting path. */
 export function approveAndPost(file: string, id: string, shownRev: string, o: PostOptions = {}): Outcome<{ url?: string }> {
@@ -114,14 +140,22 @@ export function approveAndPost(file: string, id: string, shownRev: string, o: Po
         toPost = { ...d, target: { kind: 'review', commitId: head } };
       }
     }
-    appendRow(file, { op: 'approve', id, ts: ts(), text: d.text });
+    // The live rule, checked now and not at submit: The user never approves a PR that still has Copilot threads open. A COMMENT review is allowed through, and so is a backmerge.
+    const approving = d.target.kind === 'review' && d.review !== undefined && eventOf(d.review) === 'APPROVE';
+    if (o.asComment && !approving) return refuse('invalid', 'Only an approving review can be posted as a comment.');
+    let event: 'COMMENT' | undefined;
+    if (approving) {
+      if (o.asComment) event = 'COMMENT';
+      else { const blocked = copilotRefusal(run, d); if (blocked) return blocked; }
+    }
+    appendRow(file, { op: 'approve', id, ts: ts(), text: d.text, ...(event ? { event } : {}) });
     const nonce = randomBytes(8).toString('hex');
     appendRow(file, { op: 'posting', id, ts: ts(), nonce });
     // The lock should make this the only writer; if it ever is not, gh runs only when the fold accepted THIS writer's posting row (the first one of the current attempt),
     // so what we check is exactly what the fold will honour when it reads our posted/failed row.
     if (listDrafts(file).find((x) => x.id === id)?.postingNonce !== nonce) return refuse('busy', 'Another approval of this draft is already running.');
     let r: GhResult;
-    try { const call = ghCall(toPost, d.text); r = run(call.args, call.input); } catch { r = { status: null, stdout: '', stderr: '' }; }
+    try { const call = ghCall(toPost, d.text, event); r = run(call.args, call.input); } catch { r = { status: null, stdout: '', stderr: '' }; }
     if (r.status === 0) {
       const url = urlOf(r.stdout);
       appendRow(file, { op: 'posted', id, ts: ts(), ...(url ? { url } : {}) });

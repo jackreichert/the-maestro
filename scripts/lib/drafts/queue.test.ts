@@ -13,13 +13,21 @@ import type { GhResult } from './post.ts';
 const file = (): string => { const d = mkdtempSync(join(tmpdir(), 'drafts-')); mkdirSync(join(d, 'J')); return join(d, 'J', 'drafts.jsonl'); };
 const R = (f: string, id: string): string => { const d = listDrafts(f).find((x) => x.id === id); return d ? revOf(d) : '000000000000'; };
 const draft = (over: Partial<NewDraft> = {}): NewDraft => ({ key: 'acme/widgets#7@abc:a.ts:3:x', source: 'review', repo: 'acme/widgets', pr: 7, severity: 'suggestion', text: 'Could this guard against an empty list?', target: { kind: 'inline', path: 'src/a.ts', line: 3, commitId: 'abcdef1' }, ...over });
-interface Stub { calls: string[][]; run: (a: string[], input?: string) => GhResult; postedInput?: string }
+interface Stub { calls: string[][]; run: (a: string[], input?: string) => GhResult; postedInput?: string; copilot: number; headRef: string }
+/** The GraphQL answer for a PR with `n` unresolved Copilot threads (and one human thread, which must never count). */
+const threadsReply = (n: number): string => {
+  const thread = (i: number, login: string): object => ({ id: `T${i}`, isResolved: false, isOutdated: false, path: 'a.ts', line: 1, comments: { pageInfo: { hasNextPage: false }, nodes: [{ databaseId: i + 1, body: 'x', author: { login, __typename: 'Bot' } }] } });
+  const nodes = [...Array.from({ length: n }, (_, i) => thread(i, 'copilot-pull-request-reviewer')), thread(99, 'robin-r')];
+  return JSON.stringify({ data: { repository: { pullRequest: { state: 'OPEN', author: { login: 'robin-r' }, reviewThreads: { pageInfo: { hasNextPage: false }, nodes } } } } });
+};
 const HEAD = `abcdef1${'0'.repeat(33)}`;
 /** A gh stand-in. The live-head read a review makes before posting is answered with `head` and not counted in `calls`; every other call gets `result`. */
 const stub = (result: Partial<GhResult> = {}, head: Partial<GhResult> = { stdout: `${HEAD}\n` }, files?: Partial<GhResult>): Stub => {
   const calls: string[][] = [];
-  const out: Stub = { calls, run: (a, input) => {
+  const out: Stub = { calls, copilot: 0, headRef: 'feat/widgets', run: (a, input) => {
     out.postedInput = input ?? out.postedInput;
+    if (a.includes('graphql')) return { status: 0, stdout: threadsReply(out.copilot), stderr: '' };
+    if (a.at(-1) === '.head.ref') return { status: 0, stdout: `${out.headRef}\n`, stderr: '' };
     if (a.includes('--jq')) return a[1]?.includes('/compare/') ? { status: 0, stdout: '["README.md"]', stderr: '', ...(files ?? {}) } : { status: 0, stdout: '', stderr: '', ...head };
     calls.push(a);
     return { status: 0, stdout: '{"html_url":"https://github.com/acme/widgets/pull/7#discussion_r1"}', stderr: '', ...result };
@@ -341,4 +349,71 @@ test('when the PR moved but the push touched none of the files the review commen
   assert.equal(approveAndPost(f, id, R(f, id), { run: g.run }).ok, true);
   assert.equal(JSON.parse(g.postedInput ?? '{}').commit_id, newHead);
   assert.deepEqual(listDrafts(f)[0]?.target, { kind: 'review', commitId: 'abcdef1' }, 'the stored draft keeps the commit it was written against');
+});
+
+test('an approving review is refused while Copilot threads are open, and nothing is posted or recorded as approved', () => {
+  const f = file(); const g = stub(); g.copilot = 2;
+  const { id } = addDraft(f, review());
+  const out = approveAndPost(f, id, R(f, id), { run: g.run });
+  assert.equal(out.ok, false);
+  assert.equal(out.ok === false && out.code, 'copilot');
+  assert.match(out.ok === false ? out.message : '', /2 Copilot threads are still open.*as a comment/);
+  assert.equal(g.calls.length, 0, 'no review reached GitHub');
+  assert.equal(listDrafts(f)[0]?.state, 'pending', 'the draft stays pending, so it can still be posted as a comment');
+});
+
+test('the check is live at click time: threads that opened after submit block it, and threads that closed let it through', () => {
+  const f = file(); const g = stub();
+  const { id } = addDraft(f, review());
+  g.copilot = 1;
+  assert.equal(approveAndPost(f, id, R(f, id), { run: g.run }).ok, false, 'a thread opened since the draft was made');
+  g.copilot = 0;
+  assert.equal(approveAndPost(f, id, R(f, id), { run: g.run }).ok, true, 'resolved since: the same draft now posts as an approval');
+  assert.equal(JSON.parse(g.postedInput ?? '{}').event, 'APPROVE');
+});
+
+test('asComment posts the same review as a COMMENT review despite open Copilot threads, and records it', () => {
+  const f = file(); const g = stub(); g.copilot = 3;
+  const { id } = addDraft(f, review());
+  assert.equal(approveAndPost(f, id, R(f, id), { run: g.run, asComment: true }).ok, true);
+  const body = JSON.parse(g.postedInput ?? '{}');
+  assert.deepEqual([body.event, body.commit_id, body.comments.length], ['COMMENT', 'abcdef1', 1]);
+  assert.ok(readFileSync(f, 'utf8').split('\n').some((l) => l.includes('"op":"approve"') && l.includes('"event":"COMMENT"')));
+});
+
+test('a backmerge (head branch named for it) is exempt from the Copilot rule, a look-alike title is not', () => {
+  const f = file(); const g = stub(); g.copilot = 4; g.headRef = 'backmerge/main-into-develop';
+  const { id } = addDraft(f, review());
+  assert.equal(approveAndPost(f, id, R(f, id), { run: g.run }).ok, true);
+  assert.equal(JSON.parse(g.postedInput ?? '{}').event, 'APPROVE');
+  const f2 = file(); const g2 = stub(); g2.copilot = 4; g2.headRef = 'feat/backmerges-are-great';
+  const b = addDraft(f2, review());
+  assert.equal(approveAndPost(f2, b.id, R(f2, b.id), { run: g2.run }).ok, false, 'only a head branch named backmerge counts');
+  for (const ref of ['feat/backmerge-docs', 'fix-backmerge-x', 'x_backmerge']) {
+    const f3 = file(); const g3 = stub(); g3.copilot = 1; g3.headRef = ref;
+    const c = addDraft(f3, review());
+    assert.equal(approveAndPost(f3, c.id, R(f3, c.id), { run: g3.run }).ok, false, `${ref} is not a backmerge branch`);
+  }
+});
+
+test('when GitHub cannot say how many threads are open, the approval is refused rather than assumed clean', () => {
+  const f = file(); const g = stub();
+  const run = (a: string[], i?: string): GhResult => (a.includes('graphql') ? { status: 1, stdout: '', stderr: 'boom' } : g.run(a, i));
+  const { id } = addDraft(f, review());
+  const out = approveAndPost(f, id, R(f, id), { run });
+  assert.equal(out.ok === false && out.code, 'copilot');
+  assert.equal(g.calls.length, 0);
+});
+
+test('the Copilot rule only touches an approving review: a REQUEST_CHANGES review and a plain comment post as before, and asComment is refused on them', () => {
+  const f = file(); const g = stub(); g.copilot = 2;
+  const blocked = addDraft(f, review({}, [{ path: 'a.ts', line: 1, text: 'This crashes on an empty cart.', severity: 'blocking' }]));
+  assert.equal(approveAndPost(f, blocked.id, R(f, blocked.id), { run: g.run }).ok, true);
+  assert.equal(JSON.parse(g.postedInput ?? '{}').event, 'REQUEST_CHANGES');
+  const f2 = file(); const g2 = stub(); g2.copilot = 2;
+  const plain = addDraft(f2, draft());
+  const out = approveAndPost(f2, plain.id, R(f2, plain.id), { run: g2.run, asComment: true });
+  assert.equal(out.ok === false && out.code, 'invalid');
+  assert.equal(g2.calls.length, 0);
+  assert.equal(approveAndPost(f2, plain.id, R(f2, plain.id), { run: g2.run }).ok, true, 'a non-review draft never checks threads');
 });
