@@ -7,14 +7,14 @@ import { grow } from './home-bars.ts';
 import { conceptSection, streamVar, tacet } from './home-concept.ts';
 import { queuedByStream } from './home-model.ts';
 import { newlyShipped } from './home-motion.ts';
-import { homeUi } from './home-sections.ts';
+import { pagedRows } from './pager.ts';
 import { seriesClass } from './series.ts';
 import { itemRows } from './stream-board.ts';
 import type { RowContext } from './stream-board.ts';
 import type { PodiumState } from './types.ts';
 
-/** Shipped items listed before "Show all N". */
-export const SHIPPED_CAP = 6;
+/** Shipped items on one page of the Coda list. */
+export const SHIPPED_PAGE = 6;
 
 export const HELD_CSS = `
   .side { display: grid; gap: var(--section-gap) var(--gutter); align-content: start; min-width: 0; }
@@ -58,20 +58,13 @@ export function heldSection(st: PodiumState, live: boolean): HTMLElement {
 }
 
 /** Coda: what shipped today, newest first. A row that arrived since the last draw lands with a small spring. */
-export function codaSection(st: PodiumState, redraw: () => void): HTMLElement {
+export function codaSection(st: PodiumState): HTMLElement {
   const newest = [...st.done].sort((a, b) => Date.parse(b.closedAt) - Date.parse(a.closedAt));
   const fresh = newlyShipped(newest.map((d) => d.id));
-  const rows = newest.map((d, i) => withIndex(h('div', { class: `crow ${streamVar(d.stream)}${fresh.has(d.id) ? ' new' : ''}`, role: 'listitem', hidden: !homeUi.allShipped && i >= SHIPPED_CAP },
+  const rows = newest.map((d, i) => withIndex(h('div', { class: `crow ${streamVar(d.stream)}${fresh.has(d.id) ? ' new' : ''}`, role: 'listitem' },
     h('div', { class: 'crow-top' }, h('span', { class: 'txt' }, d.text), h('span', { class: 'when' }, h('span', { class: 'vh' }, 'shipped '), clockTime(d.closedAt, st.tz))),
     h('div', { class: 'crow-sub' }, h('span', { class: 'status' }, h('span', { 'aria-hidden': 'true' }, '✓'), 'Shipped'), streamTag(d.stream), d.ticket ? refLink(d.ticket) : null)), i));
-  const more = newest.length > SHIPPED_CAP
-    ? (() => {
-      const b = h('button', { type: 'button', class: 'more', 'data-ctl': 'more-shipped', 'aria-expanded': String(homeUi.allShipped) },
-        homeUi.allShipped ? 'Show fewer' : `Show all ${newest.length}`, h('span', { class: 'vh' }, ' shipped items'), h('span', { class: 'chev', 'aria-hidden': 'true' }));
-      b.addEventListener('click', () => { homeUi.allShipped = !homeUi.allShipped; redraw(); });
-      return h('div', { class: 'more-row' }, b);
-    })()
-    : null;
+  const more = pagedRows(rows, { key: 'home-coda', size: SHIPPED_PAGE, label: 'Shipped today' });
   return conceptSection('coda', { instrument: 'Shipped today', title: 'Coda', plain: 'shipped today', n: newest.length || null, glyph: codaGlyph() },
     rows.length ? h('div', { class: 'coda-rows', role: 'list', 'aria-label': 'Shipped today, newest first' }, ...rows) : tacet('Nothing shipped yet today.', 'prima volta'), more);
 }

@@ -10,10 +10,12 @@ import { homeUi } from './home-sections.ts';
 import { scopedItems } from './needs-items.ts';
 import type { NeedsItem } from './needs-items.ts';
 import { needsRows } from './needs-view.ts';
+import { PAGES, pagedRows } from './pager.ts';
 import type { PodiumState } from './types.ts';
 
-/** Cues listed before "Show all N". */
-export const CUE_CAP = 6;
+const CUE_KEY = 'home-cues';
+/** Cues on one page of the Cues list. */
+export const CUE_PAGE = 6;
 
 export const CUES_CSS = `
   .chips-row { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 2px 0; list-style: none; }
@@ -36,9 +38,6 @@ export const CUES_CSS = `
   .qcue[hidden] { display: none; }
   .qcue ask-card { min-width: 0; }
   .rmark { display: grid; place-items: center; width: 28px; height: 28px; margin-top: var(--space-3); border: 1.5px solid var(--stream-color, var(--ink)); border-radius: 2px; color: var(--text-primary); font-weight: var(--weight-semibold); font-size: var(--text-sm); line-height: 1; }
-  .more-row { display: flex; margin-top: var(--space-3); }
-  .more-row button.more { margin: 0; min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); }
-  .more-row .rest { color: var(--text-muted); font-weight: var(--weight-regular); margin-left: var(--space-1); }
   .cues-tail { margin-top: var(--space-4); }
   @media (max-width: 480px) { .qcue { grid-template-columns: 24px minmax(0, 1fr); gap: 0 var(--space-2); } .rmark { width: 24px; height: 24px; font-size: var(--text-xs); } }
   .enter .qcue { animation: rise var(--dur-base) var(--ease-out) backwards; animation-delay: calc(var(--i, 0) * var(--stagger)); }
@@ -64,16 +63,15 @@ export function cuesSection(st: PodiumState, live: boolean, redraw: () => void, 
   const picked = pickedStream(st, extra);
   const shown = picked ? st.asks.filter((a) => a.stream === picked) : st.asks;
   const shownExtra = picked ? scopedItems(extra, picked) : extra;
-  const set = (patch: Partial<typeof homeUi>): void => { Object.assign(homeUi, patch); redraw(); };
+  const set = (patch: Partial<typeof homeUi>): void => { Object.assign(homeUi, patch); PAGES.delete(CUE_KEY); redraw(); };
 
   const ranked = orderNeedsYou(shown, homeUi.order, todaysPriorities(st));
-  const cap = homeUi.allAsks ? Number.POSITIVE_INFINITY : CUE_CAP;
   const cards = ranked.map((a, i) => {
     const card = h('ask-card', {});
     card.showStream = true;
     card.locked = !live;
     card.ask = a;
-    const cue = h('div', { class: `qcue ${streamVar(a.stream)}`, role: 'listitem', hidden: i >= cap }, h('span', { class: 'rmark', 'aria-hidden': 'true' }, rehearsalLetter(i)), card);
+    const cue = h('div', { class: `qcue ${streamVar(a.stream)}`, role: 'listitem' }, h('span', { class: 'rmark', 'aria-hidden': 'true' }, rehearsalLetter(i)), card);
     cue.style.setProperty('--i', String(Math.min(i, 8)));
     return { card, cue };
   });
@@ -86,7 +84,7 @@ export function cuesSection(st: PodiumState, live: boolean, redraw: () => void, 
   const chip = (stream: string | null, n: number): HTMLElement => {
     const b = h('button', { type: 'button', class: `fchip${stream ? ` tinted ${streamVar(stream)}` : ''}`, 'data-ctl': `chip-${stream ?? 'all'}`, 'aria-pressed': String(picked === stream) },
       stream ? h('span', { class: 'sw', 'aria-hidden': 'true' }) : null, stream ?? 'All', ' ', h('span', { class: 'c' }, String(n)));
-    b.addEventListener('click', () => set({ stream, allAsks: false }));
+    b.addEventListener('click', () => set({ stream }));
     return h('li', {}, b);
   };
   const byStream = st.streams.map((s) => ({ s, n: st.asks.filter((a) => a.stream === s).length + extra.filter((x) => x.stream === s).length })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
@@ -98,15 +96,7 @@ export function cuesSection(st: PodiumState, live: boolean, redraw: () => void, 
       byStream.length > 1 ? h('ul', { class: 'chips-row', role: 'list', 'aria-label': 'Filter cues by stream' }, chip(null, total), ...byStream.map((x) => chip(x.s, x.n))) : null,
       cards.length > 1 ? h('label', { class: 'select-field', for: 'cue-order' }, 'Order', select) : null)
     : null;
-  const hidden = cards.slice(CUE_CAP);
-  const more = hidden.length
-    ? (() => {
-      const b = h('button', { type: 'button', class: 'more', 'data-ctl': 'more-asks', 'aria-expanded': String(homeUi.allAsks) },
-        homeUi.allAsks ? 'Show fewer' : `Show all ${ranked.length}`, h('span', { class: 'vh' }, ' cues'), homeUi.allAsks ? null : h('span', { class: 'rest' }, `(${hidden.length} more)`), h('span', { class: 'chev', 'aria-hidden': 'true' }));
-      b.addEventListener('click', () => set({ allAsks: !homeUi.allAsks }));
-      return h('div', { class: 'more-row' }, b);
-    })()
-    : null;
+  const more = pagedRows(cards.map((c) => c.cue), { key: CUE_KEY, size: CUE_PAGE, label: 'Cues' });
   const hint = live
     ? 'Questions your agents are waiting on. Open a cue to see its context and the recommendation, then send an answer, take the recommendation, or skip a two-way door. It is saved to the ledger and leaves on the next update. Cues tied to the first priority of the day come first; PRs ready to merge and reviews waiting for your OK follow.'
     : 'Sample data: cues open read-only. Answering needs the Podium server.';

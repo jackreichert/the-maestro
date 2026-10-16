@@ -11,7 +11,7 @@ import type { ChartsData, HomeLink, PodiumState, ProjectsData } from './types.ts
 const LINK_KIND: Record<HomeLink['kind'], string> = { pin: 'pinned', context: 'context', library: 'library' };
 
 /** What the reader picked on the board. Kept at module level so a live refresh redraws Home with the same sort, filter and reveal. */
-export const homeUi: { order: AskOrder; stream: string | null; allAsks: boolean; allShipped: boolean } = { order: 'oldest', stream: null, allAsks: false, allShipped: false };
+export const homeUi: { order: AskOrder; stream: string | null } = { order: 'oldest', stream: null };
 
 export const STREAM_PAGE_CSS = `
   .big-staff .staff-svg { width: 100%; }
