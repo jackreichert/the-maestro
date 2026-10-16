@@ -201,6 +201,10 @@ resolve those.
 
 Never curt, and never a verdict. Human top-level feedback, such as a PR comment or review body, is answered with one PR comment covering each point.
 
+- **Design calls.** A reviewer's design call wins over the user's own unless the reviewer defers to the user.
+- **Resolve bot threads only.** Resolve a bot's thread after a fix or a reasoned decline; never resolve a person's thread.
+- **Foreign commits.** A PR that carries someone else's commits is recreated without them: a fresh branch from the base with only our work.
+
 Everything else about the git side of this — authorship, branch protection, commit
 slicing — is [reference/git.md](git.md); don't restate it here.
 
