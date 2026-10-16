@@ -75,4 +75,4 @@ The pendulum has one positive use besides the limit: the day's tempo. Today's fi
 
 ## The score beyond Home
 
-Tabs other than Home borrow two pieces of the score's look from `home-concept.ts`: `INSTRUMENT_CSS` (an instrument name in the display italic over a plain heading, decoration only) and `TACET_CSS` with `tacet()` (an empty state that is a sentence plus the musical word for silence). Open PRs names its bands Cadence, Solo, Tutti and Sketches; empty lists on Open PRs, Others' PRs and Scripts use the rest glyph. A new tab should reuse these before inventing its own.
+Tabs other than Home borrow two pieces of the score's look from `score.ts`: `INSTRUMENT_CSS` (an instrument name in the display italic over a plain heading, decoration only) and `TACET_CSS` with `tacet()` (an empty state that is a sentence plus the musical word for silence). Open PRs names its bands Cadence, Solo, Tutti and Sketches; empty lists on Open PRs, Others' PRs and Scripts use the rest glyph. A new tab should reuse these before inventing its own.
