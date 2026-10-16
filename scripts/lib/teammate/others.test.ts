@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { OTHERS_CACHE, othersSearch, readOthersCache, reduceOthers, refreshOthers, writeOthersCache } from './others.ts';
+import type { Run } from '../types.ts';
+import { fetchOthers, OTHERS_CACHE, othersSearch, readOthersCache, reduceOthers, refreshOthers, writeOthersCache } from './others.ts';
 import type { OtherPr } from './others.ts';
 
 const SCOPE = { owners: ['acme'], selfRepos: ['acme/solo'], self: 'me-fake' };
@@ -80,4 +81,41 @@ test('a failed read keeps the last good list and its time, and says why; with no
   assert.equal(readOthersCache(d)?.failure, 'gh api graphql failed: rate limited');
   const empty = refreshOthers(dir(), SCOPE, first, () => { throw new Error('boom'); });
   assert.deepEqual([empty.prs, empty.fetchedAt, empty.failure], [[], null, 'boom']);
+});
+
+/** A gh that serves `nodes` as one search page and answers by-id reads from `detail`, recording the ids each read asked for. */
+function fakeGh(nodes: unknown[], detail: Record<string, unknown>): { run: Run; reads: string[][] } {
+  const reads: string[][] = [];
+  const run: Run = (_cmd, args) => {
+    const query = args.find((a) => a.startsWith('query=')) ?? '';
+    if (!query.includes('nodes(ids:')) return { status: 0, stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes } } }), stderr: '' };
+    const ids = [...query.matchAll(/"([^"]+)"/g)].map((m) => m[1] as string);
+    reads.push(ids);
+    return { status: 0, stdout: JSON.stringify({ data: { nodes: ids.map((id) => ({ id, ...(detail[id] as object) })) } }), stderr: '' };
+  };
+  return { run, reads };
+}
+const thread = (login: string): unknown => ({ isResolved: false, comments: { nodes: [{ author: { login, __typename: 'Bot' } }] } });
+
+test('threads are read by id only for PRs with open threads, and only when their updatedAt moved (850 points a refresh became about 50)', () => {
+  const quiet = node({ id: 'PR_1', number: 1, url: 'https://github.com/acme/app/pull/1' });
+  const busy = node({ id: 'PR_2', number: 2, url: 'https://github.com/acme/app/pull/2', reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }] } });
+  const g = fakeGh([quiet, busy], { PR_2: { reviewThreads: { nodes: [thread('copilot-pull-request-reviewer'), { isResolved: true, comments: { nodes: [] } }] } } });
+  const first = fetchOthers(SCOPE, g.run);
+  assert.deepEqual(g.reads, [['PR_2']], 'the quiet PR has no thread to attribute');
+  assert.deepEqual(first.map((p) => [p.number, p.unresolved, p.copilotThreads]).sort(), [[1, 0, 0], [2, 1, 1]]);
+  const again = fetchOthers(SCOPE, g.run, first);
+  assert.equal(g.reads.length, 1, 'unchanged, so nothing is read in detail');
+  assert.deepEqual(again.map((p) => [p.number, p.unresolved, p.copilotThreads]).sort(), [[1, 0, 0], [2, 1, 1]], 'the Copilot count is carried from the stored list');
+  const moved = fakeGh([quiet, { ...busy, updatedAt: '2026-10-09T00:00:00Z' }], { PR_2: { reviewThreads: { nodes: [thread('pat-fake')] } } });
+  assert.deepEqual(fetchOthers(SCOPE, moved.run, first).map((p) => [p.number, p.copilotThreads]).sort(), [[1, 0], [2, 0]]);
+  assert.deepEqual(moved.reads, [['PR_2']], 'a changed PR is read again');
+});
+
+test('refreshOthers hands the stored list to the fetch, so a refresh can skip what has not changed', () => {
+  const d = dir();
+  refreshOthers(d, SCOPE, new Date('2026-10-15T12:00:00Z'), () => [stored({ url: 'https://x/1' })]);
+  let seen: readonly OtherPr[] = [];
+  refreshOthers(d, SCOPE, new Date('2026-10-15T12:10:00Z'), (_scope, known) => { seen = known; return []; });
+  assert.deepEqual(seen.map((p) => p.url), ['https://x/1']);
 });

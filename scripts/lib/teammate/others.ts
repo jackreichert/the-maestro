@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isBotAuthor } from '../github-bots.ts';
-import { searchAllPages } from '../gh-search.ts';
+import { readNodesById, searchAllPages } from '../gh-search.ts';
 import { isSelfReview } from '../self-review.ts';
 import { writeAtomic } from '../status-page/seen.ts';
 import type { Run } from '../types.ts';
@@ -36,7 +36,7 @@ export interface OthersScope { owners: readonly string[]; selfRepos: readonly st
 
 interface Login { login?: string; __typename?: string; name?: string | null }
 interface Node {
-  number?: number; title?: string; url?: string; isDraft?: boolean; createdAt?: string; updatedAt?: string; baseRefName?: string; headRefName?: string;
+  id?: string; number?: number; title?: string; url?: string; isDraft?: boolean; createdAt?: string; updatedAt?: string; baseRefName?: string; headRefName?: string;
   reviewDecision?: string | null; mergeable?: string; author?: Login | null;
   labels?: { nodes?: ({ name?: string } | null)[] };
   reviews?: { nodes?: ({ author?: Login | null; state?: string; submittedAt?: string } | null)[] };
@@ -52,13 +52,19 @@ export function othersSearch(owners: readonly string[]): string | null {
 }
 
 export const othersQuery = (search: string): string => `query($after: String) { search(query: "${search}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
-  number title url isDraft createdAt updatedAt baseRefName headRefName reviewDecision mergeable author { login __typename ... on User { name } } repository { nameWithOwner }
+  id number title url isDraft createdAt updatedAt baseRefName headRefName reviewDecision mergeable author { login __typename ... on User { name } } repository { nameWithOwner }
   labels(first: 10) { nodes { name } }
   reviews(last: 30) { nodes { author { login } state submittedAt } }
   commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
   reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
-  reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } } }
+  reviewThreads(first: 100) { nodes { isResolved } }
 } } } }`;
+
+/**
+ * Who opened each thread, read by id (lib/gh-search.ts) for the PRs that have open threads. The search above leaves the comments out because GraphQL
+ * charges for the connections nested in a search's nodes: with them, one page of 50 PRs cost 53 points and the whole list (784 PRs, 16 pages) about 850 a refresh.
+ */
+const THREAD_AUTHORS = 'reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } } }';
 
 const isCopilot = (a: Login | null | undefined): boolean => /copilot/i.test(a?.login ?? '');
 
@@ -89,10 +95,25 @@ export function reduceOthers(nodes: readonly Node[], scope: OthersScope): OtherP
   return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-/** Reads GitHub and reduces; throws when GitHub cannot be read. With no owner there is nothing to read and the list is empty. */
-export function fetchOthers(scope: OthersScope, run?: Run): OtherPr[] {
+/**
+ * Reads GitHub and reduces; throws when GitHub cannot be read. With no owner there is nothing to read and the list is empty.
+ * `known` is the last stored list: a PR in it whose updatedAt has not moved keeps its Copilot thread count, so only changed PRs with open threads are read in detail.
+ */
+export function fetchOthers(scope: OthersScope, run?: Run, known: readonly OtherPr[] = []): OtherPr[] {
   const search = othersSearch(scope.owners);
-  return search ? reduceOthers(searchAllPages<Node>(othersQuery(search), run), scope) : [];
+  if (!search) return [];
+  const nodes = searchAllPages<Node>(othersQuery(search), run);
+  const before = new Map(known.map((p) => [p.url, p]));
+  const hasOpen = (n: Node): boolean => (n.reviewThreads?.nodes ?? []).some((t) => t && t.isResolved === false);
+  const stale = (n: Node): boolean => n.updatedAt === undefined || before.get(n.url ?? '')?.updatedAt !== n.updatedAt;
+  const detail = readNodesById<{ id: string; reviewThreads: Node['reviewThreads'] }>(nodes.filter((n) => n.id && hasOpen(n) && stale(n)).map((n) => n.id as string), THREAD_AUTHORS, run);
+  const detailed = nodes.map((n) => (n.id && detail.has(n.id) ? { ...n, reviewThreads: detail.get(n.id)?.reviewThreads } : n));
+  const byUrl = new Map(nodes.map((n) => [n.url, n]));
+  return reduceOthers(detailed, scope).map((p) => {
+    const id = byUrl.get(p.url)?.id;
+    const read = !!id && detail.has(id);
+    return p.unresolved > 0 && !read ? { ...p, copilotThreads: before.get(p.url)?.copilotThreads ?? 0 } : p;
+  });
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -123,9 +144,9 @@ export function writeOthersCache(dir: string, cache: OthersCache): void {
  * One refresh: read GitHub and store the set. A failed read keeps the last good set, adding the reason and leaving `fetchedAt` where it was, so the
  * tab says how old the list is. Never throws: this rides the page rebuild, which must not fail because teammates' PRs could not be read.
  */
-export function refreshOthers(dir: string, scope: OthersScope, now: Date, fetch: (scope: OthersScope) => OtherPr[] = fetchOthers): OthersCache {
+export function refreshOthers(dir: string, scope: OthersScope, now: Date, fetch: (scope: OthersScope, known: readonly OtherPr[]) => OtherPr[] = (sc, known) => fetchOthers(sc, undefined, known)): OthersCache {
   try {
-    const cache: OthersCache = { fetchedAt: now, prs: fetch(scope) };
+    const cache: OthersCache = { fetchedAt: now, prs: fetch(scope, readOthersCache(dir)?.prs ?? []) };
     writeOthersCache(dir, cache);
     return cache;
   } catch (e) {
