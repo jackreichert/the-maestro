@@ -56,5 +56,5 @@ export function settledReason(f: SettledFacts): Settled | null {
   const last = others[others.length - 1];
   if (!last) return null;
   if (Number.isFinite(head) && head > ms(last.at) && f.requested.length > 0) return null;
-  return { why: 'picked-up', text: `picked up: ${last.login} already reviewed it (${last.state.toLowerCase().replace('_', ' ')})` };
+  return { why: 'picked-up', text: `${last.login} already reviewed it (${last.state.toLowerCase().replace('_', ' ')})` };
 }

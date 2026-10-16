@@ -57,7 +57,7 @@ export function settleStaleDrafts(file: string, self: string, o: SettleOptions =
     const facts = read(run, first.repo, first.pr, self);
     const why = facts ? settledReason(facts) : null;
     if (!why) continue;
-    const reason = `Settled automatically: ${why.text}, so this review is not posted.`;
+    const reason = `Settled automatically: ${why.text}; this review is not posted.`;
     for (const d of drafts) if (rejectDraft(file, d.id, reason, o.now ? { now: o.now } : {}).ok) out.push({ id: d.id, repo: d.repo, pr: d.pr, reason });
   }
   return out;

@@ -72,5 +72,5 @@ test('the author pushing after the picking-up review and asking for another look
 
 test('the reason names the person, so the rejected draft says why', () => {
   assert.match(settledReason(facts({ reviews: [rev('kim-fake', 'APPROVED', '2026-10-02T00:00:00Z')] }))?.text ?? '', /approved/i);
-  assert.match(settledReason(facts({ reviews: [rev('kim-fake', 'COMMENTED', '2026-10-02T00:00:00Z', 'x')] }))?.text ?? '', /picked up/i);
+  assert.match(settledReason(facts({ reviews: [rev('kim-fake', 'COMMENTED', '2026-10-02T00:00:00Z', 'x')] }))?.text ?? '', /already reviewed it/i);
 });
