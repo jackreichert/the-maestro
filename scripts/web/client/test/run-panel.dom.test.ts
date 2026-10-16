@@ -125,6 +125,16 @@ test('an ask card with a paste block carries the panel, sample data does not', a
   sample.cleanup();
 });
 
+test('an ask raised for a registered script links to it on the Scripts tab', async () => {
+  const ask: AskCard = { id: 'ab12', stream: 'Alpha', needed: 'Run this script: Close ticket', context: '', ageDays: 0.2, date: '2026-10-13', ts: '2026-10-13T10:00:00.000Z', links: { tracker: [], prs: [] }, paste: '/tmp/fake/block.sh', script: 'sc-0123abcd' };
+  const live = await mount<HTMLElement & { ask: AskCard }>('../src/ask-card.ts', 'ask-card', { ask });
+  assert.equal(live.root.querySelector('a.script-link')?.getAttribute('href'), '#tab=scripts&script=sc-0123abcd');
+  live.cleanup();
+  const sample = await mount<HTMLElement & { ask: AskCard; locked: boolean }>('../src/ask-card.ts', 'ask-card', { locked: true, ask });
+  assert.equal(sample.root.querySelector('a.script-link'), null, 'sample data has no Scripts tab to open');
+  sample.cleanup();
+});
+
 test('a live update that rebuilds the panel keeps the output and keeps following a run in progress', async () => {
   const { api, calls } = fake(preview(), [progress({ status: 'running', exitCode: null, durationMs: null, chunks: [{ seq: 0, stream: 'out', text: 'first\n' }], next: 1 }), progress({ status: 'running', exitCode: null, durationMs: null, next: 1 }), progress({ chunks: [{ seq: 1, stream: 'out', text: 'second\n' }], next: 2 })]);
   const one = await mountPanel(api);
