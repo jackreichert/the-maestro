@@ -1073,10 +1073,10 @@ test('the PR list fetched in parallel fortnights is the one a serial scan reads,
     const prs = Array.from({ length: 1200 }, (_, i) => ({ number: i + 1, mergedAt: daysAgo(i % 3), headRefName: `x/${i}`, baseRefName: 'develop', headRefOid: 'a'.repeat(40), url: 'u', body: '' }));
     writeFileSync(join(dir, 'prs.json'), JSON.stringify(prs));
     const stub = writeStub(join(dir, 'gh.mjs'), `#!${process.execPath}
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 const a = process.argv.slice(2); const [lo, hi] = a[a.indexOf('--search') + 1].replace('merged:', '').split('..');
 const all = JSON.parse(readFileSync(${JSON.stringify(join(dir, 'prs.json'))}, 'utf8'));
-console.log(JSON.stringify(all.filter((p) => p.mergedAt.slice(0, 10) >= lo && p.mergedAt.slice(0, 10) <= hi).slice(0, 1000)));
+writeFileSync(1, JSON.stringify(all.filter((p) => p.mergedAt.slice(0, 10) >= lo && p.mergedAt.slice(0, 10) <= hi).slice(0, 1000)));
 `);
     const names_ = ['MAESTRO_GH', 'MAESTRO_GH_BIN', 'MAESTRO_GH_BIN_ARGS'];
     const saved = names_.map((n) => process.env[n]);
