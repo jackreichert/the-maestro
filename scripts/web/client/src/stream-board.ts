@@ -98,9 +98,9 @@ export const ASK_PAGE = 6;
 
 /**
  * Asks as one row each, oldest first unless `order` says otherwise; `showStream` tags each row with its stream (the overview mixes streams).
- * A long list is paged (`ASK_PAGE` to a page, the page kept under `pageKey`), so the sections below stay in view.
+ * Returns the list and, past one page, its pager as one body for a section. A long list is paged (`ASK_PAGE` to a page, the page kept under `pageKey`), so the sections below stay in view.
  */
-export function askCards(asks: AskCard[], live: boolean, showStream: boolean, pageKey: string, order: (xs: AskCard[]) => AskCard[] = oldestFirst): AskList | null {
+export function askCards(asks: AskCard[], live: boolean, showStream: boolean, pageKey: string, order: (xs: AskCard[]) => AskCard[] = oldestFirst): DocumentFragment | null {
   if (asks.length === 0) return null;
   const id = `asks${++sectionSeq}`;
   const cards = order(asks).map((a) => {
@@ -116,11 +116,8 @@ export function askCards(asks: AskCard[], live: boolean, showStream: boolean, pa
   const more = pagedRows(cards, { key: pageKey, size: ASK_PAGE, label: 'Needs you' });
   const block = document.createDocumentFragment();
   block.append(list, ...(more ? [more] : []));
-  return { list, more, block };
+  return block;
 }
-
-/** The asks list, its pager when the list runs past one page, and both as one body for a section. */
-export interface AskList { list: HTMLElement; more: HTMLElement | null; block: DocumentFragment }
 
 /** True on Apple platforms, where the send shortcut is shown with the Command key. */
 const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -238,7 +235,7 @@ export class StreamBoard extends HTMLElement {
     this.#filled = false;
     this.#root.replaceChildren(slots.stand, h('div', { class: 'grid pair board' },
       h('div', { class: 'col two-thirds' },
-        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false, `asks:${stream}`, (xs) => byPriority(oldestFirst(xs), todaysPriorities(st)))?.block ?? null),
+        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false, `asks:${stream}`, (xs) => byPriority(oldestFirst(xs), todaysPriorities(st)))),
         slots.left,
         shown(prs.length, () => section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: '' }, prList(prs))),
         shown(selfPrs.length, () => section({ title: 'Maestro PRs (self-review)', n: selfPrs.length, tone: 'neutral', empty: '' }, prList(selfPrs))),

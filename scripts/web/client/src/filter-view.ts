@@ -70,7 +70,7 @@ export function filteredView(buckets: Buckets, key: CueKey, label: string, o: Fi
   const shownExtra = picked ? extra.filter((x) => x.stream === picked) : extra;
   const chips = key === 'asks' && o.setStream ? streamChips(everything) : [];
   const body = key === 'asks'
-    ? asksAndItems(askCards(items as Buckets['asks'], o.live, o.ctx.showStream, `filter-asks:${picked ?? 'all'}`)?.block ?? null, needsRows(shownExtra, o.ctx.showStream))
+    ? asksAndItems(askCards(items as Buckets['asks'], o.live, o.ctx.showStream, `filter-asks:${picked ?? 'all'}`), needsRows(shownExtra, o.ctx.showStream))
     : key === 'blocked' ? withComments(itemRows(buckets.blocked, o.ctx), buckets.blocked, o.live)
     : itemRows(items as Parameters<typeof itemRows>[0], o.ctx);
   const clear = h('button', { type: 'button', class: 'more', id: CLEAR_FILTER_ID }, 'Show everything');
