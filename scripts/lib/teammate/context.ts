@@ -30,6 +30,8 @@ export interface SuggestionLine { blocking: boolean; path: string; line: number;
 
 /** Things shaped like a Jira key that are not one. */
 const NOT_KEYS = new Set(['UTF-8', 'UTF-16', 'ISO-8601', 'SHA-1', 'SHA-256', 'SHA-512', 'ES-5', 'HTTP-2', 'MD-5']);
+/** True for a Jira key such as WID-1234. */
+export const isJiraKey = (k: unknown): boolean => typeof k === 'string' && /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(k);
 const KEY = /\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b/g;
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -54,10 +56,10 @@ export function contextProblem(c: ReviewContext | undefined, diff: ReadonlyMap<s
   const t = c.ticket;
   if (!t || !['read', 'none', 'unreadable'].includes(t.status)) return 'the ticket match needs a status: read, none or unreadable';
   if (t.status === 'read') {
-    if (!/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(str(t.key))) return 'a ticket that was read needs its Jira key';
+    if (!isJiraKey(str(t.key))) return 'a ticket that was read needs its Jira key';
     if (!(VERDICTS as readonly string[]).includes(str(t.verdict))) return `the ticket verdict is one of: ${VERDICTS.join(', ')}`;
   } else if (t.verdict !== undefined) return 'a verdict needs a ticket that was read; with no ticket or an unreadable one, say so and give none';
-  if (t.status === 'unreadable' && !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(str(t.key))) return 'an unreadable ticket still needs the key that was found';
+  if (t.status === 'unreadable' && !isJiraKey(str(t.key))) return 'an unreadable ticket still needs the key that was found';
   if (!Array.isArray(c.core) || c.core.length < 1 || c.core.length > MAX_CORE_CHANGES) return `name 1 to ${MAX_CORE_CHANGES} core logic changes`;
   for (const k of c.core) {
     const lines = diff.get(str(k.path));
@@ -142,7 +144,7 @@ export type Fetcher = (url: string, init: { headers: Record<string, string> }) =
  * reason names the missing variable or the HTTP status, never a value, and a response body is never echoed.
  */
 export async function readJira(key: string, env: NodeJS.ProcessEnv, fetcher: Fetcher): Promise<JiraRead> {
-  if (!/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(key)) return { status: 'unreadable', key, reason: 'not a Jira key' };
+  if (!isJiraKey(key)) return { status: 'unreadable', key, reason: 'not a Jira key' };
   const missing = ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN'].filter((n) => !env[n]);
   if (missing.length) return { status: 'unreadable', key, reason: `no Jira access here: ${missing.join(', ')} not set` };
   const base = (env.JIRA_BASE_URL as string).replace(/\/+$/, '');

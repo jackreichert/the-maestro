@@ -45,7 +45,7 @@ function self(): string {
 }
 
 /** What `submit` reads: the PR and head the review was of, the worktree it was read in, and the agent's compliment and findings. */
-export interface Submission { repo: string; pr: number; head: string; base: string; path: string; compliment: string; findings: Finding[]; /** What the PR does, the ticket match and the core logic links: required, every draft opens with them. */ context?: ReviewContext; /** The id of a pending draft for this same head that this richer one replaces. */ supersedes?: string; /** The PR author's login (from `prepare`), kept on the draft so the Podium's needs-you list can name them. */ author?: string }
+export interface Submission { repo: string; pr: number; head: string; base: string; path: string; compliment: string; findings: Finding[]; /** The summary context. Typed optional only so a missing one is refused with a message (`submit` returns a problem), never queued. */ context?: ReviewContext; /** The id of a pending draft for this same head that this richer one replaces. */ supersedes?: string; /** The PR author's login (from `prepare`), kept on the draft so the Podium's needs-you list can name them. */ author?: string }
 
 const reviewPath = (path: string): string => {
   const root = resolve(worktreesDir());
