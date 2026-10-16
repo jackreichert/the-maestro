@@ -31,7 +31,7 @@ beforeEach(() => {
 
 test('correctedCommand swaps a flag value, adds a missing one and quotes what needs it', () => {
     assert.equal(correctedCommand(['start', 'do a thing', '--stream', 'podium'], { stream: 'Podium' }), "journal.ts start 'do a thing' --stream Podium");
-    assert.equal(correctedCommand(['start', 'x'], { model: '<name>' }), "journal.ts start x --model '<name>'");
+    assert.equal(correctedCommand(['start', 'x'], { model: '<MODEL>' }), 'journal.ts start x --model <MODEL>');
     assert.equal(correctedCommand(['start', 'x', '--stream=podium'], { stream: 'Podium' }), 'journal.ts start x --stream Podium');
 });
 
@@ -51,6 +51,7 @@ test('modelOfAgentType reads the model line of the definition and refuses paths'
     assert.equal(modelOfAgentType('worker', [dir]), 'sonnet');
     assert.equal(modelOfAgentType('inheritor', [dir]), undefined);
     assert.equal(modelOfAgentType('../worker', [dir]), undefined);
+    assert.equal(modelOfAgentType('plugin:worker', [dir]), undefined, 'a plugin-qualified name is not read as the bare one');
     assert.equal(modelOfAgentType('missing', [dir]), undefined);
 });
 
@@ -77,10 +78,46 @@ test('an unknown stream refuses with the corrected command', () => {
     assert.match(r.err, /--new-stream/);
 });
 
-test('missing --model/--used refuses with the command to run', () => {
+test('missing --model/--used refuses with a command that cannot run until it is filled in', () => {
     const r = run(['start', 'x', '--stream', 'Maestro']);
     assert.equal(r.code, 1);
-    assert.match(r.err, /Run: journal\.ts start x --stream Maestro .*--model '<name>' --used skill:x,tool:y/);
+    assert.match(r.err, /Run: journal\.ts start x --stream Maestro .*--model <MODEL> --used <SKILLS_AND_TOOLS>\n/);
+    assert.match(r.err, /Replace <MODEL> and <SKILLS_AND_TOOLS> with real values first/);
+    const line = (/^Run: (.*)$/m.exec(r.err) as RegExpExecArray)[1] as string;
+    assert.equal(spawnSync('sh', ['-n', '-c', line]).status, 2, 'the printed line is a shell syntax error until the markers are replaced');
+});
+
+test('a fill-in marker is refused as a model or a mark, never recorded', () => {
+    const r = run(['start', 'x', '--model', '<MODEL>', '--used', 'skill:a']);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /must be real values/);
+    assert.equal(run(['start', 'x', '--model', 'Test Model', '--used', '<SKILLS_AND_TOOLS>']).code, 1);
+});
+
+test('start does not infer a stream that is archived or no longer registered, and queue never infers', () => {
+    run(['start', 'a', '--repo', 'r3', '--stream', 'Maestro', ...MARK]);
+    run(['start', 'g', '--repo', 'r4', '--stream', 'Podium', ...MARK]);
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'streams.json'), JSON.stringify({ streams: { Maestro: { aliases: [], status: 'archived' }, Other: { aliases: [], status: 'active' } } }));
+    const archived = run(['start', 'b', '--repo', 'r3', ...MARK]);
+    assert.equal(archived.code, 0, archived.err);
+    const gone = run(['start', 'h', '--repo', 'r4', ...MARK]);
+    assert.equal(gone.code, 0, gone.err);
+    assert.equal(rows().filter((x) => x.text === 'b' || x.text === 'h').every((x) => x.stream === undefined), true);
+});
+
+test('queue and log --kind wip do not infer a stream', () => {
+    run(['start', 'a', '--repo', 'r5', '--stream', 'Maestro', ...MARK]);
+    assert.equal(run(['queue', 'later', '--repo', 'r5', ...MARK]).code, 0);
+    assert.equal(rows().find((x) => x.text === 'later')?.stream, undefined);
+});
+
+test('an unknown stream with no near match still prints a Run: line, and --agent-type names itself when it finds no model', () => {
+    const r = run(['start', 'x', '--stream', 'zzzzzz', ...MARK]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /register it as a new stream, run: journal\.ts start x --stream zzzzzz .*--new-stream/);
+    const m = run(['start', 'x', '--agent-type', 'ghost', '--used', 'tool:Agent']);
+    assert.equal(m.code, 1);
+    assert.match(m.err, /--agent-type ghost named no model/);
 });
 
 test('--agent-type supplies --model from the agent definition', () => {

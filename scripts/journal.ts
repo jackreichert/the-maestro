@@ -382,7 +382,7 @@ function normaliseStream(raw: string | null): string | null {
     console.error(`Known: ${Object.keys(reg.streams).join(', ') || '(none)'}. Pass --new-stream to register it, or \`journal.ts streams add <name>\`.`);
     const rerun = process.argv.slice(2);
     if (near) console.error(`Run: ${correctedCommand(rerun, { stream: near })}`);
-    console.error(`${near ? 'Or to register it as new' : 'To register it'}: ${correctedCommand(rerun, {}, [])} --new-stream`);
+    console.error(`${near ? 'Or, to register it as a new stream, run' : 'To register it as a new stream, run'}: ${correctedCommand(rerun, {})} --new-stream`);
     process.exit(1);
 }
 
@@ -441,8 +441,8 @@ function normaliseModel(raw: string | null): string | null {
     return canon;
 }
 
-/** Where an agent type's definition (`<type>.md`, with a `model:` line) may live: the project's .claude/agents, then the user's. */
-const agentDirs = (): string[] => [join(process.cwd(), '.claude', 'agents'), join(process.env.HOME ?? '', '.claude', 'agents')];
+/** Where an agent type's definition (`<type>.md`, with a `model:` line) may live: the user's .claude/agents only, so a checked-out repo cannot set the model a row records. */
+const agentDirs = (): string[] => [join(process.env.HOME ?? '', '.claude', 'agents')];
 
 /** The usage marks every written row carries, from --model, --used and the optional --tokens, --harness and --agent. */
 interface Usage { model?: string; used?: string[]; tokens?: string; harness?: string; agent?: string }
@@ -450,11 +450,15 @@ interface Usage { model?: string; used?: string[]; tokens?: string; harness?: st
 function usageFromArgs(): Usage {
     const model = normaliseModel(arg('model') || modelOfAgentType(arg('agent-type') ?? '', agentDirs()) || null);
     const used = parseList('used');
+    // A fill-in marker copied from a refusal is not a mark: recording it would write a guess as if it were a measurement.
+    if ([model ?? '', ...(used ?? [])].some((v) => v.includes('<'))) { console.error('--model and --used must be real values, not the <...> fill-in markers a refusal prints.'); process.exit(1); }
     if (!has('allow-unmarked') && (!model || !used)) {
         console.error('Every ledger entry needs --model "<name>" and --used "skill:x,tool:y".');
         console.error('Do not guess. Unknown is --model unrecorded --used unrecorded. Tests may pass --allow-unmarked.');
-        const missing: Record<string, string> = { ...(model ? {} : { model: '<name>' }), ...(used ? {} : { used: 'skill:x,tool:y' }) };
-        console.error(`Run: ${correctedCommand(process.argv.slice(2), missing)}   (fill in ${Object.keys(missing).map((k) => `--${k}`).join(' and ')})`);
+        const missing: Record<string, string> = { ...(model ? {} : { model: '<MODEL>' }), ...(used ? {} : { used: '<SKILLS_AND_TOOLS>' }) };
+        if (!model && arg('agent-type')) console.error(`--agent-type ${arg('agent-type')} named no model: ${arg('agent-type')}.md is not in ~/.claude/agents, or it has no model: line.`);
+        console.error(`Run: ${correctedCommand(process.argv.slice(2), missing)}`);
+        console.error(`Replace ${Object.keys(missing).map((k) => `<${k === 'model' ? 'MODEL' : 'SKILLS_AND_TOOLS'}>`).join(' and ')} with real values first (for example --used "skill:the-maestro,tool:journal.ts").`);
         process.exit(1);
     }
     const usage: Usage = {};
@@ -649,11 +653,14 @@ function askTemplate(text: string, fields: AskFields, given: { flags: AskTemplat
 
 /** The stream the ledger has always used for `repo`, noted on stderr; undefined when it names none or several (never guessed). */
 function inferredStream(repo: string | null): string | undefined {
-    const s = inferStreamForRepo(fold(readLedger()).items, repo || undefined, (n) => { const reg = loadRegistry(); return reg ? canonicalOf(reg, n) ?? null : null; });
+    const reg = loadRegistry();
+    // No registry means no stream is ever enforced, so nothing is inferred either: a start there writes what it is given.
+    if (!reg) return undefined;
+    const s = inferStreamForRepo(fold(readLedger()).items, repo || undefined, (n) => canonicalOf(reg, n) ?? null, (n) => reg.streams[n]?.status === 'active');
     if (s) console.error(`stream ${s} (inferred from repo ${repo}; pass --stream to choose another)`);
     return s;
 }
-function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false, lease = false } = {}) {
+function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false, lease = false, inferStream = false } = {}) {
     const tplFlags = askTemplateFlags(ask);
     const text = arg('text') || positional.join(' ') || tplFlags.file?.question || '';
     if (!text) { console.error(ask ? 'Needs the question: journal.ts ask "<question>" (or "## Question" in --body-file). `ask --help` shows the template.' : `Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
@@ -714,7 +721,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
         ...(kind === 'wip' ? recoveryFlags() : {}),
-        stream: streamOrNone(arg('stream') || (kind === 'wip' ? inferredStream(arg('repo')) ?? null : null)),
+        stream: streamOrNone(arg('stream') || (kind === 'wip' && inferStream ? inferredStream(arg('repo')) ?? null : null)),
         refs,
         pending: ask && kind === 'decision' && routed.acted === null ? true : undefined,
         queued: queued ? true : undefined,
@@ -979,7 +986,7 @@ function cmdStart(): void {
     const target = itemNamedByArg(fold(entries).items);
     if (!target || target.kind !== 'wip') {
         if (!has('force')) { const why = umbrellaRefusal({ text: positional.join(' ') || arg('text') }, fold(entries).items); if (why) die(why); }
-        cmdLog('wip', { lease: true });
+        cmdLog('wip', { lease: true, inferStream: true });
         return;
     }
     if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
