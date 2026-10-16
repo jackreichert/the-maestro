@@ -17,9 +17,9 @@ import { settledReason } from '../teammate/settled.ts';
 import type { SettledFacts, SettledReview } from '../teammate/settled.ts';
 
 export interface SettleOptions { run?: GhRead; now?: () => Date }
-export interface Settled { id: string; repo: string; pr: number; reason: string }
+export interface SettledDraft { id: string; repo: string; pr: number; reason: string }
 
-interface Login { login?: string; is_bot?: boolean }
+interface Login { login?: string }
 interface View {
   state?: string; reviewDecision?: string; author?: Login | null; createdAt?: string;
   reviewRequests?: ({ login?: string } | null)[]; commits?: ({ committedDate?: string } | null)[];
@@ -64,12 +64,12 @@ function read(run: GhRead, repo: string, pr: number, self: string): SettledFacts
 }
 
 /** Rejects every pending (or failed) review draft whose PR is settled. Returns the drafts it rejected. */
-export function settleStaleDrafts(file: string, self: string, o: SettleOptions = {}): Settled[] {
+export function settleStaleDrafts(file: string, self: string, o: SettleOptions = {}): SettledDraft[] {
   const open = listDrafts(file).filter((d: Draft) => d.source === 'review' && (d.state === 'pending' || d.state === 'failed'));
   const run = o.run ?? spawnRead;
   const byPr = new Map<string, Draft[]>();
   for (const d of open) byPr.set(`${d.repo}#${d.pr}`, [...(byPr.get(`${d.repo}#${d.pr}`) ?? []), d]);
-  const out: Settled[] = [];
+  const out: SettledDraft[] = [];
   for (const drafts of byPr.values()) {
     const first = drafts[0] as Draft;
     const facts = read(run, first.repo, first.pr, self);

@@ -26,19 +26,19 @@ export interface SettledFacts {
   reviews: readonly SettledReview[];
 }
 export type SettledWhy = 'merged' | 'closed' | 'approved' | 'picked-up';
-export interface Settled { why: SettledWhy; text: string }
+export interface SettledVerdict { why: SettledWhy; text: string }
 
 const lower = (s: string): string => s.toLowerCase();
 const ms = (s: string | undefined): number => Date.parse(s ?? '');
 const DECISIVE = new Set(['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED']);
 
-/** Each person's newest submitted review (pending ones are not submitted), oldest first within the result. */
+/** Submitted reviews (pending ones are not submitted), oldest first. */
 const submitted = (rs: readonly SettledReview[]): SettledReview[] => rs.filter((r) => r.state !== 'PENDING' && Number.isFinite(ms(r.at))).sort((a, b) => ms(a.at) - ms(b.at));
 
 /** True when a review is something a person who owns the PR would act on: a verdict, or a comment with substance. */
 const substantive = (r: SettledReview): boolean => r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED' || (r.state === 'COMMENTED' && r.body.trim() !== '');
 
-export function settledReason(f: SettledFacts): Settled | null {
+export function settledReason(f: SettledFacts): SettledVerdict | null {
   if (f.state === 'MERGED') return { why: 'merged', text: 'the PR was merged' };
   if (f.state === 'CLOSED') return { why: 'closed', text: 'the PR was closed' };
   const reviews = submitted(f.reviews);
