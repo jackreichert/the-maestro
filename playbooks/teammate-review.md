@@ -13,6 +13,8 @@ Script: `node scripts/teammate-review.ts` (`prepare`, `firstpass`, `ticket`, `in
 - Step in anyway when the author has acted since that reviewer's last activity (a push, a reply or a re-request) and two working hours (default 120 minutes) have passed with no reviewer response.
 - These skip the wait entirely: staging twins of a develop PR, backmerges, follow-ups to the user's PRs, PRs where the user is requested or @-mentioned, P0 or hotfix PRs, and re-reviews after the author addressed our comments.
 
+
+**A settled PR is not reviewed, and its draft retires itself.** The Others' PRs tab drops a PR that is merged, closed, approved at its current head, or already reviewed by another person (unless you were explicitly requested and have not reviewed; it returns when the author pushes after that review and a reviewer is requested again), and the page rebuild rejects any pending review draft on such a PR with `Settled automatically: <why>; this review is not posted.` (rule and code: [lib/teammate/settled.ts](../scripts/lib/teammate/settled.ts), [lib/drafts/settle.ts](../scripts/lib/drafts/settle.ts)). If a PR is settled by the time you reach `submit`, expect that outcome and do not re-queue; the draft is kept with its reason, never deleted.
 ## Steps
 
 1. `prepare --repo <owner/name> --pr <n>` prints `{ path, head, base, author }`. It refuses the user's own PR, a draft, a closed PR and a self-review repo. The worktree is detached and read-only.
