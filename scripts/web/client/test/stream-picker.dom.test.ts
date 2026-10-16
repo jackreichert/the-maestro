@@ -30,6 +30,7 @@ test('the button names the voice and its cue count, and the menu starts closed',
   assert.equal(menu.hidden, true);
   assert.equal(btn.querySelector('.sp-val')?.textContent, 'acme-widgets');
   assert.equal(btn.querySelector('.sp-count')?.textContent, '2 cues waiting');
+  assert.match(btn.getAttribute('aria-labelledby') ?? '', /stream-n$/, 'the count is part of the accessible name');
 });
 
 test('opening puts the current voice active and the arrow keys, Home and End move with wrap', () => {

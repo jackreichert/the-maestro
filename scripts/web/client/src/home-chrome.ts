@@ -169,10 +169,10 @@ export function streamPicker(o: PickerOptions): HTMLElement {
   const wrap = h('div', { class: `stream-pick${cur ? ` ${streamVar(cur)}` : ''}`, id: 'stream-pick' });
   if (cur) wrap.setAttribute('data-on', '');
   const label = h('span', { class: 'vh', id: 'stream-lbl' }, 'Voice (stream):');
-  const btn = h('button', { type: 'button', class: 'sp-btn', id: 'stream-btn', 'aria-haspopup': 'listbox', 'aria-expanded': 'false', 'aria-controls': 'stream-menu', 'aria-labelledby': 'stream-lbl stream-val' },
+  const btn = h('button', { type: 'button', class: 'sp-btn', id: 'stream-btn', 'aria-haspopup': 'listbox', 'aria-expanded': 'false', 'aria-controls': 'stream-menu', 'aria-labelledby': now && now.n > 0 ? 'stream-lbl stream-val stream-n' : 'stream-lbl stream-val' },
     h('span', { class: 'sp-cap', 'aria-hidden': 'true' }, 'Voice'),
     h('span', { class: 'sp-sw', 'aria-hidden': 'true', 'data-on': cur ? '' : undefined }), h('span', { class: 'sp-val', id: 'stream-val' }, now?.name ?? 'All streams'),
-    now && now.n > 0 ? h('span', { class: 'sp-count', title: `${now.n} ${now.n === 1 ? 'cue' : 'cues'} waiting` }, String(now.n), h('span', { class: 'vh' }, now.n === 1 ? ' cue waiting' : ' cues waiting')) : null,
+    now && now.n > 0 ? h('span', { class: 'sp-count', id: 'stream-n', title: `${now.n} ${now.n === 1 ? 'cue' : 'cues'} waiting` }, String(now.n), h('span', { class: 'vh' }, now.n === 1 ? ' cue waiting' : ' cues waiting')) : null,
     h('span', { class: 'sp-chev', 'aria-hidden': 'true' }));
   const list = h('ul', { class: 'sp-list', id: 'stream-list', role: 'listbox', tabindex: '-1', 'aria-labelledby': 'stream-lbl' });
   const pop = h('div', { class: 'sp-menu', id: 'stream-menu', hidden: true }, h('p', { class: 'sp-eyebrow', 'aria-hidden': 'true' }, 'Choose a voice'), list,
