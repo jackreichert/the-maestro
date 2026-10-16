@@ -18,7 +18,7 @@ import type { ChangeHub } from './events.ts';
 import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildOpenPrs, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
-import { FORMER_TEAMMATES, GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, OTHERS_PRS_ACTIVE_HOURS, OTHERS_PRS_DROP_DAYS, OTHERS_PRS_OPEN_HOURS } from '../../local-config.ts';
+import { GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, OTHERS_PRS_ACTIVE_HOURS, OTHERS_PRS_DROP_DAYS, OTHERS_PRS_OPEN_HOURS } from '../../local-config.ts';
 import { buildOthersPrs } from './others-prs.ts';
 import { buildEpics, buildHome } from './home.ts';
 import { buildCost } from './cost.ts';
@@ -29,6 +29,7 @@ import { TOKEN_PATH, WRITE_PATHS as PRIORITY_PATHS, handleWrite } from './priori
 import { ANSWER_PATH, handleAnswer } from './answer-write.ts';
 import { BLOCKED_PATH, handleBlocked } from './blocked-write.ts';
 import { SCRIPTS_RAN_PATH, buildScripts, handleScriptRan } from './scripts-write.ts';
+import { DONE_BODY_LIMITS, DONE_SAVE_PATH, handleDoneSave, readDone, sourceFromQuery } from './done-write.ts';
 import { DRAFT_BODY_LIMITS, DRAFT_WRITE_PATHS, buildDrafts, handleDraft } from './drafts-write.ts';
 import type { GhRun } from '../drafts/post.ts';
 import { REFRESH_PATH, REFRESH_STATE_PATH, createRefresher, handleRefresh, spawnRebuild } from './prs-refresh.ts';
@@ -84,8 +85,9 @@ const MAX_DAYS = 90;
 const EVENTS_PATH = '/api/events';
 const MAX_HEADER_BYTES = 8 * 1024;
 
-/** Every exact path that accepts POST: the three priorities edits, the answer to an ask, a comment on a blocked item, marking a script run, the PR refresh and the three draft-comment decisions. */
-const WRITE_PATHS: ReadonlySet<string> = new Set([...PRIORITY_PATHS, ANSWER_PATH, BLOCKED_PATH, SCRIPTS_RAN_PATH, REFRESH_PATH, ...DRAFT_WRITE_PATHS, ...RUN_WRITE_PATHS]);
+/** Every exact path that accepts POST: the three priorities edits, the answer to an ask, a comment on a blocked item, marking a script run, saving a stream's definition of done, the PR refresh and the three draft-comment decisions. */
+const WRITE_PATHS: ReadonlySet<string> = new Set([...PRIORITY_PATHS, ANSWER_PATH, BLOCKED_PATH, SCRIPTS_RAN_PATH, REFRESH_PATH, DONE_SAVE_PATH, ...DRAFT_WRITE_PATHS, ...RUN_WRITE_PATHS]);
+const BODY_LIMITS: ReadonlyMap<string, number> = new Map([...DRAFT_BODY_LIMITS, ...DONE_BODY_LIMITS]);
 
 type Handler = (url: URL, match: RegExpMatchArray) => unknown;
 interface Route { method: 'GET'; pattern: RegExp; handler: Handler }
@@ -111,8 +113,14 @@ export function dataRoutes(o: WebServerOptions): Route[] {
     { method: 'GET', pattern: /^\/api\/state$/, handler: () => buildState(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildStream(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)\/home$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildHome(o.web, name, now()) ?? undefined; } },
+    { method: 'GET', pattern: /^\/api\/streams\/([^/]+)\/done-text$/, handler: (u, m) => {
+      const name = decodeName(m[1] ?? '');
+      const src = name === null ? null : sourceFromQuery(name, u.searchParams);
+      const out = src ? readDone(o.web, src, now()) : null;
+      return out?.ok ? { text: out.text, rev: out.rev } : undefined;
+    } },
     { method: 'GET', pattern: /^\/api\/prs$/, handler: () => buildOpenPrs(o.web, now()) },
-    { method: 'GET', pattern: /^\/api\/others-prs$/, handler: () => buildOthersPrs({ statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN, openHours: OTHERS_PRS_OPEN_HOURS, activeHours: OTHERS_PRS_ACTIVE_HOURS, dropDays: OTHERS_PRS_DROP_DAYS, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, former: FORMER_TEAMMATES, ...(o.web.vaultRoot ? { slackDir: join(o.web.vaultRoot, 'Projects', o.web.containerProject ?? o.web.project, 'Slack') } : {}) }, now()) },
+    { method: 'GET', pattern: /^\/api\/others-prs$/, handler: () => buildOthersPrs({ statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN, openHours: OTHERS_PRS_OPEN_HOURS, activeHours: OTHERS_PRS_ACTIVE_HOURS, dropDays: OTHERS_PRS_DROP_DAYS, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, ...(o.web.vaultRoot ? { slackDir: join(o.web.vaultRoot, 'Projects', o.web.containerProject ?? o.web.project, 'Slack') } : {}) }, now()) },
     { method: 'GET', pattern: /^\/api\/drafts$/, handler: () => buildDrafts(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/scripts$/, handler: () => buildScripts(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/epics$/, handler: () => buildEpics(o.web, now()) },
@@ -147,11 +155,11 @@ export function createWebServer(o: WebServerOptions): WebServer {
   const files = fileLookup(o.clientDir, o.rescanGapMs);   // a whitelist re-read on a miss: a request path is only ever looked up, never joined onto a path
   const server = createServer({ maxHeaderSize: MAX_HEADER_BYTES, requestTimeout: o.requestTimeoutMs ?? 10_000, headersTimeout: o.headersTimeoutMs ?? 5_000, connectionsCheckingInterval: 1000 }, (req, res) => {
     try {
-      const no = refuse(req, req.socket.localPort ?? 0, WRITE_PATHS, DRAFT_BODY_LIMITS);
+      const no = refuse(req, req.socket.localPort ?? 0, WRITE_PATHS, BODY_LIMITS);
       if (no) return sendError(res, no.status, no.headers);
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       if (req.method === 'POST') {   // the guard let a POST through only for a write path
-        (url.pathname === ANSWER_PATH ? handleAnswer(writes, req, res) : url.pathname === BLOCKED_PATH ? handleBlocked(writes, req, res) : url.pathname === SCRIPTS_RAN_PATH ? handleScriptRan(writes, req, res) : RUN_WRITE_PATHS.has(url.pathname) ? handleRun(runs, url.pathname, req, res) : DRAFT_WRITE_PATHS.has(url.pathname) ? handleDraft(writes, url.pathname, req, res) : url.pathname === REFRESH_PATH ? handleRefresh(writes, refresher, req, res) : handleWrite(writes, url.pathname, req, res)).catch((e: unknown) => { log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error'); sendError(res, 500); });
+        (url.pathname === ANSWER_PATH ? handleAnswer(writes, req, res) : url.pathname === BLOCKED_PATH ? handleBlocked(writes, req, res) : url.pathname === SCRIPTS_RAN_PATH ? handleScriptRan(writes, req, res) : url.pathname === DONE_SAVE_PATH ? handleDoneSave(writes, req, res) : RUN_WRITE_PATHS.has(url.pathname) ? handleRun(runs, url.pathname, req, res) : DRAFT_WRITE_PATHS.has(url.pathname) ? handleDraft(writes, url.pathname, req, res) : url.pathname === REFRESH_PATH ? handleRefresh(writes, refresher, req, res) : handleWrite(writes, url.pathname, req, res)).catch((e: unknown) => { log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error'); sendError(res, 500); });
         return;
       }
       if (url.pathname === TOKEN_PATH) return sendJson(res, 200, { token, max: writes.max }, false);
