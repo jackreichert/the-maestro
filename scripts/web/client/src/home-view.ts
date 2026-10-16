@@ -54,6 +54,7 @@ export const HOME_CSS = `${BRIEF_CSS}${SHELF_CSS}
   details.fold .fold-body { padding-bottom: var(--space-3); }
   /* The rail: short labelled entries grouped like a programme's contents column. Every row is at least 24 px tall (WCAG 2.5.8). */
   .rail { display: grid; gap: var(--space-4); }
+  .rail > details > .fold-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--col-gap, var(--space-6)); align-items: start; }
   .rail h3 { margin: var(--space-3) 0 var(--space-1); font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-semibold); color: var(--text-secondary); letter-spacing: 0.02em; }
   ul.links { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
   ul.links > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); min-block-size: 32px; padding: var(--space-1) 0; border-bottom: 1px solid var(--border); font-size: var(--text-sm); line-height: var(--leading-sm); overflow-wrap: anywhere; }
@@ -169,17 +170,11 @@ function railFold(name: string, summary: string, open: boolean, ...body: (Node |
   return h('details', { class: 'fold', open, 'data-fold': `rail-${name}` }, h('summary', {}, summary), h('div', { class: 'fold-body' }, ...body));
 }
 
-/** "Done means" (the first sentence of each epic's text, the rest behind a disclosure) and the links, or null when the stream has neither. */
+/** The links and shared documents, or null when the stream has neither. The definition of done is drawn above this, by `doneTop`. */
 export function railBody(home: StreamHome, wide: boolean): HTMLElement | null {
   const groups = railGroups(home.links);
-  const done = home.doneMeans.map((d) => {
-    const { head, more } = firstSentence(d.text);
-    return h('div', {}, h('p', { class: 'done-means' }, h('span', { class: 'done-epic' }, `${d.epic} `), head),
-      more ? h('details', { class: 'fold', 'data-fold': `rail-done-${d.epic}` }, h('summary', {}, 'More'), h('p', { class: 'done-means' }, d.text)) : null);
-  });
-  if (done.length === 0 && groups.length === 0 && home.shared.length === 0) return null;
-  return h('div', { class: 'rail', role: 'group', 'aria-label': 'Done means, links and shared documents' },
-    done.length ? railFold('done', 'Done means', wide, ...done) : null,
+  if (groups.length === 0 && home.shared.length === 0) return null;
+  return h('div', { class: 'rail', role: 'group', 'aria-label': 'Links and shared documents' },
     groups.length ? railFold('links', `Links (${railCount(home.links)})`, wide, ...groups.map((g) => {
       const rows = g.items.map(railRow);
       return h('div', {}, h('h3', {}, g.title),

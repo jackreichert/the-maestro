@@ -8,6 +8,8 @@ import { prChips } from './pr-chips.ts';
 import { ago, byPriority, clockTime, oldestFirst, todaysPriorities } from './glance.ts';
 import { gateView } from './gate.ts';
 import { withComments } from './blocked-rows.ts';
+import { CONCEPT_CSS, sectionHead } from './home-concept.ts';
+import { DONE_CSS, doneTop } from './done-view.ts';
 import { HOME_CSS, epicStrip, leftBody, railBody, unknownsFold } from './home-view.ts';
 import { clearAgainstHome, clearLine, leftGroups, leftHeading } from './home-text.ts';
 import type { GateView } from './gate.ts';
@@ -24,7 +26,8 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
   .stand { margin-bottom: var(--space-6); }
   .below { margin-top: var(--space-6); }
-  ${HOME_CSS}
+  ${HOME_CSS}${CONCEPT_CSS}${DONE_CSS}
+  .top { margin-bottom: var(--space-8, var(--space-6)); display: grid; gap: var(--row-gap); }
 `;
 
 /** The shared stylesheet text for anything that draws sections, rows and PR lists (the overview reuses it). */
@@ -32,7 +35,7 @@ export const BOARD_CSS = CSS;
 
 export type Tone = 'accent' | 'critical' | 'success' | 'neutral';
 /** A section; only the three status sections (needs you, blocked, shipped) carry a glyph. */
-export interface SectionSpec { title: string; n: number; glyph?: string; tone: Tone; empty: string; rest?: Rest; quiet?: boolean; hint?: Node | null; action?: Node | null }
+export interface SectionSpec { instrument?: string; plain?: string; title: string; n: number; glyph?: string; tone: Tone; empty: string; rest?: Rest; quiet?: boolean; hint?: Node | null; action?: Node | null }
 
 /** A musical word after an empty state's literal sentence; `lang` only when it is not English. */
 export interface Rest { word: string; lang?: 'it' | 'la' }
@@ -53,11 +56,14 @@ export function section(spec: SectionSpec, body: Node | null): HTMLElement {
   const id = `s${++sectionSeq}`;
   // An empty section's status glyph goes muted: a red blocked mark over "Nothing is blocked" would read as an alarm.
   const tone = body ? spec.tone : 'neutral';
-  return h('section', { 'aria-labelledby': id, class: `tone-${tone}${spec.quiet ? ' quiet' : ''}` },
-    h('div', { class: 'head' },
+  // Home's frame (an instrument word over the title) when the spec names one; every other section keeps its plain heading.
+  const head = spec.instrument
+    ? sectionHead({ instrument: spec.instrument, title: spec.title, id, ...(spec.plain ? { plain: spec.plain } : {}), n: spec.n > 0 ? spec.n : null, extra: body ? spec.action ?? null : null })
+    : h('div', { class: 'head' },
       spec.glyph ? h('span', { class: 'glyph', 'aria-hidden': 'true' }, spec.glyph) : null,
       h('h2', { id }, spec.title, spec.n > 0 ? h('span', { class: 'count' }, h('span', { class: 'vh' }, ', '), String(spec.n)) : null),
-      body ? spec.action : null),
+      body ? spec.action : null);
+  return h('section', { 'aria-labelledby': id, class: `tone-${tone}${spec.quiet ? ' quiet' : ''}` }, head,
     body && spec.hint ? h('p', { class: 'section-hint' }, spec.hint) : null,
     body ?? h('p', { class: 'empty' }, spec.empty, spec.rest ? ' ' : null, spec.rest ? h('i', { class: 'rest', lang: spec.rest.lang }, spec.rest.word) : null));
 }
@@ -158,7 +164,7 @@ export class StreamBoard extends HTMLElement {
   #live = false;
   // Where the home base is drawn. It arrives after the board and refreshes on its own, so filling these never rebuilds the ask rows.
   #filled = false;
-  #slots: { stand: HTMLElement; left: HTMLElement; rail: HTMLElement; below: HTMLElement; clear: HTMLElement } | null = null;
+  #slots: { top: HTMLElement; stand: HTMLElement; left: HTMLElement; below: HTMLElement; clear: HTMLElement } | null = null;
   // The ledger's empty sections; the Clear line is worded from these once the home says what it lists (see #fillHome).
   #clearParts: ClearPart[] = [];
 
@@ -194,7 +200,7 @@ export class StreamBoard extends HTMLElement {
     slots.stand.replaceChildren(...(home ? [section({ title: 'Where it stands', n: 0, tone: 'neutral', empty: '' }, epicStrip(home))] : []));
     slots.left.replaceChildren(...(home && groups && left ? [section({ title: leftHeading(groups, home.epics), n: 0, tone: 'neutral', empty: '' }, left)] : []));
     const rail = home ? railBody(home, window.matchMedia('(min-width: 960px)').matches) : null;
-    slots.rail.replaceChildren(...(rail ? [rail] : []));
+    slots.top.replaceChildren(...(home ? [doneTop(home)] : []), ...(rail ? [rail] : []));
     slots.below.replaceChildren(...(home ? [unknownsFold(home)].filter((n): n is HTMLElement => n !== null) : []));
     // The Clear line must not say "nothing blocked" under a What's left that lists blocked tickets.
     const clear = clearLine(clearAgainstHome(this.#clearParts, groups));
@@ -230,10 +236,10 @@ export class StreamBoard extends HTMLElement {
       { phrase: 'nothing deferred', empty: deferred.length === 0 },
     ];
     const shown = (n: number, make: () => HTMLElement): HTMLElement | null => (n > 0 ? make() : null);
-    const slots = { stand: h('div', { class: 'stand' }), left: h('div'), rail: h('div'), below: h('div', { class: 'below' }), clear: h('p', { class: 'clear', hidden: true }) };
+    const slots = { top: h('div', { class: 'top' }), stand: h('div', { class: 'stand' }), left: h('div'), below: h('div', { class: 'below' }), clear: h('p', { class: 'clear', hidden: true }) };
     this.#slots = slots;
     this.#filled = false;
-    this.#root.replaceChildren(slots.stand, h('div', { class: 'grid pair board' },
+    this.#root.replaceChildren(slots.top, slots.stand, h('div', { class: 'grid pair board' },
       h('div', { class: 'col two-thirds' },
         section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false, `asks:${stream}`, (xs) => byPriority(oldestFirst(xs), todaysPriorities(st)))),
         slots.left,
@@ -245,7 +251,6 @@ export class StreamBoard extends HTMLElement {
         section({ title: 'In flight', n: working.length, tone: 'neutral', empty: 'No agent is running here.', rest: RESTS.working, quiet: true }, itemRows(working, ctx)),
         shown(queued.length, () => section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: '', quiet: true }, itemRows(queued, ctx))),
         shown(done.length, () => section({ title: 'Shipped today', n: done.length, glyph: '✓', tone: 'success', empty: '', quiet: true }, itemRows(done, ctx))),
-        slots.rail,
         shown(stale.length, () => section({ title: 'Stale', n: stale.length, tone: 'neutral', empty: '', quiet: true }, itemRows(stale, ctx))),
         shown(deferred.length, () => section({ title: 'Deferred', n: deferred.length, tone: 'neutral', empty: '', quiet: true }, itemRows(deferred, ctx))),
         md ? section({ title: 'Notes', n: 0, tone: 'neutral', empty: '', quiet: true }, md) : null)),
