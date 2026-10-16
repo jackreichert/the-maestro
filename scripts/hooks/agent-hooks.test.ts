@@ -212,3 +212,12 @@ test('the real hook saves the prompt under the ledger Briefs folder', () => {
     assert.equal(readdirSync(dir).length, 1, 'a prompt that looks like a secret is not saved');
   } finally { rmSync(vault, { recursive: true, force: true }); }
 });
+
+test('the real dispatch hook ignores a call that carries agent_id: nothing is written', () => {
+  const vault = mkdtempSync(join(tmpdir(), 'agent-hooks-nested-'));
+  try {
+    const r = runHook('agent-dispatch.ts', JSON.stringify({ ...call('Nested job'), agent_id: 'a1b2c3' }), vault);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(existsSync(join(vault, 'Projects', 'hook-proj', 'Journal', 'ledger.jsonl')), false);
+  } finally { rmSync(vault, { recursive: true, force: true }); }
+});
