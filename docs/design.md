@@ -72,3 +72,7 @@ The definition of done is never written by the page. It is read from an open epi
 A number that is not from today is never drawn like a live gauge. A stale measurement says "Last measured <date>", mutes the section (the accent and status colours flatten to ink), and leaves the limit pendulum at rest. Gauges are said in words first: "Tokens read per turn: 417k, limit 200k". The model mix is a ring in the ink ramp (Opus darkest) with each goal as a tick on the ring and in words ("Opus 57%, goal at most 40%"), labelled with the day it was measured.
 
 The pendulum has one positive use besides the limit: the day's tempo. Today's finished work items against the median of the seven days before, swinging right as the day fills (the centre is a typical day, full right is twice that) with a dynamics mark from pp to ff. It counts finished work items from the charts; merged PRs are not counted separately.
+
+## The score beyond Home
+
+Tabs other than Home borrow two pieces of the score's look from `home-concept.ts`: `INSTRUMENT_CSS` (an instrument name in the display italic over a plain heading, decoration only) and `TACET_CSS` with `tacet()` (an empty state that is a sentence plus the musical word for silence). Open PRs names its bands Cadence, Solo, Tutti and Sketches; empty lists on Open PRs, Others' PRs and Scripts use the rest glyph. A new tab should reuse these before inventing its own.
