@@ -153,7 +153,7 @@ test('footerQueue refreshes a snapshot older than 30 minutes and prints the live
   const old = { prs: prs(false, false, false, false), takenAt: '2026-01-01T01:00:00Z' };
   const calls: string[] = [];
   const refresh = () => { calls.push('live'); return { prs: prs(...new Array(11).fill(false)) }; };
-  assert.equal(footerQueue(old, 4, now, [], refresh), '**Review queue:** 11 of 4 waiting on reviewers (7 over)');
+  assert.equal(footerQueue(old, 4, now, [], refresh), '**Review queue:** 11 waiting on reviewers, cap 4 (7 over)');
   assert.deepEqual(calls, ['live']);
   const fresh = { prs: prs(false, false), takenAt: '2026-01-01T11:45:00Z' };
   assert.equal(footerQueue(fresh, 4, now, [], refresh), '**Review queue:** 2 of 4 waiting on reviewers (snapshot 15m old)');
@@ -173,7 +173,7 @@ test('footerQueue on a fresh snapshot words the count like the live read: over t
   const takenAt = '2026-01-01T11:55:00Z';
   const never = () => { throw new Error('a fresh snapshot must not trigger a live read'); };
   const open = (n: number) => ({ prs: prs(...new Array(n).fill(false)), takenAt });
-  assert.equal(footerQueue(open(7), 4, now, [], never), '**Review queue:** 7 of 4 waiting on reviewers (3 over)');
+  assert.equal(footerQueue(open(7), 4, now, [], never), '**Review queue:** 7 waiting on reviewers, cap 4 (3 over)');
   assert.equal(footerQueue(open(4), 4, now, [], never), '**Review queue:** 4 of 4 waiting on reviewers (full)');
   assert.equal(footerQueue(open(2), 4, now, [], never), '**Review queue:** 2 of 4 waiting on reviewers');
   const live = () => ({ prs: prs(...new Array(7).fill(false)) });
@@ -226,14 +226,14 @@ test('a staging twin with an open develop twin counts once; a lone staging PR an
 
 test('the footer wording names the reviewer count, the overage and the author\'s backlog', () => {
   const q = (count: number, waitingOnYou: number) => ({ count, cap: 4, full: count >= 4, selfReview: 0, waitingOnYou, twins: 0 });
-  assert.equal(queueCount(q(11, 4)), '11 of 4 waiting on reviewers (7 over) \u00b7 4 waiting on you');
+  assert.equal(queueCount(q(11, 4)), '11 waiting on reviewers, cap 4 (7 over) \u00b7 4 waiting on you');
   assert.equal(queueCount(q(4, 0)), '4 of 4 waiting on reviewers (full)');
   assert.equal(queueCount(q(2, 1)), '2 of 4 waiting on reviewers \u00b7 1 waiting on you');
 });
 
-test('the push gate reads the same split: a live fetch of 18 PRs where 11 wait on reviewers is 11 of 4', () => {
+test('the push gate reads the same split: a live fetch of 18 PRs where 11 wait on reviewers is 11 over a cap of 4', () => {
   const list = [...Array(11).fill(0).map(() => pr({ reviewDecision: 'REVIEW_REQUIRED', mergeable: 'MERGEABLE' })), ...Array(7).fill(0).map(() => pr({ reviewDecision: 'CHANGES_REQUESTED' }))];
   const r = readQueue({ fetchLive: () => ({ prs: list }), readStored: () => null }, 4);
-  assert.equal(queueText(r)[0], 'review queue: 11 of 4 waiting on reviewers (7 over) \u00b7 7 waiting on you (live)');
+  assert.equal(queueText(r)[0], 'review queue: 11 waiting on reviewers, cap 4 (7 over) \u00b7 7 waiting on you (live)');
   assert.equal(queueExitCode(r), 1);
 });

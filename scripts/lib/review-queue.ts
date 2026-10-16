@@ -128,11 +128,11 @@ export function staleSuffix(takenAt: string | undefined, now: Date): string {
 }
 
 /**
- * `3 of 4 waiting on reviewers`, `4 of 4 waiting on reviewers (full)`, `11 of 4 waiting on reviewers (7 over) · 4 waiting on you`: the one wording for the
+ * `3 of 4 waiting on reviewers`, `4 of 4 waiting on reviewers (full)`, `11 waiting on reviewers, cap 4 (7 over) · 4 waiting on you`: the one wording for the
  * count, shared by the push gate, the board, the snapshot footer and the live footer. The `waiting on you` part is left out when it is zero.
  */
 export const queueCount = (q: ReviewQueue): string =>
-  `${q.count} of ${q.cap} waiting on reviewers${q.count > q.cap ? ` (${q.count - q.cap} over)` : q.full ? ' (full)' : ''}${q.waitingOnYou ? ` · ${q.waitingOnYou} waiting on you` : ''}`;
+  `${q.count > q.cap ? `${q.count} waiting on reviewers, cap ${q.cap} (${q.count - q.cap} over)` : `${q.count} of ${q.cap} waiting on reviewers${q.full ? ' (full)' : ''}`}${q.waitingOnYou ? ` · ${q.waitingOnYou} waiting on you` : ''}`;
 
 /**
  * The board's review queue from the stored snapshot, no network: `review queue: 3 of 4` (plus `(full)` and a stale-snapshot note), or
