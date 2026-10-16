@@ -22,6 +22,7 @@ import { briefUnknown, forestBasis, judgeBrief, noteIndex } from './brief.ts';
 import type { BriefRead } from './brief.ts';
 import type { Doc, Docs } from './docs.ts';
 import { buildHandover } from './handover.ts';
+import { buildDone, DONE_HEADING } from './done.ts';
 import type { EpicSummary, Ref, SharedItem, StreamHome, TicketRow, Unknown } from './types.ts';
 import type { SharedDoc } from '../journal/shared.ts';
 
@@ -88,7 +89,7 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
   const cfg = inp.homes.streams[stream];
   const base = (over: Partial<StreamHome>): StreamHome => finish({
     stream, generatedAt: now.toISOString(), seq: '', mapping: { source: 'auto', configFound: Boolean(cfg) }, epics: [], loose: [], left: { inProgress: [], blocked: [], notStarted: [], truncated: 0 },
-    doneMeans: [], links: [], projects: [], shared: [], sharedMore: 0, history: null, unknowns, freshness: { tickets: '', prs: prState(inp), tracker: null }, ...over,
+    doneMeans: [], done: { sources: [], fix: null }, links: [], projects: [], shared: [], sharedMore: 0, history: null, unknowns, freshness: { tickets: '', prs: prState(inp), tracker: null }, ...over,
   });
   if (!inp.vault) {
     unknowns.push({ kind: 'no-vault', text: 'No vault root is configured, so no tickets are read. Set vault_root (VAULT_ROOT) and restart the web server.' });
@@ -142,7 +143,7 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
   const index = noteIndex(notes);
   for (const e of epics) {
     const t = forest.byId.get(e.id) as Ticket;
-    const done = section(t.body, /^## What done looks like\s*$/i)?.trim();
+    const done = section(t.body, DONE_HEADING)?.trim();
     e.brief = judgeBrief({
       epic: e.id, read: inp.readBrief(t), basis: forestBasis(forest, e.id),
       ticketDates: subtree(forest, e.id).map((x) => forest.byId.get(x)?.updated), docDates: docDates.get(e.id) ?? [], doneMeans: done ? clip(done, DONE_MEANS_MAX) : null,
@@ -160,7 +161,12 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
     loose: looseIds.map((id) => forest.byId.get(id) as Ticket).filter(isOpen).slice(0, ROW_CAP).map((t) => row(ctx, t)), left,
     links: rail, ...sharedItems(inp, projects),
     projects: projects.map((project) => buildHandover({ project, tickets: inp.vault?.tickets.filter((t) => t.project === project) ?? [], docs: docs.get(project) ?? [], ledger: inp.ledger, prs: inp.prs, page, ...(inp.readNote ? { readNote: inp.readNote } : {}) })),
-    doneMeans: epicIds.flatMap((id) => { const t = forest.byId.get(id) as Ticket; const text = section(t.body, /^## What done looks like\s*$/i); return text?.trim() ? [{ epic: id, text: clip(text, DONE_MEANS_MAX) }] : []; }),
+    doneMeans: epicIds.flatMap((id) => { const t = forest.byId.get(id) as Ticket; const text = section(t.body, DONE_HEADING); return text?.trim() ? [{ epic: id, text: clip(text, DONE_MEANS_MAX) }] : []; }),
+    done: buildDone({
+      stream, vaultName: page.vaultName,
+      epics: epics.map((e) => ({ id: e.id, status: e.status, closed: e.closed, total: e.total, body: (forest.byId.get(e.id) as Ticket).body, ref: e.note })),
+      projects: projects.map((project) => ({ project, text: inp.readNote?.(`Projects/${project}/CONTEXT.md`) ?? null })),
+    }),
     unknowns: unknowns.length > UNKNOWN_CAP ? [...unknowns.slice(0, UNKNOWN_CAP), { kind: 'config-invalid' as const, text: `${unknowns.length - UNKNOWN_CAP} more unknowns are not shown.` }] : unknowns,
     freshness: { tickets: inp.vault.newestMtime ? new Date(inp.vault.newestMtime).toISOString() : '', prs: prState(inp), tracker: null },
   });
@@ -256,7 +262,7 @@ function epicSummary(ctx: Ctx, id: string, unknowns: Unknown[]): EpicSummary {
   if (big.length) unknowns.push({ kind: 'big-points', epic: id, text: `${id}: ${big.slice(0, LIST_IDS).join(', ')}${big.length > LIST_IDS ? ` and ${big.length - LIST_IDS} more` : ''} ${big.length === 1 ? 'is' : 'are'} pointed above ${SCALE_MAX}; the scale says split ${big.length === 1 ? 'it' : 'them'}.` });
   const unverified = below.filter((b) => b.status === 'closed' && !isVerified(b)).map((b) => b.id);
   if (required && unverified.length) unknowns.push({ kind: 'closed-not-verified', epic: id, text: `${id}: closed but not verified (no dated "## Verified" line): ${unverified.slice(0, LIST_IDS).join(', ')}${unverified.length > LIST_IDS ? ` and ${unverified.length - LIST_IDS} more` : ''}.` });
-  if (!section(t.body, /^## What done looks like\s*$/i)?.trim()) unknowns.push({ kind: 'no-done-means', epic: id, text: `${id} has no "What done looks like" section; ask for one, do not guess it.` });
+  if (!section(t.body, DONE_HEADING)?.trim()) unknowns.push({ kind: 'no-done-means', epic: id, text: `${id} has no "What done looks like" section; ask for one, do not guess it.` });
   const key = trackerKey(inp.page, t);
   const rows = open.sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
   const next = rows.find((o) => bucketOf(ctx, o) === 'inProgress') ?? rows.find((o) => bucketOf(ctx, o) === 'notStarted');

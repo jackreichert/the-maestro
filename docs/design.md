@@ -60,3 +60,9 @@ Two variants were screenshotted: a refined list and a two-column grid of voice c
 ## Pagination
 
 One pager (`src/pager.ts`, math in `src/page-math.ts`, styles in `src/pager-css.ts`) replaces every "Show all", "Show more" and "Load more". A list that is longer than its page size shows one page and a `nav.pager` under it: Previous, "Page N of M (a to b of T)", Next. Rules: the page size is set where the list is built; the page is kept by key so a redraw lands on the same page; the buttons use `aria-disabled` rather than `disabled` so keyboard focus is not lost at either end; rows that must always be seen (Others' PRs asked of you) sit above the paging on every page. Use `pagedRows(rows, { key, size, label })` for rows already in the DOM (it toggles `hidden`, no redraw) or `pager(view, ...)` when the list redraws itself.
+
+## The stream tab
+
+Top to bottom: the stream heading and cue line, the definition of done (centred, 760px at most), the links in columns, then the board (Where it stands, Cues, Fermata, In flight, Coda), and last the 14-day score. The board comes before the score because it is what needs acting on; the score is context. Section names are Home's (instrument word over the title), so a reader who knows Home knows this page, and the plain meaning ("needs you", "blocked") is read to a screen reader.
+
+The definition of done is never written by the page. It is read from an open epic's "What done looks like" or the project's CONTEXT.md and shown as written; when neither exists the page says which file to add it to.

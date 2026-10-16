@@ -71,3 +71,16 @@ test('shared documents are kept when well formed, dropped and counted when not, 
   delete none.shared;
   assert.deepEqual([sanitizeHome(none)?.dropped, sanitizeHome(none)?.home.shared], [0, []]);
 });
+
+test('done sources are kept when well formed, dropped and counted when not, and a missing done reads as none', () => {
+  const ok = { kind: 'epic', name: 'avonlea-api-042', ref: { label: 'avonlea-api-042' }, items: [{ text: 'Exporter live', checked: false }, { text: 'Note', checked: null }], prose: null, more: 0, progress: { done: 1, total: 2, unit: 'checked' }, finished: false };
+  const bad = home();
+  bad.done = { sources: [ok, { ...ok, kind: 'job' }, { ...ok, items: [{ text: 7, checked: false }] }, { ...ok, progress: { done: 1, total: 2, unit: 'miles' } }], fix: 'Add a section to Projects/avonlea-api/CONTEXT.md.' };
+  const got = sanitizeHome(bad);
+  assert.equal(got?.home.done.sources.length, 1);
+  assert.equal(got?.dropped, 3);
+  assert.equal(got?.home.done.fix, 'Add a section to Projects/avonlea-api/CONTEXT.md.');
+  const none = home();
+  delete none.done;
+  assert.deepEqual(sanitizeHome(none)?.home.done, { sources: [], fix: null });
+});

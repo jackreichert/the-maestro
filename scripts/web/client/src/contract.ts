@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { SharedDoc, CostData, CostMetric, CostExperiment, Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalCleanup, LocalReview, LocalUnit, OpenPrsData, OpenPrsGroup, OthersPrRow, OthersPrsData, PrsRefreshStatus, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
+import type { DoneSource, SharedDoc, CostData, CostMetric, CostExperiment, Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalCleanup, LocalReview, LocalUnit, OpenPrsData, OpenPrsGroup, OthersPrRow, OthersPrsData, PrsRefreshStatus, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -217,6 +217,12 @@ function sanitizeDocs(v: unknown): { value?: EpicDocs; dropped: number } {
 const RAIL_LINK: Shape = { label: str, kind: oneOf('note', 'tracker', 'pr', 'web'), url: str, meta: opt(str) };
 const RAIL_GROUP: Shape = { group: oneOf('pinned', 'epics', 'docs', 'prs', 'runbooks'), more: count };
 const DONE_MEANS: Shape = { epic: str, text: str };
+const orNullShape = (s: Shape): Check => (v) => v === null || shape(s)(v);
+const DONE_SOURCE: Shape = {
+  kind: oneOf('epic', 'project'), name: str, ref, prose: (v) => v === null || str(v), more: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 0, finished: bool,
+  items: arrOf(shape({ text: str, checked: (v) => v === null || bool(v) })),
+  progress: orNullShape({ done: num, total: num, unit: oneOf('checked', 'tickets') }),
+};
 const SHARED_DOC: Shape = { title: str, kind: oneOf('web', 'note', 'file'), url: opt(str), path: opt(str), why: opt(str), by: str, project: str, date: str };
 const HOME_UNKNOWN: Shape = { kind: str, text: str, ref: opt(ref), epic: opt(str) };
 
@@ -251,6 +257,9 @@ export function sanitizeHome(x: unknown): { home: StreamHome; dropped: number } 
   const unknowns = validRows(x.unknowns, HOME_UNKNOWN) as HomeUnknown[];
   const doneMeans = validRows(x.doneMeans, DONE_MEANS) as StreamHome['doneMeans'];
   const shared = validRows(x.shared, SHARED_DOC) as SharedDoc[];
+  const doneIn = isObj(x.done) ? x.done : {};
+  const doneSources = validRows(doneIn.sources, DONE_SOURCE) as DoneSource[];
+  const done = { sources: doneSources, fix: typeof doneIn.fix === 'string' ? doneIn.fix : null };
   const sharedMore = count(x.sharedMore) ? x.sharedMore as number : 0;
   let linksDropped = lost(x.links, validRows(x.links, RAIL_GROUP));
   const links = validRows(x.links, RAIL_GROUP).flatMap((g): RailGroup[] => {
@@ -263,10 +272,10 @@ export function sanitizeHome(x: unknown): { home: StreamHome; dropped: number } 
   const prs = isObj(x.freshness) && isObj(x.freshness.prs) && bool(x.freshness.prs.stale) && orNull(str)(x.freshness.prs.fetchedAt)
     ? { fetchedAt: x.freshness.prs.fetchedAt as string | null, stale: x.freshness.prs.stale as boolean }
     : { fetchedAt: null, stale: true };
-  const dropped = extras + lost(x.epics, epics) + lost(x.loose, loose) + lost(x.unknowns, unknowns) + lost(x.doneMeans, doneMeans) + lost(x.shared, shared) + linksDropped
+  const dropped = extras + lost(x.epics, epics) + lost(x.loose, loose) + lost(x.unknowns, unknowns) + lost(x.doneMeans, doneMeans) + lost(doneIn.sources, doneSources) + lost(x.shared, shared) + linksDropped
     + lost(left.inProgress, groups.inProgress) + lost(left.blocked, groups.blocked) + lost(left.notStarted, groups.notStarted);
   const truncated = count(left.truncated) ? left.truncated as number : 0;
-  return { home: { stream: x.stream, epics, loose, left: { ...groups, truncated }, doneMeans, links, shared, sharedMore, unknowns, freshness: { prs } }, dropped };
+  return { home: { stream: x.stream, epics, loose, left: { ...groups, truncated }, doneMeans, done, links, shared, sharedMore, unknowns, freshness: { prs } }, dropped };
 }
 
 const EPIC_LINE: Shape = {

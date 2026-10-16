@@ -110,3 +110,18 @@ test('a tab with no shared documents draws no shared-docs fold', async () => {
   assert.equal(root.querySelector('details[data-fold="rail-shared"]'), null);
   cleanup();
 });
+
+test('the definition of done leads the board, then the links, then where it stands; sections use Home\'s names', async () => {
+  const stream = st.streams[0];
+  const done = { sources: [{ kind: 'epic', name: 'FAKE-1', ref: { label: 'FAKE-1' }, items: [], prose: 'Shipped to every customer.', more: 0, progress: null, finished: false }], fix: null };
+  const links = [{ group: 'docs', more: 0, items: [{ label: 'Context', kind: 'note', url: 'obsidian://open?vault=Fictional&file=Context' }] }];
+  const { root, cleanup } = await mount<Board>('../src/stream-board.ts', 'stream-board', { stream, state: st, home: { ...home(), stream, done, links } as unknown as StreamHome });
+  const order = ['.done-top', '.rail', '.stand'].map((q) => root.querySelector(q));
+  assert.ok(order.every(Boolean), 'all three drawn');
+  const pos = (n: Element | null): number => [...root.querySelectorAll('.done-top, .rail, .stand')].indexOf(n as Element);
+  assert.deepEqual(order.map(pos), [0, 1, 2]);
+  const headings = [...root.querySelectorAll('h2')].map((x) => x.textContent ?? '');
+  assert.ok(headings.some((t) => /^Cues/.test(t)), 'Cues, not Needs you');
+  assert.ok(headings.some((t) => /^Fermata/.test(t)));
+  cleanup();
+});

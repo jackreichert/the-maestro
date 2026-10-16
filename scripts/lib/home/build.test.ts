@@ -179,3 +179,12 @@ test('unfiledEpics returns the epics no stream claims, counted like a stream\'s 
   const [first] = unfiledEpics(input({ config: {} }));
   assert.equal(first?.total, 10);
 });
+
+test('the stream home carries the epic\'s written definition of done with its ticket progress, and no copy of anything else', () => {
+  const h = buildStreamHome(input());
+  const s = h.done.sources.find((x) => x.name === 'avonlea-api-042');
+  assert.ok(s, 'the epic that has a done section is a source');
+  assert.equal(s.kind, 'epic');
+  assert.deepEqual(s.progress, { done: 4, total: 10, unit: 'tickets' });
+  assert.equal(h.done.fix, null);
+});
