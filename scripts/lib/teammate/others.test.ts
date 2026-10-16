@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Run } from '../types.ts';
-import { fetchOthers, OTHERS_CACHE, othersSearch, readOthersCache, reduceOthers, refreshOthers, writeOthersCache } from './others.ts';
+import { DETAIL_REFRESH_MS, fetchOthers, OTHERS_CACHE, othersSearch, readOthersCache, reduceOthers, refreshOthers, writeOthersCache } from './others.ts';
 import type { OtherPr } from './others.ts';
 
 const SCOPE = { owners: ['acme'], selfRepos: ['acme/solo'], self: 'me-fake' };
@@ -107,6 +107,10 @@ test('threads are read by id only for PRs with open threads, and only when their
   const again = fetchOthers(SCOPE, g.run, first);
   assert.equal(g.reads.length, 1, 'unchanged, so nothing is read in detail');
   assert.deepEqual(again.map((p) => [p.number, p.unresolved, p.copilotThreads]).sort(), [[1, 0, 0], [2, 1, 1]], 'the Copilot count is carried from the stored list');
+  const later = fakeGh([quiet, busy], { PR_2: { reviewThreads: { nodes: [{ isResolved: false, comments: { nodes: [{ author: { login: 'pat-fake' } }] } }] } } });
+  const refreshed = fetchOthers(SCOPE, later.run, first, Date.now() + DETAIL_REFRESH_MS + 1);
+  assert.deepEqual(later.reads, [['PR_2']], 'read again after the refresh age though updatedAt did not move');
+  assert.equal(refreshed.find((p) => p.number === 2)?.copilotThreads, 0, 'a Copilot thread that was resolved no longer counts');
   const moved = fakeGh([quiet, { ...busy, updatedAt: '2026-10-09T00:00:00Z' }], { PR_2: { reviewThreads: { nodes: [thread('pat-fake')] } } });
   assert.deepEqual(fetchOthers(SCOPE, moved.run, first).map((p) => [p.number, p.copilotThreads]).sort(), [[1, 0], [2, 0]]);
   assert.deepEqual(moved.reads, [['PR_2']], 'a changed PR is read again');

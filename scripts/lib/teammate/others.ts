@@ -13,6 +13,8 @@ import { writeAtomic } from '../status-page/seen.ts';
 import type { Run } from '../types.ts';
 
 export const OTHERS_CACHE = '.now-others-prs.json';
+/** A PR with open threads has its thread authors read again after this long, whether or not GitHub says it changed. */
+export const DETAIL_REFRESH_MS = 30 * 60_000;
 
 /** One open teammate PR, as stored. Logins are GitHub's own; nothing here is free text from a comment. */
 export interface OtherPr {
@@ -30,6 +32,8 @@ export interface OtherPr {
   yourReview?: { state: string; at: string }; headAt?: string;
   /** Submitted reviews by anyone (of the last 30), so a PR nobody has looked at reads as not yet asked for review. */
   reviewCount?: number;
+  /** When `copilotThreads` was last read from GitHub (ms), so it is read again after DETAIL_REFRESH_MS even if updatedAt did not move (resolving a thread may not move it). */
+  detailAt?: number;
 }
 export interface OthersCache { fetchedAt: Date | null; failure?: string; prs: OtherPr[] }
 export interface OthersScope { owners: readonly string[]; selfRepos: readonly string[]; self: string }
@@ -99,20 +103,24 @@ export function reduceOthers(nodes: readonly Node[], scope: OthersScope): OtherP
  * Reads GitHub and reduces; throws when GitHub cannot be read. With no owner there is nothing to read and the list is empty.
  * `known` is the last stored list: a PR in it whose updatedAt has not moved keeps its Copilot thread count, so only changed PRs with open threads are read in detail.
  */
-export function fetchOthers(scope: OthersScope, run?: Run, known: readonly OtherPr[] = []): OtherPr[] {
+export function fetchOthers(scope: OthersScope, run?: Run, known: readonly OtherPr[] = [], now: number = Date.now()): OtherPr[] {
   const search = othersSearch(scope.owners);
   if (!search) return [];
   const nodes = searchAllPages<Node>(othersQuery(search), run);
   const before = new Map(known.map((p) => [p.url, p]));
   const hasOpen = (n: Node): boolean => (n.reviewThreads?.nodes ?? []).some((t) => t && t.isResolved === false);
-  const stale = (n: Node): boolean => n.updatedAt === undefined || before.get(n.url ?? '')?.updatedAt !== n.updatedAt;
+  const stale = (n: Node): boolean => {
+    const old = before.get(n.url ?? '');
+    return n.updatedAt === undefined || old?.updatedAt !== n.updatedAt || old.detailAt === undefined || now - old.detailAt >= DETAIL_REFRESH_MS;
+  };
   const detail = readNodesById<{ id: string; reviewThreads: Node['reviewThreads'] }>(nodes.filter((n) => n.id && hasOpen(n) && stale(n)).map((n) => n.id as string), THREAD_AUTHORS, run);
   const detailed = nodes.map((n) => (n.id && detail.has(n.id) ? { ...n, reviewThreads: detail.get(n.id)?.reviewThreads } : n));
   const byUrl = new Map(nodes.map((n) => [n.url, n]));
   return reduceOthers(detailed, scope).map((p) => {
     const id = byUrl.get(p.url)?.id;
-    const read = !!id && detail.has(id);
-    return p.unresolved > 0 && !read ? { ...p, copilotThreads: before.get(p.url)?.copilotThreads ?? 0 } : p;
+    if (p.unresolved === 0) return p;
+    const old = before.get(p.url);
+    return id && detail.has(id) ? { ...p, detailAt: now } : { ...p, copilotThreads: old?.copilotThreads ?? 0, ...(old?.detailAt !== undefined ? { detailAt: old.detailAt } : {}) };
   });
 }
 
@@ -144,7 +152,7 @@ export function writeOthersCache(dir: string, cache: OthersCache): void {
  * One refresh: read GitHub and store the set. A failed read keeps the last good set, adding the reason and leaving `fetchedAt` where it was, so the
  * tab says how old the list is. Never throws: this rides the page rebuild, which must not fail because teammates' PRs could not be read.
  */
-export function refreshOthers(dir: string, scope: OthersScope, now: Date, fetch: (scope: OthersScope, known: readonly OtherPr[]) => OtherPr[] = (sc, known) => fetchOthers(sc, undefined, known)): OthersCache {
+export function refreshOthers(dir: string, scope: OthersScope, now: Date, fetch: (scope: OthersScope, known: readonly OtherPr[]) => OtherPr[] = (sc, known) => fetchOthers(sc, undefined, known, now.getTime())): OthersCache {
   try {
     const cache: OthersCache = { fetchedAt: now, prs: fetch(scope, readOthersCache(dir)?.prs ?? []) };
     writeOthersCache(dir, cache);
