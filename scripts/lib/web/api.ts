@@ -19,6 +19,7 @@ import type { Groups } from '../journal/board.ts';
 import { withholdJson } from '../json-out.ts';
 import { statusJson } from '../journal/status-json.ts';
 import { foldLeases, summarizeLeases } from '../journal/leases.ts';
+import { ledgerDay } from '../ledger-day.ts';
 import { triageItems } from '../journal/triage.ts';
 import { ticketNoteRef } from '../status-page/render.ts';
 import type { PageConfig, Ref } from '../status-page/render.ts';
@@ -55,7 +56,7 @@ export interface Board { inputs: GatheredInputs; g: Groups }
 
 /** One consistent read of everything a response needs. Done-today is the page zone's day, matched on close timestamps, not the UTC date stored on each row. */
 export function readBoard(cfg: WebConfig, now: Date): Board {
-  const utcDay = now.toISOString().slice(0, 10);
+  const utcDay = ledgerDay(now);
   const day = localDate(now, cfg.page.tz);
   const store = openStore({ vault: cfg.vault, project: cfg.project, dryRun: false, warn: cfg.warn ?? (() => {}) });
   const entries = store.readLedger();   // read once: the board and the triage metadata see the same rows
