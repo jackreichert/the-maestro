@@ -107,7 +107,9 @@ export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData 
   const self = o.self.toLowerCase();
   const slack = slackActivity(o.slackDir);
   const gate: Gate = { open: o.openHours === undefined ? null : o.openHours * HOUR_MS, active: o.activeHours === undefined ? null : o.activeHours * HOUR_MS, drop: o.dropDays === undefined ? null : o.dropDays * DAY_MS };
+  const approved = (cache?.prs ?? []).filter((p) => p.decision === 'APPROVED');
   const kept = (cache?.prs ?? [])
+    .filter((p) => p.decision !== 'APPROVED')
     .filter((p) => p.author.toLowerCase() !== self && owners.has((p.repo.split('/')[0] ?? '').toLowerCase()) && !isSelfReview(p.repo, o.selfRepos) && !isFormerTeammate(p.author, o.former))
     .filter((p) => !dropped(p, slack, now, gate))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -116,6 +118,6 @@ export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData 
   return {
     generatedAt: now.toISOString(),
     prData: { fetchedAt: fetchedAt ? fetchedAt.toISOString() : null, stale, ...(cache?.failure ? { failure: cache.failure } : {}) },
-    total: kept.length, prs: kept.map((p) => row(p, o.self, o.guard ?? NO_GUARD, now, slack, gate)),
+    total: kept.length, approvedKeys: approved.map((p) => `${p.repo}#${p.number}`), prs: kept.map((p) => row(p, o.self, o.guard ?? NO_GUARD, now, slack, gate)),
   };
 }

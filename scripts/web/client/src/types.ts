@@ -267,7 +267,9 @@ export interface OthersPrRow {
   youAsked: boolean; handsOff?: boolean; /** Newer fields, absent from an older server: read as clean. */ isDraft?: boolean; ci?: 'pass' | 'fail' | 'pending' | 'none'; conflicting?: boolean; block?: 'release' | 'blocked'; awaitingAuthor?: boolean; notAsked?: boolean; /** When the latest ask for review was made (Slack post or reply, else the PR's opening); stale: no activity inside the active window, with the reason. */ askedAt?: string; stale?: boolean; staleWhy?: string; review: 'review-required' | 'approved' | 'changes-requested'; unresolved: number; copilotThreads: number;
 }
 /** `prData.fetchedAt` is null until the first read; `failure` says why the last read did not refresh the list. Rows run newest activity first. */
-export interface OthersPrsData { generatedAt: string; prData: { fetchedAt: string | null; stale: boolean; failure?: string }; total: number; prs: OthersPrRow[] }
+export interface OthersPrsData { generatedAt: string; prData: { fetchedAt: string | null; stale: boolean; failure?: string }; total: number; prs: OthersPrRow[];
+  /** `repo#number` of open teammate PRs already approved: left out of the list, and any review draft on one is not shown as waiting. Older servers omit it. */
+  approvedKeys?: string[] }
 
 /** Where the PR refresh stands: `locked` means another rebuild held the page lock. */
 export interface PrsRefreshStatus { state: 'idle' | 'running' | 'done' | 'failed' | 'locked'; startedAt?: string; finishedAt?: string; message?: string }

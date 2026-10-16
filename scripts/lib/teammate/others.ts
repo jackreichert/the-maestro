@@ -58,7 +58,7 @@ export function othersSearch(owners: readonly string[], opts: { former?: readonl
   if (!safe.length) return null;
   const gone = (opts.former ?? []).filter((l) => /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(l)).map((l) => `-author:${l}`);
   const since = opts.sinceDays !== undefined && opts.sinceDays > 0 ? [`updated:>=${new Date((opts.now ?? Date.now()) - opts.sinceDays * 86_400_000).toISOString().slice(0, 10)}`] : [];
-  return ['is:pr is:open archived:false -author:@me', ...gone, ...since, ...safe.map((o) => `user:${o}`)].join(' ');
+  return ['is:pr is:open archived:false -author:@me -review:approved', ...gone, ...since, ...safe.map((o) => `user:${o}`)].join(' ');
 }
 
 export const othersQuery = (search: string): string => `query($after: String) { search(query: "${search}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
@@ -87,6 +87,7 @@ export function reduceOthers(nodes: readonly Node[], scope: OthersScope): OtherP
     const author = n.author?.login;
     if (!repo || !author || typeof n.number !== 'number' || !n.url || typeof n.isDraft !== 'boolean') continue;
     if (isBotAuthor(n.author) || (self !== '' && author.toLowerCase() === self) || isSelfReview(repo, scope.selfRepos) || isFormerTeammate(author, scope.former)) continue;
+    if (n.reviewDecision === 'APPROVED' || (n.reviews?.nodes ?? []).some((r) => r?.state === 'APPROVED')) continue;
     if (!scope.owners.some((o) => o.toLowerCase() === repo.split('/')[0]?.toLowerCase())) continue;
     const mine = (n.reviews?.nodes ?? []).filter((r) => r && r.state && r.state !== 'PENDING' && r.submittedAt && self !== '' && (r.author?.login ?? '').toLowerCase() === self).sort((a, b) => (a?.submittedAt ?? '').localeCompare(b?.submittedAt ?? '')).pop();
     const head = n.commits?.nodes?.[0]?.commit;

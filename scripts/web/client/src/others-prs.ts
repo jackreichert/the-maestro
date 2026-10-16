@@ -82,7 +82,7 @@ export class OthersPrs extends HTMLElement {
     const d = m.data;
     const byPr = new Map<string, DraftRow[]>();
     for (const r of this.#drafts?.rows ?? []) byPr.set(key(r.repo, r.pr), [...(byPr.get(key(r.repo, r.pr)) ?? []), r]);
-    const listed = new Set(d.prs.map((p) => key(p.repo, p.number)));
+    const listed = new Set([...d.prs.map((p) => key(p.repo, p.number)), ...(d.approvedKeys ?? [])]);
     const names = new Map(d.prs.map((p) => [key(p.repo, p.number), who(p)] as const));
     const authorOf = (x: DraftRow): string | undefined => x.author ?? names.get(key(x.repo, x.pr));
     const when = d.prData.fetchedAt ? `List read ${ago(d.prData.fetchedAt, d.generatedAt)} ago${d.prData.stale ? ' (older than expected)' : ''}.` : 'The list has not been read yet. It fills in when the next page refresh runs.';
