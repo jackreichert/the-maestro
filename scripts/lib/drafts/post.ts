@@ -88,7 +88,7 @@ export function openCopilotThreads(run: GhRun, repo: string, pr: number): number
 }
 
 /** A backmerge PR is one whose head branch is named for it (`backmerge/...`, `back-merge-...`): the repo convention, and not something a title can claim. */
-const BACKMERGE_HEAD = /(^|[/_-])back-?merge([/_-]|$)/i;
+const BACKMERGE_HEAD = /^(backmerge\/|back-merge-)/i;
 function isBackmerge(run: GhRun, repo: string, pr: number): boolean {
   let r: GhResult;
   try { r = run(['api', `repos/${repo}/pulls/${pr}`, '--jq', '.head.ref']); } catch { return false; }

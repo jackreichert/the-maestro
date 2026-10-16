@@ -389,6 +389,11 @@ test('a backmerge (head branch named for it) is exempt from the Copilot rule, a 
   const f2 = file(); const g2 = stub(); g2.copilot = 4; g2.headRef = 'feat/backmerges-are-great';
   const b = addDraft(f2, review());
   assert.equal(approveAndPost(f2, b.id, R(f2, b.id), { run: g2.run }).ok, false, 'only a head branch named backmerge counts');
+  for (const ref of ['feat/backmerge-docs', 'fix-backmerge-x', 'x_backmerge']) {
+    const f3 = file(); const g3 = stub(); g3.copilot = 1; g3.headRef = ref;
+    const c = addDraft(f3, review());
+    assert.equal(approveAndPost(f3, c.id, R(f3, c.id), { run: g3.run }).ok, false, `${ref} is not a backmerge branch`);
+  }
 });
 
 test('when GitHub cannot say how many threads are open, the approval is refused rather than assumed clean', () => {
