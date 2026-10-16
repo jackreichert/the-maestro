@@ -40,6 +40,27 @@ function fetchPage(query: string, after: string | null, run: Run): SearchPage {
 }
 
 /**
+ * Like `searchAllPages`, but a page that fails after the first one does not lose the pages already read: it returns them with the error. A first page
+ * that fails still throws, so a caller never mistakes "could not read" for "nothing open".
+ */
+export function searchPagesPartial<N = SearchNode>(query: string, run: Run = execGh): { nodes: N[]; error?: Error } {
+  const nodes: N[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    let result: SearchPage;
+    try { result = fetchPage(query, after, run); } catch (e) {
+      if (page === 0) throw e;
+      return { nodes, error: e instanceof Error ? e : new Error(String(e)) };
+    }
+    nodes.push(...(result.nodes.filter(Boolean) as N[]));
+    if (!result.pageInfo?.hasNextPage) return { nodes };
+    after = result.pageInfo.endCursor ?? null;
+    if (!after) return { nodes, error: new Error('search reported another page but no endCursor') };
+  }
+  return { nodes, error: new Error(`search still had more results after ${MAX_PAGES} pages`) };
+}
+
+/**
  * Fetches every page of a search query and returns the concatenated, non-null nodes. `run(cmd, args)` defaults to a throwing execFileSync.
  * `N` is the node shape the query selects; gh's JSON is not validated against it, so it is only as right as the query.
  */

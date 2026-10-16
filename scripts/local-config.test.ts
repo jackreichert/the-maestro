@@ -665,3 +665,10 @@ test('resolvedSettings lists user-file-only gate settings with no environment na
     assert.equal(s.pr_body_check_voice?.value, 'off');
     assert.equal(s.pr_body_check_voice?.envName, '');
 });
+
+test('former_teammates: default none, logins are lower-cased, env wins over the file', () => {
+    assert.equal(show().FORMER_TEAMMATES, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('former_teammates: Gone-Fake, left-fake'));
+    assert.equal(show().FORMER_TEAMMATES, 'gone-fake, left-fake');
+    assert.equal(show({ MAESTRO_FORMER_TEAMMATES: 'other-fake' }).FORMER_TEAMMATES, 'other-fake');
+});

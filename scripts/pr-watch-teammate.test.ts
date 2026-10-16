@@ -125,3 +125,10 @@ test('a hands-off repo is not reviewed unless the user is a requested reviewer o
   assert.equal(selectWaiting([node()], o).length, 1, 'a repo where the user was not asked is still reviewed');
   assert.equal(selectWaiting([node(guarded)], O).length, 1, 'with nothing configured nothing is hands off');
 });
+
+test('a former teammate\'s ready PR is never selected for a review wait', () => {
+  const gone = node({ author: { login: 'Gone-Fake', __typename: 'User' } });
+  assert.equal(selectWaiting([gone], O).length, 1, 'selected when not listed as former');
+  assert.equal(selectWaiting([gone], { ...O, former: ['gone-fake'] }).length, 0);
+  assert.equal(selectWaiting([node()], { ...O, former: ['gone-fake'] }).length, 1, 'other authors are untouched');
+});

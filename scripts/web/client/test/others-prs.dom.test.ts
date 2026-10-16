@@ -233,3 +233,11 @@ test('each sub-tab pages on its own: Next in one does not change another', async
   assert.equal(pagerText(root), 'Page 1 of 2 (1\u201325 of 30)');
   cleanup();
 });
+
+test('a draft on an already approved PR is not shown as an orphan or as waiting', async () => {
+  const model = { data: { ...data([pr(1)]), approvedKeys: ['acme/app#9'] }, loaded: true };
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model, drafts: drafts([draft(9)]) });
+  assert.equal(root.querySelector('h3.orphans'), null);
+  assert.doesNotMatch(root.textContent ?? '', /acme\/app#9 by/);
+  cleanup();
+});

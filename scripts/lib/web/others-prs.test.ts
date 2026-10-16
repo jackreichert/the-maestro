@@ -20,9 +20,9 @@ const cacheWith = (prs: OtherPr[], fetchedAt: Date | null = new Date('2026-10-15
 const opts = (statusDir: string) => ({ statusDir, owners: ['acme'], selfRepos: ['acme/solo'], self: 'Me-Fake' });
 
 test('rows run newest activity first and carry the fields the tab shows', () => {
-  const out = buildOthersPrs(opts(cacheWith([pr(1, { requested: ['me-fake'], decision: 'APPROVED' }), pr(3, { decision: 'CHANGES_REQUESTED', unresolved: 2, copilotThreads: 2 }), pr(2, { decision: 'REVIEW_REQUIRED' })])), NOW);
+  const out = buildOthersPrs(opts(cacheWith([pr(1, { requested: ['me-fake'], decision: 'REVIEW_REQUIRED' }), pr(3, { decision: 'CHANGES_REQUESTED', unresolved: 2, copilotThreads: 2 }), pr(2, { decision: 'REVIEW_REQUIRED' })])), NOW);
   assert.deepEqual(out.prs.map((p) => p.number), [3, 2, 1]);
-  assert.deepEqual(out.prs.map((p) => p.review), ['changes-requested', 'review-required', 'approved']);
+  assert.deepEqual(out.prs.map((p) => p.review), ['changes-requested', 'review-required', 'review-required']);
   assert.deepEqual(out.prs.map((p) => p.youAsked), [false, false, true]);
   assert.deepEqual([out.prs[0]?.unresolved, out.prs[0]?.copilotThreads, out.prs[0]?.ageDays, out.total], [2, 2, 3, 3]);
   assert.deepEqual(out.prData, { fetchedAt: '2026-10-15T12:05:00.000Z', stale: false });
@@ -126,4 +126,14 @@ test('checks, conflicts, block labels and a review the author has not pushed aft
   const by = (n: number) => out.prs.find((p) => p.number === n);
   assert.deepEqual([by(1)?.ci, by(1)?.conflicting, by(2)?.block, by(2)?.ci, by(3)?.block], ['fail', true, 'release', 'pending', 'blocked']);
   assert.deepEqual([4, 5, 6].map((n) => by(n)?.awaitingAuthor === true), [true, false, false]);
+});
+
+test('a former teammate\'s PRs are filtered on read too, even when the cache holds them and they are recent', () => {
+  const out = buildOthersPrs({ ...opts(cacheWith([pr(1), pr(2, { author: 'Gone-Fake' }), pr(3, { author: 'gone-fake', requested: ['me-fake'] })])), former: ['gone-fake'] }, NOW);
+  assert.deepEqual(out.prs.map((p) => p.number), [1]);
+});
+
+test('an approved PR leaves the list on read and is named in approvedKeys, so its draft is not shown as waiting', () => {
+  const out = buildOthersPrs(opts(cacheWith([pr(1), pr(2, { decision: 'APPROVED' })])), NOW);
+  assert.deepEqual([out.prs.map((p) => p.number), out.approvedKeys, out.total], [[1], ['acme/app#2'], 1]);
 });

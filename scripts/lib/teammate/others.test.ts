@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Run } from '../types.ts';
-import { DETAIL_REFRESH_MS, fetchOthers, OTHERS_CACHE, othersSearch, readOthersCache, reduceOthers, refreshOthers, writeOthersCache } from './others.ts';
+import { DETAIL_REFRESH_MS, PartialOthers, fetchOthers, OTHERS_CACHE, othersSearch, readOthersCache, reduceOthers, refreshOthers, writeOthersCache } from './others.ts';
 import type { OtherPr } from './others.ts';
 
 const SCOPE = { owners: ['acme'], selfRepos: ['acme/solo'], self: 'me-fake' };
@@ -21,7 +21,7 @@ const dir = (): string => mkdtempSync(join(tmpdir(), 'others-test-'));
 test('the search is scoped to the owners and never runs without one', () => {
   assert.equal(othersSearch([]), null);
   assert.equal(othersSearch(['bad owner', 'x;y']), null);
-  assert.match(othersSearch(['acme', 'beta']) ?? '', /^is:pr is:open archived:false -author:@me user:acme user:beta$/);
+  assert.match(othersSearch(['acme', 'beta']) ?? '', /^is:pr is:open archived:false -author:@me -review:approved user:acme user:beta$/);
 });
 
 test('the author\'s display name is kept when GitHub gives one, and a blank one is not', () => {
@@ -46,7 +46,7 @@ test('drafts are kept and flagged, with checks, mergeability, labels, your revie
   const me = { login: 'ME-fake' };
   const [d, p] = reduceOthers([node({ number: 4, isDraft: true }), node({
     number: 5, mergeable: 'CONFLICTING', labels: { nodes: [{ name: 'wip' }, null] }, commits: { nodes: [{ commit: { committedDate: '2026-10-03T00:00:00Z', statusCheckRollup: { state: 'FAILURE' } } }] },
-    reviews: { nodes: [{ author: me, state: 'COMMENTED', submittedAt: '2026-10-02T00:00:00Z' }, { author: me, state: 'PENDING', submittedAt: '2026-10-04T00:00:00Z' }, { author: { login: 'kim-fake' }, state: 'APPROVED', submittedAt: '2026-10-05T00:00:00Z' }] },
+    reviews: { nodes: [{ author: me, state: 'COMMENTED', submittedAt: '2026-10-02T00:00:00Z' }, { author: me, state: 'PENDING', submittedAt: '2026-10-04T00:00:00Z' }, { author: { login: 'kim-fake' }, state: 'DISMISSED', submittedAt: '2026-10-05T00:00:00Z' }] },
   })] as never, SCOPE);
   assert.equal(d?.isDraft, true);
   assert.deepEqual([p?.isDraft, p?.ci, p?.mergeable, p?.labels, p?.yourReview, p?.headAt, p?.reviewCount], [false, 'FAILURE', 'CONFLICTING', ['wip'], { state: 'COMMENTED', at: '2026-10-02T00:00:00Z' }, '2026-10-03T00:00:00Z', 2]);
@@ -122,4 +122,52 @@ test('refreshOthers hands the stored list to the fetch, so a refresh can skip wh
   let seen: readonly OtherPr[] = [];
   refreshOthers(d, SCOPE, new Date('2026-10-15T12:10:00Z'), (_scope, known) => { seen = known; return []; });
   assert.deepEqual(seen.map((p) => p.url), ['https://x/1']);
+});
+
+test('a former teammate\'s PRs are dropped at fetch time, whatever the case of the login', () => {
+  const out = reduceOthers([node({ number: 1 }), node({ number: 2, author: { login: 'Gone-Fake', __typename: 'User' } })] as never, { ...SCOPE, former: ['gone-fake'] });
+  assert.deepEqual(out.map((p) => p.number), [1]);
+  assert.deepEqual(reduceOthers([node({ number: 2, author: { login: 'gone-fake', __typename: 'User' } })] as never, SCOPE).map((p) => p.number), [2], 'no list, nothing dropped');
+});
+
+test('the search is narrowed to recent PRs and leaves out former teammates server-side, ignoring unsafe logins', () => {
+  const now = Date.parse('2026-10-16T12:00:00Z');
+  assert.equal(othersSearch(['acme'], { former: ['gone-fake', 'x y;'], sinceDays: 3, now }), 'is:pr is:open archived:false -author:@me -review:approved -author:gone-fake updated:>=2026-10-13 user:acme');
+  assert.equal(othersSearch(['acme'], { sinceDays: 0, now }), 'is:pr is:open archived:false -author:@me -review:approved user:acme');
+});
+
+/** A gh whose search serves `pages` in order and fails on page `failAt` (0-based), returning the cursor of the next page each time. */
+function pagedGh(pages: unknown[][], failAt: number): Run {
+  let n = 0;
+  return (_cmd, args) => {
+    const query = args.find((a) => a.startsWith('query=')) ?? '';
+    if (query.includes('nodes(ids:')) return { status: 0, stdout: JSON.stringify({ data: { nodes: [] } }), stderr: '' };
+    const i = n++;
+    if (i === failAt) return { status: 1, stdout: '', stderr: 'budget exceeded\nmore' };
+    return { status: 0, stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: i < pages.length - 1, endCursor: `c${i}` }, nodes: pages[i] } } }), stderr: '' };
+  };
+}
+
+test('a read that fails after the first page keeps the pages it got, merged with the last good set', () => {
+  const a = node({ number: 1, url: 'https://github.com/acme/app/pull/1', updatedAt: '2026-10-16T02:00:00Z' });
+  const old = stored({ url: 'https://github.com/acme/app/pull/9', number: 9, updatedAt: '2026-10-15T00:00:00Z' });
+  const goneOld = stored({ url: 'https://github.com/acme/app/pull/8', number: 8, author: 'gone-fake', updatedAt: '2026-10-15T01:00:00Z' });
+  assert.throws(() => fetchOthers({ ...SCOPE, former: ['gone-fake'] }, pagedGh([[a], []], 1), [old, goneOld]), (e: unknown) => e instanceof PartialOthers && e.prs.map((p) => p.number).join() === '1,9' && /budget exceeded/.test(e.message));
+  const d = dir();
+  const first = new Date('2026-10-15T12:00:00Z');
+  refreshOthers(d, SCOPE, first, () => [old]);
+  const cache = refreshOthers(d, SCOPE, new Date('2026-10-16T12:00:00Z'), (sc, known) => fetchOthers(sc, pagedGh([[a], []], 1), known));
+  assert.deepEqual([cache.prs.map((p) => p.number), cache.fetchedAt?.toISOString(), cache.failure], [[1, 9], first.toISOString(), 'partial read: gh api graphql failed: budget exceeded']);
+  assert.equal(readOthersCache(d)?.prs.length, 2);
+});
+
+test('a first page that fails still throws, so nothing is mistaken for an empty list', () => {
+  assert.throws(() => fetchOthers(SCOPE, pagedGh([[]], 0), [stored()]), /budget exceeded/);
+});
+
+test('an approved PR is left out: by its decision, or by an approving review from anyone; the search also asks GitHub to skip them', () => {
+  const approving = { reviews: { nodes: [{ author: { login: 'kim-fake' }, state: 'APPROVED', submittedAt: '2026-10-15T00:00:00Z' }] } };
+  const out = reduceOthers([node({ number: 1 }), node({ number: 2, reviewDecision: 'APPROVED' }), node({ number: 3, ...approving }), node({ number: 4, reviews: { nodes: [{ author: { login: 'kim-fake' }, state: 'COMMENTED', submittedAt: '2026-10-15T00:00:00Z' }] } })] as never, SCOPE);
+  assert.deepEqual(out.map((p) => p.number).sort(), [1, 4]);
+  assert.match(othersSearch(['acme']) ?? '', / -review:approved /);
 });

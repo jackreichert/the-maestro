@@ -25,6 +25,7 @@ repo_prefix: <prefix->         # queue-report: a row saying `tool #5` may mean t
 gh_login: <github-login>    # omit to use `gh api user`
 project: <container-name>   # ledger paths Projects/<name>/Journal/
 projects_dir: /path/to/claude/projects/<container>   # omit to follow container_root (else the working directory)
+former_teammates: <login>, <login>   # GitHub logins of people who have left: their PRs never show on the Others' PRs tab and are never picked for a review wait; default none
 stale_wip_days: 3             # days an in-flight item may have no live lease before it counts as stale; default 3
 autocompact_floor: 100000      # lowest autocompact trigger (tokens) that does not warn; default 100000
 roll_warn_pct: 60              # Session line says "roll soon" at this percent of the autocompact trigger; 1..100, below roll_at_pct; default 60

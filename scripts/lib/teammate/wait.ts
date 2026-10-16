@@ -4,6 +4,7 @@
  * has no review from a person yet and no decision, and has been ready for review at least `minutes`. It never selects the user's own PR.
  */
 import { isSelfReview } from '../self-review.ts';
+import { isFormerTeammate } from './former.ts';
 
 /** Which repos are hands off (`hands_off_repos`, `owner/name` globs) and whose own PRs there stay in scope (`hands_off_owner`, a login). */
 export const NO_GUARD: Guard = { globs: [], login: '' };
@@ -21,7 +22,7 @@ export interface WaitNode {
   timelineItems?: { nodes: { createdAt?: string }[] };
 }
 export interface Waiting { key: string; repo: string; number: number; url: string; head: string; headRef: string; base: string; waitedMin: number }
-export interface WaitOptions { self: string; minutes: number; now: number; selfRepos: readonly string[]; guard?: Guard }
+export interface WaitOptions { self: string; minutes: number; now: number; selfRepos: readonly string[]; guard?: Guard; /** Logins of people who have left (`former_teammates`): never selected. */ former?: readonly string[] }
 
 const isBot = (a: { login?: string; __typename?: string } | null | undefined): boolean => a?.__typename === 'Bot' || /\[bot\]$/i.test(a?.login ?? '');
 
@@ -36,7 +37,7 @@ export function selectWaiting(nodes: readonly WaitNode[], o: WaitOptions): Waiti
   const out: Waiting[] = [];
   for (const n of nodes) {
     const author = n.author?.login;
-    if (n.isDraft || !author || author.toLowerCase() === self || isBot(n.author)) continue;
+    if (n.isDraft || !author || author.toLowerCase() === self || isBot(n.author) || isFormerTeammate(author, o.former)) continue;
     if (isSelfReview(n.repository.nameWithOwner, o.selfRepos)) continue;
     if (isGuard(n.repository.nameWithOwner, author, o.guard ?? NO_GUARD) && !(n.reviewRequests?.nodes ?? []).some((r) => (r?.requestedReviewer?.login ?? '').toLowerCase() === self)) continue;
     if (n.reviewDecision === 'APPROVED' || n.reviewDecision === 'CHANGES_REQUESTED') continue;

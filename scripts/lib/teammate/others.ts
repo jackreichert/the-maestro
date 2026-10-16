@@ -7,8 +7,9 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isBotAuthor } from '../github-bots.ts';
-import { readNodesById, searchAllPages } from '../gh-search.ts';
+import { readNodesById, searchPagesPartial } from '../gh-search.ts';
 import { isSelfReview } from '../self-review.ts';
+import { isFormerTeammate } from './former.ts';
 import { writeAtomic } from '../status-page/seen.ts';
 import type { Run } from '../types.ts';
 
@@ -36,7 +37,9 @@ export interface OtherPr {
   detailAt?: number;
 }
 export interface OthersCache { fetchedAt: Date | null; failure?: string; prs: OtherPr[] }
-export interface OthersScope { owners: readonly string[]; selfRepos: readonly string[]; self: string }
+export interface OthersScope { owners: readonly string[]; selfRepos: readonly string[]; self: string; /** Logins of people who have left (`former_teammates`); their PRs are dropped. */ former?: readonly string[];
+  /** Only PRs updated in the last this many days are searched for (`others_prs_drop_days`): the tab drops older ones anyway, and 16 pages of 50 do not read reliably. Absent means no age bound. */
+  sinceDays?: number }
 
 interface Login { login?: string; __typename?: string; name?: string | null }
 interface Node {
@@ -50,9 +53,12 @@ interface Node {
 }
 
 /** The search for other people's open PRs (drafts included) in the owners; null for no owner, so there is never an unscoped search. */
-export function othersSearch(owners: readonly string[]): string | null {
+export function othersSearch(owners: readonly string[], opts: { former?: readonly string[]; sinceDays?: number; now?: number } = {}): string | null {
   const safe = owners.filter((o) => /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(o));
-  return safe.length ? `is:pr is:open archived:false -author:@me ${safe.map((o) => `user:${o}`).join(' ')}` : null;
+  if (!safe.length) return null;
+  const gone = (opts.former ?? []).filter((l) => /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(l)).map((l) => `-author:${l}`);
+  const since = opts.sinceDays !== undefined && opts.sinceDays > 0 ? [`updated:>=${new Date((opts.now ?? Date.now()) - opts.sinceDays * 86_400_000).toISOString().slice(0, 10)}`] : [];
+  return ['is:pr is:open archived:false -author:@me -review:approved', ...gone, ...since, ...safe.map((o) => `user:${o}`)].join(' ');
 }
 
 export const othersQuery = (search: string): string => `query($after: String) { search(query: "${search}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
@@ -80,7 +86,8 @@ export function reduceOthers(nodes: readonly Node[], scope: OthersScope): OtherP
     const repo = n.repository?.nameWithOwner;
     const author = n.author?.login;
     if (!repo || !author || typeof n.number !== 'number' || !n.url || typeof n.isDraft !== 'boolean') continue;
-    if (isBotAuthor(n.author) || (self !== '' && author.toLowerCase() === self) || isSelfReview(repo, scope.selfRepos)) continue;
+    if (isBotAuthor(n.author) || (self !== '' && author.toLowerCase() === self) || isSelfReview(repo, scope.selfRepos) || isFormerTeammate(author, scope.former)) continue;
+    if (n.reviewDecision === 'APPROVED' || (n.reviews?.nodes ?? []).some((r) => r?.state === 'APPROVED')) continue;
     if (!scope.owners.some((o) => o.toLowerCase() === repo.split('/')[0]?.toLowerCase())) continue;
     const mine = (n.reviews?.nodes ?? []).filter((r) => r && r.state && r.state !== 'PENDING' && r.submittedAt && self !== '' && (r.author?.login ?? '').toLowerCase() === self).sort((a, b) => (a?.submittedAt ?? '').localeCompare(b?.submittedAt ?? '')).pop();
     const head = n.commits?.nodes?.[0]?.commit;
@@ -104,9 +111,10 @@ export function reduceOthers(nodes: readonly Node[], scope: OthersScope): OtherP
  * `known` is the last stored list: a PR in it whose updatedAt has not moved keeps its Copilot thread count, so only changed PRs with open threads are read in detail.
  */
 export function fetchOthers(scope: OthersScope, run?: Run, known: readonly OtherPr[] = [], now: number = Date.now()): OtherPr[] {
-  const search = othersSearch(scope.owners);
+  const search = othersSearch(scope.owners, { ...(scope.former ? { former: scope.former } : {}), ...(scope.sinceDays !== undefined ? { sinceDays: scope.sinceDays } : {}), now });
   if (!search) return [];
-  const nodes = searchAllPages<Node>(othersQuery(search), run);
+  const read = searchPagesPartial<Node>(othersQuery(search), run);
+  const nodes = read.nodes;
   const before = new Map(known.map((p) => [p.url, p]));
   const hasOpen = (n: Node): boolean => (n.reviewThreads?.nodes ?? []).some((t) => t && t.isResolved === false);
   const stale = (n: Node): boolean => {
@@ -116,12 +124,23 @@ export function fetchOthers(scope: OthersScope, run?: Run, known: readonly Other
   const detail = readNodesById<{ id: string; reviewThreads: Node['reviewThreads'] }>(nodes.filter((n) => n.id && hasOpen(n) && stale(n)).map((n) => n.id as string), THREAD_AUTHORS, run);
   const detailed = nodes.map((n) => (n.id && detail.has(n.id) ? { ...n, reviewThreads: detail.get(n.id)?.reviewThreads } : n));
   const byUrl = new Map(nodes.map((n) => [n.url, n]));
-  return reduceOthers(detailed, scope).map((p) => {
+  const reduced = reduceOthers(detailed, scope).map((p) => {
     const id = byUrl.get(p.url)?.id;
     if (p.unresolved === 0) return p;
     const old = before.get(p.url);
     return id && detail.has(id) ? { ...p, detailAt: now } : { ...p, copilotThreads: old?.copilotThreads ?? 0, ...(old?.detailAt !== undefined ? { detailAt: old.detailAt } : {}) };
   });
+  if (!read.error) return reduced;
+  // A page failed part-way: keep the pages that were read and fill in from the last good set, so a half read never replaces a whole list nor loses it.
+  const got = new Set(reduced.map((p) => p.url));
+  const keptOld = known.filter((p) => !got.has(p.url) && !isFormerTeammate(p.author, scope.former));
+  throw new PartialOthers([...reduced, ...keptOld].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), read.error.message);
+}
+
+/** Thrown by `fetchOthers` when a later page failed: `prs` is what was read merged with the last good set, `message` is why the read stopped. */
+export class PartialOthers extends Error {
+  readonly prs: OtherPr[];
+  constructor(prs: OtherPr[], message: string) { super(message); this.prs = prs; }
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -160,7 +179,7 @@ export function refreshOthers(dir: string, scope: OthersScope, now: Date, fetch:
   } catch (e) {
     const prev = readOthersCache(dir);
     const failure = (e instanceof Error ? e.message : String(e)).split('\n')[0] || 'unknown error';
-    const kept: OthersCache = { fetchedAt: prev?.fetchedAt ?? null, prs: prev?.prs ?? [], failure };
+    const kept: OthersCache = { fetchedAt: prev?.fetchedAt ?? null, prs: e instanceof PartialOthers ? e.prs : prev?.prs ?? [], failure: e instanceof PartialOthers ? `partial read: ${failure}` : failure };
     try { writeOthersCache(dir, kept); } catch { /* the cache is a convenience: a failed write must not fail the rebuild */ }
     return kept;
   }
