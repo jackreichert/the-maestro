@@ -6,7 +6,8 @@
  *   firstpass --repo <o/n> --pr <n> --path <p>   print the PR body, bots' earlier findings, the CI rollup, and each changed package's test command
  *   install --repo <o/n> --path <p> --pr <n> `npm ci` (browser downloads skipped) for the changed packages, then report `git status`
  *   ticket --repo <o/n> --pr <n>             find the Jira key in the PR's title, branch and body and read the ticket (read-only GET; says `unreadable` when it cannot)
- *   submit  [--vault ..] [--project ..]      stdin: { repo, pr, head, base, path, compliment, findings: [...], context: { summary, ticket, core }, supersedes? }; applies the lenient bar and queues ONE review draft
+ *   threads --repo <o/n> --pr <n>            print the PR's open bot threads (Copilot, Aikido, any bot) as [{ id, path, line, author, url, text }], to be triaged
+ *   submit  [--vault ..] [--project ..]      stdin: { repo, pr, head, base, path, compliment, findings: [...], context: { summary, ticket, core }, triage: [{ threadId, worthAddressing, reason, severity? }], supersedes? }; applies the lenient bar, runs the approve guard (lib/approve-guard.ts) and queues ONE review draft
  *   cleanup --repo <owner/name> --path <p>   remove a prepared worktree
  *
  * It posts nothing to GitHub. `submit` only adds drafts to the approval queue (lib/drafts/queue.ts); the person approves, edits or rejects each one
@@ -18,7 +19,11 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, CONTAINER_ROOT, GH_LOGIN, LEDGER_ROOT, SELF_REVIEW_REPOS, VAULT_ROOT } from './local-config.ts';
-import { addDraft, draftsPath, listDrafts, rejectDraft } from './lib/drafts/queue.ts';
+import { addDraft, draftsPath, eventOf, listDrafts, rejectDraft } from './lib/drafts/queue.ts';
+import { checkApprove, labelOf, openBotThreads } from './lib/approve-guard.ts';
+import type { GhRunner } from './lib/approve-guard.ts';
+import { triageProblem, worthSection } from './lib/thread-triage.ts';
+import type { ThreadTriage } from './lib/thread-triage.ts';
 import { isSmell, parseDiffLines, planReview } from './lib/teammate/bar.ts';
 import type { Finding } from './lib/teammate/bar.ts';
 import { firstPass, installDeps } from './lib/teammate/firstpass.ts';
@@ -29,13 +34,15 @@ import type { Runner } from './lib/teammate/worktree.ts';
 import { printJson } from './lib/json-out.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 
-const USAGE = 'Usage: teammate-review.ts prepare --repo <owner/name> --pr <n> | submit [--vault <root>] [--project <name>] < findings.json | cleanup --repo <owner/name> --path <worktree>';
+const USAGE = 'Usage: teammate-review.ts prepare --repo <owner/name> --pr <n> | threads --repo <owner/name> --pr <n> | submit [--vault <root>] [--project <name>] < findings.json | cleanup --repo <owner/name> --path <worktree>';
 const run: Runner = (cmd, args, cwd) => {
   const [c, a] = toolCommand(cmd, args);
   const r = spawnSync(c, a, { encoding: 'utf8', cwd, timeout: 120_000 });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 };
 
+/** The guard's gh runner: this file's runner, which has no stdin (the guard only reads). */
+const ghRunner: GhRunner = (args) => run('gh', args);
 const worktreesDir = (): string => join(CONTAINER_ROOT || '.', '.worktrees');
 function self(): string {
   if (GH_LOGIN) return GH_LOGIN;
@@ -45,7 +52,7 @@ function self(): string {
 }
 
 /** What `submit` reads: the PR and head the review was of, the worktree it was read in, and the agent's compliment and findings. */
-export interface Submission { repo: string; pr: number; head: string; base: string; path: string; compliment: string; findings: Finding[]; /** The summary context. Typed optional only so a missing one is refused with a message (`submit` returns a problem), never queued. */ context?: ReviewContext; /** The id of a pending draft for this same head that this richer one replaces. */ supersedes?: string; /** The PR author's login (from `prepare`), kept on the draft so the Podium's needs-you list can name them. */ author?: string }
+export interface Submission { repo: string; pr: number; head: string; base: string; path: string; compliment: string; findings: Finding[]; /** The summary context. Typed optional only so a missing one is refused with a message (`submit` returns a problem), never queued. */ context?: ReviewContext; /** The id of a pending draft for this same head that this richer one replaces. */ supersedes?: string; /** The reviewer's call on each open bot thread, which the approve guard checks against the live threads. */ triage?: ThreadTriage[]; /** The PR author's login (from `prepare`), kept on the draft so the Podium's needs-you list can name them. */ author?: string }
 
 const reviewPath = (path: string): string => {
   const root = resolve(worktreesDir());
@@ -55,7 +62,7 @@ const reviewPath = (path: string): string => {
 };
 
 /** Queues the one review draft for this head, or says why not. `diff` is the head's unified diff (what GitHub will accept inline comments on). */
-export function submit(file: string, s: Submission, diff: string): { queued: { id: string } | null; problem?: string; dropped: { index: number; reason: string }[]; downgraded: number } {
+export function submit(file: string, s: Submission, diff: string, o: { run?: GhRunner } = {}): { queued: { id: string } | null; problem?: string; dropped: { index: number; reason: string }[]; downgraded: number; /** What an approval of this draft will post as, when the guard ran: a thread triaged blocking makes it a COMMENT. */ approvalAs?: 'APPROVE' | 'COMMENT' } {
   if (!/^[0-9a-f]{7,40}$/.test(s.head) || !Array.isArray(s.findings)) throw new Error('submission needs repo, pr, a hex head and findings[]');
   // The smells pass is for the first round only: once a review of this PR for another head is on record (queued, posted or rejected), smell findings are dropped.
   const later = listDrafts(file).some((d) => d.source === 'review' && d.repo === s.repo && d.pr === s.pr && !d.key.includes(`@${s.head.slice(0, 12)}:`));
@@ -65,14 +72,28 @@ export function submit(file: string, s: Submission, diff: string): { queued: { i
   if (s.supersedes && !(old && old.source === 'review' && old.repo === s.repo && old.pr === s.pr && old.key.includes(`@${s.head.slice(0, 12)}:`))) throw new Error('supersedes must name a review draft for this PR and head');
   const plan = planReview({ repo: s.repo, pr: s.pr, head: s.head, ...(s.supersedes ? { supersedes: s.supersedes } : {}), ...(s.author ? { author: s.author } : {}) }, s.compliment, findings, parseDiffLines(diff), s.context);
   if (!plan.draft) return { queued: null, problem: plan.problem, dropped: plan.dropped, downgraded: plan.downgraded };
-  const out = addDraft(file, plan.draft);
+  const triageBad = s.triage === undefined ? null : triageProblem(s.triage);
+  if (triageBad) return { queued: null, problem: triageBad, dropped: plan.dropped, downgraded: plan.downgraded };
+  let draft = plan.draft;
+  let approvalAs: 'APPROVE' | 'COMMENT' | undefined;
+  if (draft.review && s.triage !== undefined) draft = { ...draft, review: { ...draft.review, triage: s.triage } };
+  // The guard: an approving draft is checked against GitHub now. A moved head or a bot thread the reviewer did not triage is not queued (the reviewer fixes it and submits again);
+  // the threads triaged worth addressing are pointed out in the body. The same check runs again when the Podium posts it.
+  if (o.run && draft.review && eventOf(draft.review) === 'APPROVE') {
+    const v = checkApprove(o.run, s.repo, s.pr, s.head, s.triage ?? []);
+    if (!v.ok) return { queued: null, problem: v.message, dropped: plan.dropped, downgraded: plan.downgraded };
+    approvalAs = v.event;
+    const section = worthSection(v.worth.map((t) => ({ label: labelOf(t), url: t.url, reason: t.reason })));
+    if (section) draft = { ...draft, text: `${draft.text}\n\n${section}` };
+  }
+  const out = addDraft(file, draft);
   // A push makes an earlier review of this PR stale: approving it would approve an old commit. Retire the ones still waiting, with the reason on record.
   if (out.created) {
     for (const d of listDrafts(file)) {
       if (d.source === 'review' && d.repo === s.repo && d.pr === s.pr && d.id !== out.id && (d.state === 'pending' || d.state === 'failed')) rejectDraft(file, d.id, d.key.includes(`@${s.head.slice(0, 12)}:`) ? `superseded by a fuller review of the same head (${s.head.slice(0, 7)})` : `superseded by a newer push (${s.head.slice(0, 7)})`);
     }
   }
-  return { queued: out.created ? { id: out.id } : null, dropped: plan.dropped, downgraded: plan.downgraded };
+  return { queued: out.created ? { id: out.id } : null, dropped: plan.dropped, downgraded: plan.downgraded, ...(approvalAs ? { approvalAs } : {}) };
 }
 
 const execIn = (cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): { status: number | null; stdout: string; stderr: string } => {
@@ -84,7 +105,7 @@ const execIn = (cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv
 async function main(argv: string[]): Promise<number> {
   const { values: v, positionals } = parseArgs({ args: argv, allowPositionals: true, options: { repo: { type: 'string' }, pr: { type: 'string' }, path: { type: 'string' }, vault: { type: 'string' }, project: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd] = positionals;
-  if (v.help || !['prepare', 'firstpass', 'install', 'ticket', 'submit', 'cleanup'].includes(cmd ?? '')) { console.log(USAGE); return v.help ? 0 : 2; }
+  if (v.help || !['prepare', 'firstpass', 'install', 'ticket', 'threads', 'submit', 'cleanup'].includes(cmd ?? '')) { console.log(USAGE); return v.help ? 0 : 2; }
   if (cmd !== 'submit') {
     if (!CONTAINER_ROOT) { console.error('container_root is not set'); return 2; }
     if (!v.repo) { console.error(USAGE); return 2; }
@@ -109,6 +130,10 @@ async function main(argv: string[]): Promise<number> {
     printJson({ keys, ticket: keys[0] ? await readJira(keys[0], process.env, (u, i) => fetch(u, i)) : { status: 'none' } }, { compact: true });
     return 0;
   }
+  if (cmd === 'threads') {
+    printJson(openBotThreads(ghRunner, v.repo as string, Number(v.pr)).map(({ thread: t }) => t), { compact: true });
+    return 0;
+  }
   if (cmd === 'cleanup') {
     cleanup({ repo: v.repo as string, path: v.path ?? '', worktreesDir: worktreesDir(), containerRoot: CONTAINER_ROOT, run });
     return 0;
@@ -119,7 +144,7 @@ async function main(argv: string[]): Promise<number> {
   if (!/^[A-Za-z0-9._\/-]+$/.test(raw.base ?? '') || raw.base.startsWith('-') || !/^[0-9a-f]{40}$/.test(raw.head ?? '')) throw new Error('submission needs a base branch and a full head sha');
   const d = run('git', ['-c', 'core.quotePath=false', 'diff', '--no-color', '--unified=0', `origin/${raw.base}...${raw.head}`], reviewPath(raw.path));
   if (d.status !== 0) throw new Error(`git diff failed: ${d.stderr.split('\n')[0]?.slice(0, 200)}`);
-  printJson(submit(draftsPath(vault, v.project || CONFIGURED_PROJECT || CONTAINER_PROJECT), raw, d.stdout), { compact: true });
+  printJson(submit(draftsPath(vault, v.project || CONFIGURED_PROJECT || CONTAINER_PROJECT), raw, d.stdout, { run: ghRunner }), { compact: true });
   return 0;
 }
 

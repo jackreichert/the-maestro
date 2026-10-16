@@ -34,7 +34,7 @@ test('an open bot thread triaged not worth addressing approves with nothing to p
 test('a thread triaged worth addressing still approves, and is returned with its link and reason for the body', () => {
   const v = checkApprove(rig([COPILOT]).run, 'acme/widgets', 7, HEAD, [T(0, { worthAddressing: true, reason: 'The empty cart is not handled here.' })]);
   assert.equal(v.ok && v.event, 'APPROVE');
-  assert.deepEqual(v.ok && v.worth, [{ id: '1', path: 'src/a.ts', line: 10, author: COPILOT.login, url: 'https://github.com/acme/widgets/pull/7#discussion_r1', reason: 'The empty cart is not handled here.' }]);
+  assert.deepEqual(v.ok && v.worth, [{ id: '1', path: 'src/a.ts', line: 10, author: COPILOT.login, url: 'https://github.com/acme/widgets/pull/7#discussion_r1', text: 'x', reason: 'The empty cart is not handled here.' }]);
 });
 
 test('a thread triaged blocking turns the approval into a COMMENT; the GraphQL node id names a thread as well as its root comment id', () => {

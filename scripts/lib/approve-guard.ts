@@ -21,7 +21,7 @@ export interface GhOut { status: number | null; stdout: string; stderr: string }
 export type GhRunner = (args: string[], input?: string) => GhOut;
 
 export type ApproveRefusal = 'head-unreadable' | 'head-moved' | 'threads-unreadable' | 'untriaged';
-export interface OpenBotThread { id: string; path: string; line: number | null; author: string; url: string }
+export interface OpenBotThread { id: string; path: string; line: number | null; author: string; url: string; /** The bot's opening comment, clipped, so the reviewer can triage it. */ text: string }
 export interface WorthThread extends OpenBotThread { reason: string }
 export type ApproveVerdict =
   | { ok: true; event: 'APPROVE' | 'COMMENT'; worth: WorthThread[]; blocking: OpenBotThread[] }
@@ -49,7 +49,7 @@ function read(run: GhRunner, repo: string, pr: number, jq: string): string | nul
 export function openBotThreads(run: GhRunner, repo: string, pr: number): { thread: OpenBotThread; nodeId: string }[] {
   return fetchThreads(repo, pr, '', run).threads.filter(botStarted).map((t) => ({
     nodeId: t.nodeId,
-    thread: { id: String(t.rootId), path: t.path, line: t.line, author: t.comments[0]?.author ?? '', url: `https://github.com/${repo}/pull/${pr}#discussion_r${t.rootId}` },
+    thread: { id: String(t.rootId), path: t.path, line: t.line, author: t.comments[0]?.author ?? '', url: `https://github.com/${repo}/pull/${pr}#discussion_r${t.rootId}`, text: (t.comments[0]?.body ?? '').slice(0, 400) },
   }));
 }
 
