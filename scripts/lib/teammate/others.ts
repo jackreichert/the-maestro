@@ -10,6 +10,8 @@ import { isBotAuthor } from '../github-bots.ts';
 import { readNodesById, searchPagesPartial } from '../gh-search.ts';
 import { isSelfReview } from '../self-review.ts';
 import { isFormerTeammate } from './former.ts';
+import { settledReason } from './settled.ts';
+import type { SettledReview } from './settled.ts';
 import { writeAtomic } from '../status-page/seen.ts';
 import type { Run } from '../types.ts';
 
@@ -48,7 +50,7 @@ interface Node {
   id?: string; number?: number; title?: string; url?: string; isDraft?: boolean; createdAt?: string; updatedAt?: string; baseRefName?: string; headRefName?: string; headRefOid?: string;
   reviewDecision?: string | null; mergeable?: string; author?: Login | null;
   labels?: { nodes?: ({ name?: string } | null)[] };
-  reviews?: { nodes?: ({ author?: Login | null; state?: string; submittedAt?: string } | null)[] };
+  reviews?: { nodes?: ({ author?: Login | null; state?: string; submittedAt?: string; bodyText?: string } | null)[] };
   commits?: { nodes?: ({ commit?: { committedDate?: string; statusCheckRollup?: { state?: string } | null } } | null)[] }; repository?: { nameWithOwner?: string };
   reviewRequests?: { nodes?: ({ requestedReviewer?: { login?: string } | null } | null)[] };
   reviewThreads?: { nodes?: ({ isResolved?: boolean; comments?: { nodes?: ({ author?: Login | null } | null)[] } } | null)[] };
@@ -66,7 +68,7 @@ export function othersSearch(owners: readonly string[], opts: { former?: readonl
 export const othersQuery = (search: string): string => `query($after: String) { search(query: "${search}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
   id number title url isDraft createdAt updatedAt baseRefName headRefName headRefOid reviewDecision mergeable author { login __typename ... on User { name } } repository { nameWithOwner }
   labels(first: 10) { nodes { name } }
-  reviews(last: 30) { nodes { author { login } state submittedAt } }
+  reviews(last: 30) { nodes { author { login __typename } state submittedAt bodyText } }
   commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
   reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
   reviewThreads(first: 100) { nodes { isResolved } }
@@ -80,7 +82,10 @@ const THREAD_AUTHORS = 'reviewThreads(first: 100) { nodes { isResolved comments(
 
 const isCopilot = (a: Login | null | undefined): boolean => /copilot/i.test(a?.login ?? '');
 
-/** The nodes worth listing, reduced. Drops bots, the user's own PRs, self-review repos and anything not shaped like a PR. */
+/** A PR node's submitted reviews in the classifier's shape (lib/teammate/settled.ts); a review with no author is a deleted account, never a bot. */
+const settledReviews = (n: Node): SettledReview[] => (n.reviews?.nodes ?? []).flatMap((r) => (r?.state && r.submittedAt ? [{ login: r.author?.login ?? '', bot: isBotAuthor(r.author), state: r.state, at: r.submittedAt, body: r.bodyText ?? '' }] : []));
+
+/** The nodes worth listing, reduced. Drops bots, the user's own PRs, self-review repos, PRs already settled (approved at the head, or picked up by another reviewer unless you were asked and have not reviewed: lib/teammate/settled.ts) and anything not shaped like a PR. */
 export function reduceOthers(nodes: readonly Node[], scope: OthersScope): OtherPr[] {
   const self = scope.self.toLowerCase();
   const out: OtherPr[] = [];
@@ -89,10 +94,11 @@ export function reduceOthers(nodes: readonly Node[], scope: OthersScope): OtherP
     const author = n.author?.login;
     if (!repo || !author || typeof n.number !== 'number' || !n.url || typeof n.isDraft !== 'boolean') continue;
     if (isBotAuthor(n.author) || (self !== '' && author.toLowerCase() === self) || isSelfReview(repo, scope.selfRepos) || isFormerTeammate(author, scope.former)) continue;
-    if (n.reviewDecision === 'APPROVED' || (n.reviews?.nodes ?? []).some((r) => r?.state === 'APPROVED')) continue;
     if (!scope.owners.some((o) => o.toLowerCase() === repo.split('/')[0]?.toLowerCase())) continue;
     const mine = (n.reviews?.nodes ?? []).filter((r) => r && r.state && r.state !== 'PENDING' && r.submittedAt && self !== '' && (r.author?.login ?? '').toLowerCase() === self).sort((a, b) => (a?.submittedAt ?? '').localeCompare(b?.submittedAt ?? '')).pop();
     const head = n.commits?.nodes?.[0]?.commit;
+    if (settledReason({ state: 'OPEN', decision: n.reviewDecision ?? null, author, self: scope.self, createdAt: n.createdAt ?? '', ...(head?.committedDate ? { headAt: head.committedDate } : {}),
+      requested: (n.reviewRequests?.nodes ?? []).map((r) => r?.requestedReviewer?.login).filter((l): l is string => !!l), reviews: settledReviews(n) })) continue;
     const open = (n.reviewThreads?.nodes ?? []).filter((t) => t && t.isResolved === false);
     out.push({
       repo, number: n.number, title: n.title ?? '', url: n.url, author, ...(n.author?.name?.trim() ? { authorName: n.author.name.trim().slice(0, 80) } : {}), base: n.baseRefName ?? '', head: n.headRefName ?? '', ...(typeof n.headRefOid === 'string' && /^[0-9a-f]{40}$/.test(n.headRefOid) ? { headSha: n.headRefOid } : {}),
