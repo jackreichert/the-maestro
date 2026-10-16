@@ -225,6 +225,7 @@ import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
 import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summarizeLeases } from './lib/journal/leases.ts';
 import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
+import { githubFooter } from './lib/gh-budget.ts';
 import { gitBranches, queueFooter as hygieneFooter, queueHygiene } from './lib/queue-hygiene.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, footerQueue, staleSuffix } from './lib/review-queue.ts';
 import type { Run } from './lib/types.ts';
@@ -1404,7 +1405,7 @@ function cmdStatus() {
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
         if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window) })); return; }
-        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, ledgerDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, ledgerDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...[githubFooter(EVENT_DIR, Date.now(), WATCH_TZ)].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
