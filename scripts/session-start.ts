@@ -21,7 +21,7 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CONTAINER_PROJECT, EVENT_DIR, LEDGER_ROOT, STATUS_PAGE_URI_SETTING, statusDirFor, WATCH_TZ } from './local-config.ts';
+import { CONTAINER_PROJECT, EVENT_DIR, LEDGER_ROOT, REPOST_NUDGE_ENABLED, STATUS_PAGE_URI_SETTING, statusDirFor, WATCH_TZ } from './local-config.ts';
 import { podiumWebUrl } from './lib/status-page/links.ts';
 import { PODIUM_FILE } from './lib/status-page/seen.ts';
 import { listWatches, lockHolder, markStanding, removeWatch } from './lib/watch-registry.ts';
@@ -46,6 +46,8 @@ export interface StartDeps {
   removeWatch: (id: string) => void;
   /** Registers one watch; ok false carries the reason. */
   addWatch: (id: string, type: string, statusDir: string) => { ok: boolean; message: string };
+  /** Watch types that are switched off in the settings: not registered, and said so. Absent means none. */
+  disabledTypes?: readonly string[];
   lockHolder: () => number | null;
   /** When the page was last written, or null when there is none. */
   pageWrittenAt: (statusDir: string) => number | null;
@@ -84,6 +86,7 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
   const lines: string[] = [];
   let failed = false;
   for (const need of NEEDED) {
+    if (deps.disabledTypes?.includes(need.type)) { lines.push(`${need.id}: off in the settings, not registered`); continue; }
     const live = deps.watches().filter((w) => w.type === need.type);
     const current = live.find((w) => Date.parse(w.expires) > deps.now);
     if (current) { lines.push(existing(need.id, current, statusDir)); continue; }
@@ -144,6 +147,7 @@ export function realDeps(now: number = Date.now()): StartDeps {
   return {
     now,
     tz: WATCH_TZ,
+    disabledTypes: REPOST_NUDGE_ENABLED ? [] : ['repost-nudge'],
     watches: () => listWatches(EVENT_DIR),
     removeWatch: (id) => { removeWatch(EVENT_DIR, id, 'expired, replaced at session start', now); },
     addWatch: (id, type, statusDir) => {
