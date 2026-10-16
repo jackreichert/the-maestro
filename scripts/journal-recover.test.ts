@@ -185,7 +185,10 @@ test('an old row with newlines in its fields is folded to one line when printed'
 });
 
 test('recover withholds a secret-shaped next step', () => {
-    const id = start('secret', '--repo', 'repo-a', '--next', 'use ghp_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8');
+    // The store refuses to write this now; an older ledger can still hold one, so plant it in the file the way a legacy row would be.
+    const id = start('secret', '--repo', 'repo-a', '--next', 'PLACEHOLDER_NEXT');
+    const ledgerFile = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    writeFileSync(ledgerFile, readFileSync(ledgerFile, 'utf8').replace('PLACEHOLDER_NEXT', 'use ghp_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'));
     const out = run(['recover', id]).out;
     assert.doesNotMatch(out, /ghp_/);
     assert.match(out, /withheld/);

@@ -99,9 +99,13 @@ test('GET /api/state withholds secret-shaped ledger values, keeps seq on the ser
   const tok = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;   // fake, assembled so no literal secret sits in the file
   const aws = `AK${'IAIOSFODNN7EXAMPLE'}`;
   const dir = mkdtempSync(join(tmpdir(), 'web-server-taint-'));
-  const store = openStore({ vault: dir, project: 'p', dryRun: false });
-  store.append({ id: 'aa01', kind: 'wip', stream: tok, text: 'token stream', ts: '2026-10-06T12:00:00Z', date: '2026-10-06' });
-  store.append({ id: 'aa02', kind: 'question', stream: 'widgets', text: `Ship it? key ${aws} here`, ts: '2026-10-06T12:00:00Z', date: '2026-10-06' });
+  // The store refuses these rows now, so they are planted in the ledger file the way rows from before that check would be.
+  const journal = join(dir, 'Projects', 'p', 'Journal');
+  mkdirSync(journal, { recursive: true });
+  writeFileSync(join(journal, 'ledger.jsonl'), [
+    { id: 'aa01', kind: 'wip', stream: tok, text: 'token stream', ts: '2026-10-06T12:00:00Z', date: '2026-10-06' },
+    { id: 'aa02', kind: 'question', stream: 'widgets', text: `Ship it? key ${aws} here`, ts: '2026-10-06T12:00:00Z', date: '2026-10-06' },
+  ].map((r) => `${JSON.stringify(r)}\n`).join(''));
   const tainted = createWebServer({ ...options, web: { ...options.web, vault: dir, statusDir: join(dir, 'Status') }, token: tok });   // a token that is itself secret-shaped
   await new Promise<void>((ok) => tainted.listen(0, '127.0.0.1', ok));
   try {

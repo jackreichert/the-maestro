@@ -171,7 +171,8 @@ import { formatFindings, lintText } from './lib/paste-lint.ts';
 import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { helpFor, isCommand, wantsHelp, listText } from './lib/journal/help.ts';
-import { openStore } from './lib/journal/store.ts';
+import { LedgerScanError, openStore, rowScanProblems } from './lib/journal/store.ts';
+import { describeFindings, scanFields } from './lib/secret-scan.ts';
 import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
@@ -1860,9 +1861,15 @@ function triageBeforeRoll(d: string): void {
 
 function cmdVerify() {
     const { rows, problems } = verifyLedger();
-    if (asJson) printJson({ ledger: ledgerPath, rows, problems });
+    // Rows written before the store scanned every write: a warning, never a failure (the rows are history), naming the row id, field and rule only.
+    const shapes = readLedger().flatMap((r) => { const p = rowScanProblems(r); return p.length ? [{ id: r.id ?? '', problems: p }] : []; });
+    if (asJson) printJson({ ledger: ledgerPath, rows, problems, scanWarnings: shapes });
     else {
         console.log(`verify: ${rows} row(s), ${problems.length} problem(s)  (${ledgerPath})`);
+        if (shapes.length) {
+            console.log(`  warning: ${shapes.length} row(s) carry a secret or PHI shape (history, not a failure); the value is never printed:`);
+            shapes.slice(0, 20).forEach((s) => console.log(`    [${s.id}] ${s.problems.join('; ')}`));
+        }
         problems.slice(0, 50).forEach((p) => console.log(`  line ${p.line}${p.id ? ` [${p.id}]` : ''}: ${p.problem}`));
         if (problems.length > 50) console.log(`  ... and ${problems.length - 50} more`);
     }
@@ -2213,13 +2220,17 @@ function cmdClaim() {
     if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
     const scope = claimScope(arg('worktree') || arg('branch'));
     const claim = { repo, desk, pid, host: hostname(), time: now(), scope, branch: arg('branch') || undefined, why: arg('why') || undefined };
+    // The ledger row is scanned before the lock is taken: a refused row must not leave a held lock (and the secret) on disk.
+    const claimRow = { id: newId(readLedger()), ts: claim.time, date: today(), kind: 'claim', repo, scope, stream: desk, desk, branch: claim.branch, text: `claim ${claimKey(repo, scope)} for ${desk}${claim.why ? `: ${claim.why}` : ''}`, ...usage };
+    const problems = rowScanProblems(claimRow);
+    if (problems.length) die(`refused: the ledger is durable and shared, and a field looks like it holds a secret or PHI. Nothing was written.\n${[...new Set(problems)].map((p) => `  ${p}`).join('\n')}`);
     if (dryRun) { console.log('[dry-run]', dryRunJson(claim)); return; }
     const taken = acquireRepoClaim(claimsDir, repo, scope, claim);
     if (taken.status !== 'taken') {
         console.error(`${claimKey(repo, scope)} is already claimed by ${describeClaim(taken.held)}${taken.status === 'conflict' ? ` (claim ${taken.key} conflicts: a whole-repo claim, with no --worktree or --branch, conflicts with every claim on the repo)` : ''}.${taken.held && claimStaleness(taken.held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
         process.exit(1);
     }
-    append({ id: newId(readLedger()), ts: claim.time, date: today(), kind: 'claim', repo, scope, stream: desk, desk, branch: claim.branch, text: `claim ${claimKey(repo, scope)} for ${desk}${claim.why ? `: ${claim.why}` : ''}`, ...usage });
+    append(claimRow);
     if (!dryRun) render(true);
     console.log(`claim  ${claimKey(repo, scope)}  ${desk}`);
 }
@@ -2587,6 +2598,8 @@ function cmdHandoff() {
     // A --delta handoff takes the next free name through the exclusive create below, so it must not refuse on a file another window wrote a moment ago.
     if (existsSync(path) && !has('force') && !series) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
     const sweep = runWorktreeSweep(true);
+    const handoffProblems = describeFindings(scanFields({ '--learn': oneLineArg('learn'), '--next': oneLineArg('next') }));
+    if (handoffProblems.length) die(`refused: the handoff is durable and shared, and a field looks like it holds a secret or PHI.\n${handoffProblems.map((p) => `  ${p}`).join('\n')}`);
     const body = handoffText(stream, since, sweep?.kept, { learn: oneLineArg('learn'), next: oneLineArg('next'), sweep, verbose: has('verbose') });
     const contextFile = has('update-context') ? arg('context-file') || join(ticketsBase(), 'Projects', project, 'CONTEXT.md') : '';
     if (dryRun) { console.log(body); if (contextFile) console.log(`would point ${contextFile} at ${basename(path)}`); return; }
@@ -2991,6 +3004,7 @@ function cmdFind() {
 
 // ── dispatch ────────────────────────────────────────────────────────────────
 
+try {
 switch (cmd) {
     case 'log': cmdLog('note'); break;
     case 'start': cmdStart(); break;
@@ -3064,4 +3078,9 @@ switch (cmd) {
         // No command given: the list (an unknown command was already refused above).
         console.log(listText());
         process.exit(0);
+}
+} catch (e) {
+    // A row the store refused for a secret or PHI shape: say so plainly, with no stack and no value.
+    if (e instanceof LedgerScanError) die(e.message);
+    throw e;
 }
