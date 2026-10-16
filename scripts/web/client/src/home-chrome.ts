@@ -53,13 +53,13 @@ export const CHROME_CSS = `
   .stream-pick { position: relative; flex: none; }
   .sp-sw { display: block; flex: none; width: 8px; height: 8px; border-radius: 2px; background: var(--stream-color, transparent); box-shadow: inset 0 0 0 1px var(--border-strong); }
   .sp-sw[data-on] { box-shadow: none; }
-  .sp-btn { display: flex; align-items: center; gap: var(--space-2); min-height: 36px; max-width: 44vw; padding: 0 var(--space-3) 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-1); color: var(--text-secondary); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+  .sp-btn { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; max-width: 56vw; padding: 0 var(--space-3) 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-1); color: var(--text-secondary); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
   .sp-btn .sp-val { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .stream-pick[data-on] .sp-btn { color: var(--text-primary); border-color: var(--stream-color); }
   .sp-chev { display: block; flex: none; width: 6px; height: 6px; margin: -3px 0 0 2px; border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted); transform: rotate(45deg); transition: transform var(--dur-base) var(--ease-out); }
   .sp-btn[aria-expanded=true] .sp-chev { transform: translateY(3px) rotate(225deg); }
   @media (hover: hover) { .sp-btn:hover { border-color: var(--border-strong); color: var(--text-primary); } }
-  .sp-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: 260px; max-width: calc(100vw - var(--space-6)); padding: var(--space-1); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-2); transform-origin: top right; }
+  .sp-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: 300px; max-width: calc(100vw - var(--space-6)); padding: var(--space-1); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-2); transform-origin: top right; }
   .sp-menu[hidden] { display: none; }
   .sp-eyebrow { margin: 0; padding: var(--space-2) var(--space-3) var(--space-1); font-family: var(--font-display); font-style: italic; font-size: var(--text-md); line-height: var(--leading-md); color: var(--text-muted); }
   .sp-list { list-style: none; margin: 0; padding: 0; outline: none; }
@@ -75,6 +75,17 @@ export const CHROME_CSS = `
   .sp-opt.active { background: var(--surface-2); color: var(--text-primary); outline: 2px solid var(--focus); outline-offset: -2px; }
   .sp-opt .sp-sw { transition: transform var(--dur-base) var(--ease-spring); }
   .sp-opt.active .sp-sw { transform: scale(1.35) rotate(45deg); }
+  /* Variant A: the trigger names what it is ("Voice"), shows how many cues the current stream holds, and the menu says what each row is. */
+  .sp-cap { display: block; flex: none; font-family: var(--font-display); font-style: italic; font-size: var(--text-md); line-height: 1; color: var(--text-muted); font-weight: var(--weight-regular); }
+  .sp-count { display: block; flex: none; min-width: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--surface-2); color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-xs); line-height: 20px; text-align: center; font-variant-numeric: tabular-nums; }
+  @media (max-width: 520px) { .sp-cap { display: none; } }
+  .sp-opt::after { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--stream-color, var(--accent)); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+  .sp-opt[aria-selected=true] { background: var(--surface-2); }
+  .sp-opt[aria-selected=true]::after { opacity: 1; }
+  .sp-opt .sp-it { margin-left: var(--space-2); font-family: var(--font-display); font-style: italic; font-size: var(--text-md); color: var(--text-muted); font-weight: var(--weight-regular); }
+  .sp-opt .sp-n.tacet { font-family: var(--font-display); font-style: italic; font-size: var(--text-md); }
+  .sp-keys { margin: var(--space-1) 0 0; padding: var(--space-2) var(--space-3) var(--space-1); border-top: var(--hairline); font-size: var(--text-xs); color: var(--text-muted); }
+  @media (hover: none) { .sp-keys { display: none; } }
   @media (forced-colors: active) { .sp-opt.active { outline: 2px solid Highlight; } .sp-sw { forced-color-adjust: none; outline: 1px solid CanvasText; } [role=tab][aria-selected=true]::after { forced-color-adjust: none; background: Highlight; height: 4px; } }
 `;
 
@@ -157,15 +168,19 @@ export function streamPicker(o: PickerOptions): HTMLElement {
   const now = o.voices.find((v) => v.stream === cur) ?? o.voices[0];
   const wrap = h('div', { class: `stream-pick${cur ? ` ${streamVar(cur)}` : ''}`, id: 'stream-pick' });
   if (cur) wrap.setAttribute('data-on', '');
-  const label = h('span', { class: 'vh', id: 'stream-lbl' }, 'Stream:');
+  const label = h('span', { class: 'vh', id: 'stream-lbl' }, 'Voice (stream):');
   const btn = h('button', { type: 'button', class: 'sp-btn', id: 'stream-btn', 'aria-haspopup': 'listbox', 'aria-expanded': 'false', 'aria-controls': 'stream-menu', 'aria-labelledby': 'stream-lbl stream-val' },
-    h('span', { class: 'sp-sw', 'aria-hidden': 'true', 'data-on': cur ? '' : undefined }), h('span', { class: 'sp-val', id: 'stream-val' }, now?.name ?? 'All streams'), h('span', { class: 'sp-chev', 'aria-hidden': 'true' }));
+    h('span', { class: 'sp-cap', 'aria-hidden': 'true' }, 'Voice'),
+    h('span', { class: 'sp-sw', 'aria-hidden': 'true', 'data-on': cur ? '' : undefined }), h('span', { class: 'sp-val', id: 'stream-val' }, now?.name ?? 'All streams'),
+    now && now.n > 0 ? h('span', { class: 'sp-count' }, String(now.n), h('span', { class: 'vh' }, now.n === 1 ? ' cue waiting' : ' cues waiting')) : null,
+    h('span', { class: 'sp-chev', 'aria-hidden': 'true' }));
   const list = h('ul', { class: 'sp-list', id: 'stream-list', role: 'listbox', tabindex: '-1', 'aria-labelledby': 'stream-lbl' });
-  const pop = h('div', { class: 'sp-menu', id: 'stream-menu', hidden: true }, h('p', { class: 'sp-eyebrow', 'aria-hidden': 'true' }, 'Voices'), list);
+  const pop = h('div', { class: 'sp-menu', id: 'stream-menu', hidden: true }, h('p', { class: 'sp-eyebrow', 'aria-hidden': 'true' }, 'Choose a voice'), list,
+    h('p', { class: 'sp-keys', 'aria-hidden': 'true' }, '\u2191 \u2193 move \u00b7 Enter choose \u00b7 Esc close'));
   const opts = o.voices.map((v, i) => {
     const li = h('li', { class: `sp-opt${i === 1 ? ' first-voice' : ''}${v.stream ? ` ${streamVar(v.stream)}` : ''}`, role: 'option', id: idOf(v), 'aria-selected': String(v.stream === cur) },
-      h('span', { class: 'sp-sw', 'data-on': v.stream ? '' : undefined, 'aria-hidden': 'true' }), h('span', { class: 'sp-name' }, v.name),
-      h('span', { class: 'sp-n' }, v.n ? String(v.n) : '—', h('span', { class: 'vh' }, v.n === 1 ? ' cue' : ' cues')),
+      h('span', { class: 'sp-sw', 'data-on': v.stream ? '' : undefined, 'aria-hidden': 'true' }), h('span', { class: 'sp-name' }, v.name, v.stream === null ? h('i', { class: 'sp-it', lang: 'it', 'aria-hidden': 'true' }, 'tutti') : null),
+      v.n ? h('span', { class: 'sp-n' }, String(v.n), h('span', { class: 'vh' }, v.n === 1 ? ' cue' : ' cues')) : h('span', { class: 'sp-n tacet' }, h('span', { 'aria-hidden': 'true' }, 'tacet'), h('span', { class: 'vh' }, 'no cues')),
       s('svg', { class: 'sp-check', viewBox: '0 0 12 12', 'aria-hidden': 'true' }, s('path', { d: 'M2.5 6.4 5 8.8 9.6 3.4', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })));
     li.addEventListener('click', () => choose(v));
     li.addEventListener('pointermove', () => setActive(i, false));
