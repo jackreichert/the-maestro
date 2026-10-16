@@ -24,13 +24,14 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .tabs { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: 0 0 var(--space-4); border-bottom: var(--hairline); }
   button.tab { font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-secondary); min-height: 32px; padding: 0 var(--space-3); border: 0; border-bottom: 2px solid transparent; background: none; cursor: pointer; font-variant-numeric: tabular-nums; }
+  button.tab.muted { font-weight: var(--weight-regular); }
   button.tab[aria-selected="true"] { color: var(--text-primary); border-bottom-color: var(--accent); }
-  button.tab.muted { opacity: 0.8; }
   button.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .pager { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: var(--space-4) 0; }
   .count-line { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
   button.more-prs { font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-primary); min-height: 32px; padding: 0 var(--space-3); border: var(--hairline-strong); border-radius: var(--radius-sm); background: var(--surface-1); cursor: pointer; }
   @media (hover: hover) { button.more-prs:hover { background: var(--surface-2); } }
+  [role=tabpanel]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   li.pr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   h3.orphans { margin: var(--space-6) 0 var(--space-2); font-size: var(--text-md); font-weight: var(--weight-semibold); }
 `;
@@ -61,9 +62,12 @@ export class OthersPrs extends HTMLElement {
   #focusKey: string | null = null;
   #focusRow: HTMLElement | null = null;
   readonly #status = h('p', { class: 'status', role: 'status' });
-  readonly #count = h('p', { class: 'count-line', role: 'status', 'aria-live': 'polite' });
+  /** The visible count, and a hidden live region that outlives every redraw (a live region that is removed and re-added is not reliably announced). */
+  readonly #count = h('p', { class: 'count-line' });
+  readonly #announce = h('p', { class: 'vh', role: 'status' });
+  readonly #view = h('div', { class: 'view' });
 
-  constructor() { super(); this.#root = shadow(this, CSS); }
+  constructor() { super(); this.#root = shadow(this, CSS); this.#root.append(this.#announce, this.#view); }
 
   set model(m: OthersPrsModel | null) { this.#model = m; if (this.isConnected) this.#render(); }
   set drafts(d: OthersDrafts) { this.#drafts = d; if (this.isConnected) this.#render(); }
@@ -73,10 +77,10 @@ export class OthersPrs extends HTMLElement {
     const m = this.#model;
     // Only a change in what the rows say redraws them: the draft cards inside follow the store on their own, so a keystroke-level or button-state change never rebuilds 340 rows under the person's focus.
     const sig = `${m?.loaded ? m.data?.generatedAt ?? 'none' : 'loading'}|${(this.#drafts?.rows ?? []).filter(waiting).map((d) => d.id).sort().join(',')}|${this.#drafts ? 'q' : ''}|${this.#tab}|${this.#pages[this.#tab] ?? 0}`;
-    if (sig === this.#sig && this.#root.childElementCount > 0) return;
+    if (sig === this.#sig && this.#view.childElementCount > 0) return;
     this.#sig = sig;
-    if (!m || !m.loaded) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'Loading teammates\' PRs.')); return; }
-    if (!m.data) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'The list of teammates\' PRs is not available from this page.')); return; }
+    if (!m || !m.loaded) { this.#view.replaceChildren(h('p', { class: 'empty' }, 'Loading teammates\' PRs.')); return; }
+    if (!m.data) { this.#view.replaceChildren(h('p', { class: 'empty' }, 'The list of teammates\' PRs is not available from this page.')); return; }
     this.#now = m.data.generatedAt;
     const d = m.data;
     const byPr = new Map<string, DraftRow[]>();
@@ -86,7 +90,7 @@ export class OthersPrs extends HTMLElement {
     const authorOf = (x: DraftRow): string | undefined => x.author ?? names.get(key(x.repo, x.pr));
     const when = d.prData.fetchedAt ? `List read ${ago(d.prData.fetchedAt, d.generatedAt)} ago${d.prData.stale ? ' (older than expected)' : ''}.` : 'The list has not been read yet. It fills in when the next page refresh runs.';
     const hasOrphans = [...byPr].some(([k, rows]) => !listed.has(k) && rows.some(waiting));
-    this.#root.replaceChildren(
+    this.#view.replaceChildren(
       this.#statusLine(`${d.total} open ${d.total === 1 ? 'PR' : 'PRs'} by teammates. ${when}${d.prData.failure ? ` The last read failed (${d.prData.failure}); this is the last good list.` : ''}`, !!d.prData.failure),
       ...(d.prs.length ? this.#tabbed(d.prs, byPr) : [h('p', { class: 'empty' }, 'No teammate PR is open.')]),
       ...(this.#drafts ? [...(hasOrphans ? [h('h3', { class: 'orphans' }, 'Drafts on PRs not listed above')] : []), this.#drafts.queue((x) => !listed.has(key(x.repo, x.pr)), '', false, authorOf)] : []));
@@ -106,13 +110,13 @@ export class OthersPrs extends HTMLElement {
     const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Teammate PRs by state' }, ...SUBTABS.map((t) => {
       const on = t.id === this.#tab;
       const b = h('button', { type: 'button', role: 'tab', id: `tab-${t.id}`, 'data-tab': t.id, 'aria-selected': on ? 'true' : 'false', 'aria-controls': 'panel', tabindex: on ? '0' : '-1', class: `tab${t.id === 'stale' ? ' muted' : ''}` }, `${t.label} (${groups.get(t.id)?.length ?? 0})`);
-      b.addEventListener('click', () => this.#select(t.id));
+      b.addEventListener('click', () => this.#select(t.id, true));
       b.addEventListener('keydown', (e) => this.#arrow(e as KeyboardEvent));
       return b;
     }));
     const def = SUBTABS.find((t) => t.id === this.#tab) ?? SUBTABS[0]!;
     const rows = groups.get(def.id) ?? [];
-    const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': `tab-${def.id}` }, ...(rows.length ? this.#list(def.id, rows, byPr) : [h('p', { class: 'empty' }, def.empty)]));
+    const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': `tab-${def.id}`, ...(rows.length ? {} : { tabindex: '0' }) }, ...(rows.length ? this.#list(def.id, rows, byPr) : [h('p', { class: 'empty' }, def.empty)]));
     return [tabs, panel];
   }
 
@@ -125,6 +129,7 @@ export class OthersPrs extends HTMLElement {
 
   /** Arrow keys, Home and End move between tabs and select as they go (the tablist pattern). */
   #arrow(e: KeyboardEvent): void {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
     const at = SUBTABS.findIndex((t) => t.id === this.#tab);
     const to = e.key === 'ArrowRight' ? (at + 1) % SUBTABS.length : e.key === 'ArrowLeft' ? (at + SUBTABS.length - 1) % SUBTABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? SUBTABS.length - 1 : -1;
     if (to < 0) return;
@@ -143,6 +148,8 @@ export class OthersPrs extends HTMLElement {
     const ul = h('ul', { class: 'prs', role: 'list', 'aria-label': 'Open teammate PRs' }, ...plan.shown.map((x) => this.#row(x.p, byPr.get(key(x.p.repo, x.p.number)) ?? [], tab, x.reasons)));
     const text = `Showing ${plan.shown.length} of ${plan.total}`;
     if (this.#count.textContent !== text) this.#count.textContent = text;
+    const said = `${text} in ${SUBTABS.find((t) => t.id === tab)?.label ?? ''}`;
+    if (this.#announce.textContent !== said) this.#announce.textContent = said;
     const more = plan.hidden > 0 ? h('button', { type: 'button', class: 'more-prs' }, `Load more (${Math.min(PAGE_SIZE, plan.hidden)} of ${plan.hidden} left)`) : null;
     more?.addEventListener('click', () => {
       const at = plan.shown.length;
