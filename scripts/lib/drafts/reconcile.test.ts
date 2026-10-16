@@ -31,12 +31,12 @@ function failed(f: string, over: Partial<NewDraft> = {}): string {
   assert.equal(listDrafts(f).find((x) => x.id === id)?.state, 'failed');
   return id;
 }
-const mine = (at: string, state = 'APPROVED', login = 'jack-r'): string => JSON.stringify({ user: { login }, state, submitted_at: at, html_url: 'https://github.com/acme/widgets/pull/7#pullrequestreview-1' });
+const mine = (at: string, state = 'APPROVED', login = 'octo-user'): string => JSON.stringify({ user: { login }, state, submitted_at: at, html_url: 'https://github.com/acme/widgets/pull/7#pullrequestreview-1' });
 const gh = (lines: string[], calls: string[][] = []): ((a: string[]) => GhResult) => (a) => { calls.push(a); return { status: 0, stdout: lines.join('\n'), stderr: '' }; };
 
 test('a failed review draft with a review of yours submitted after it was made is settled as already reviewed, with the link', () => {
   const f = file(); const id = failed(f);
-  const out = reconcileFailedReviews(f, 'Jack-R', { run: gh([mine('2026-10-14T11:00:00Z')]), now: () => T0 });
+  const out = reconcileFailedReviews(f, 'Octo-User', { run: gh([mine('2026-10-14T11:00:00Z')]), now: () => T0 });
   assert.deepEqual(out, [{ id, url: 'https://github.com/acme/widgets/pull/7#pullrequestreview-1' }]);
   const d = listDrafts(f)[0];
   assert.equal(d?.state, 'rejected');
@@ -46,7 +46,7 @@ test('a failed review draft with a review of yours submitted after it was made i
 
 test('reviews that do not count leave the draft failed: someone else\'s, a pending one, or one from before the draft', () => {
   const f = file(); failed(f);
-  const none = reconcileFailedReviews(f, 'jack-r', { run: gh([mine('2026-10-14T11:00:00Z', 'APPROVED', 'someone-else'), mine('2026-10-14T11:00:00Z', 'PENDING'), mine('2026-10-14T09:00:00Z')]) });
+  const none = reconcileFailedReviews(f, 'octo-user', { run: gh([mine('2026-10-14T11:00:00Z', 'APPROVED', 'someone-else'), mine('2026-10-14T11:00:00Z', 'PENDING'), mine('2026-10-14T09:00:00Z')]) });
   assert.deepEqual(none, []);
   assert.equal(listDrafts(f)[0]?.state, 'failed');
 });
@@ -54,10 +54,10 @@ test('reviews that do not count leave the draft failed: someone else\'s, a pendi
 test('no GitHub call is made unless a failed review draft exists, and an unreadable PR changes nothing', () => {
   const f = file(); const calls: string[][] = [];
   addDraft(f, review(), { now: () => T0 });   // pending, not failed
-  assert.deepEqual(reconcileFailedReviews(f, 'jack-r', { run: gh([mine('2026-10-14T11:00:00Z')], calls) }), []);
+  assert.deepEqual(reconcileFailedReviews(f, 'octo-user', { run: gh([mine('2026-10-14T11:00:00Z')], calls) }), []);
   assert.equal(calls.length, 0);
   const f2 = file(); failed(f2);
-  assert.deepEqual(reconcileFailedReviews(f2, 'jack-r', { run: () => ({ status: 1, stdout: '', stderr: 'rate limited' }) }), []);
+  assert.deepEqual(reconcileFailedReviews(f2, 'octo-user', { run: () => ({ status: 1, stdout: '', stderr: 'rate limited' }) }), []);
   assert.deepEqual(reconcileFailedReviews(f2, '', { run: gh([mine('2026-10-14T11:00:00Z')], calls) }), [], 'no login configured: nothing to match');
   assert.equal(calls.length, 0);
   assert.equal(listDrafts(f2)[0]?.state, 'failed');
@@ -66,11 +66,11 @@ test('no GitHub call is made unless a failed review draft exists, and an unreada
 test('settling is idempotent, and a draft edited back to pending meanwhile is not settled', () => {
   const f = file(); const id = failed(f);
   const run = gh([mine('2026-10-14T11:00:00Z')]);
-  assert.equal(reconcileFailedReviews(f, 'jack-r', { run }).length, 1);
-  assert.equal(reconcileFailedReviews(f, 'jack-r', { run }).length, 0, 'already rejected: not failed any more');
+  assert.equal(reconcileFailedReviews(f, 'octo-user', { run }).length, 1);
+  assert.equal(reconcileFailedReviews(f, 'octo-user', { run }).length, 0, 'already rejected: not failed any more');
   const g = file(); const gid = failed(g);
   assert.equal(editDraft(g, gid, `${COMPLIMENT}\n\nReworded.`).ok, true);
-  assert.equal(reconcileFailedReviews(g, 'jack-r', { run }).length, 0);
+  assert.equal(reconcileFailedReviews(g, 'octo-user', { run }).length, 0);
   assert.equal(listDrafts(g)[0]?.state, 'pending');
   assert.ok(id);
 });
