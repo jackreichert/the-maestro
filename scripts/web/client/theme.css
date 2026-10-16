@@ -53,6 +53,7 @@
   --space-6: 32px;
   --space-7: 48px;
   --space-8: 64px;
+  --space-9: 80px;
 
   /* Grid: 12 columns inside a centred frame. Gutter and page margin step up at 640 and 1100 px (media queries below),
      the shell's existing breakpoints, so the frame keeps its measure. */
@@ -159,8 +160,8 @@
   --warn: var(--warning);
 }
 
-@media (min-width: 640px) { :root { --gutter: var(--space-5); --page-pad: var(--space-5); } }
-@media (min-width: 1100px) { :root { --gutter: var(--space-6); --page-pad: var(--space-7); --section-gap: var(--space-8); } }
+@media (min-width: 640px) { :root { --gutter: var(--space-6); --page-pad: var(--space-5); --section-gap: var(--space-8); } }
+@media (min-width: 1100px) { :root { --gutter: var(--space-7); --page-pad: var(--space-7); --section-gap: var(--space-9); } }
 
 @media (prefers-color-scheme: dark) {
   :root {
