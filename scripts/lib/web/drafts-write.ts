@@ -7,6 +7,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { draftsPath, listDrafts, editDraft, rejectDraft, eventOf, revOf, MAX_REASON, MAX_TEXT } from '../drafts/queue.ts';
 import type { Draft, Outcome, Refusal } from '../drafts/queue.ts';
 import { approveAndPost } from '../drafts/post.ts';
+import { summaryView } from '../teammate/context.ts';
+import type { SummaryView } from '../teammate/context.ts';
 import type { GhRun } from '../drafts/post.ts';
 import { sendError, sendJson } from './guard.ts';
 import { readBody, tokenOk, TOKEN_HEADER } from './priorities-write.ts';
@@ -28,10 +30,15 @@ const RECENT_DONE = 30;
 export interface DraftsWriteOptions extends WriteOptions { ghRun?: GhRun }
 
 /** The wire shape of one draft. */
-export interface DraftView { rev: string; review?: { event: 'APPROVE' | 'REQUEST_CHANGES'; compliment: string; comments: { path: string; line: number; text: string; severity: 'blocking' | 'suggestion' }[] }; id: string; source: Draft['source']; repo: string; pr: number; prUrl: string; severity: Draft['severity']; text: string; where?: string; context?: string; replyTo?: string; author?: string; state: Draft['state']; error?: string; postedUrl?: string; rejectReason?: string; createdAt: string }
+export interface DraftView { rev: string; review?: { event: 'APPROVE' | 'REQUEST_CHANGES'; compliment: string; /** The structured summary (what it does, core logic with permalinks, tests, ticket match); absent on a draft made before summaries. */ context?: SummaryView; comments: { path: string; line: number; text: string; severity: 'blocking' | 'suggestion' }[] }; id: string; source: Draft['source']; repo: string; pr: number; prUrl: string; severity: Draft['severity']; text: string; where?: string; context?: string; replyTo?: string; author?: string; state: Draft['state']; error?: string; postedUrl?: string; rejectReason?: string; createdAt: string }
+
+/** The card's summary for a stored context; a context that cannot be read shows as "not recorded" and never costs the draft its card. */
+function safeSummary(d: Draft, head: string): SummaryView {
+  try { return summaryView(d.repo, head, d.review?.context ?? {}); } catch { return summaryView(d.repo, head, {}); }
+}
 
 const view = (d: Draft): DraftView => ({
-  rev: revOf(d), ...(d.review ? { review: { event: eventOf(d.review), compliment: d.review.compliment, comments: d.review.comments } } : {}),
+  rev: revOf(d), ...(d.review ? { review: { event: eventOf(d.review), compliment: d.review.compliment, ...(d.review.context && d.target.kind === 'review' ? { context: safeSummary(d, d.target.commitId) } : {}), comments: d.review.comments } } : {}),
   id: d.id, source: d.source, repo: d.repo, pr: d.pr, prUrl: `https://github.com/${d.repo}/pull/${d.pr}`, severity: d.severity, text: d.text,
   ...(d.target.kind === 'inline' ? { where: `${d.target.path}:${d.target.line}` } : {}),
   ...(d.context ? { context: d.context } : {}), ...(d.replyTo ? { replyTo: d.replyTo } : {}), ...(d.author ? { author: d.author } : {}),

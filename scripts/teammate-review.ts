@@ -5,7 +5,8 @@
  *   prepare --repo <owner/name> --pr <n>     check out the PR head read-only (detached, files unwritable) and print { path, head, base, diff } as JSON
  *   firstpass --repo <o/n> --pr <n> --path <p>   print the PR body, bots' earlier findings, the CI rollup, and each changed package's test command
  *   install --repo <o/n> --path <p> --pr <n> `npm ci` (browser downloads skipped) for the changed packages, then report `git status`
- *   submit  [--vault ..] [--project ..]      stdin: { repo, pr, head, base, path, compliment, findings: [...] }; applies the lenient bar and queues ONE review draft
+ *   ticket --repo <o/n> --pr <n>             find the Jira key in the PR's title, branch and body and read the ticket (read-only GET; says `unreadable` when it cannot)
+ *   submit  [--vault ..] [--project ..]      stdin: { repo, pr, head, base, path, compliment, findings: [...], context: { summary, ticket, core }, supersedes? }; applies the lenient bar and queues ONE review draft
  *   cleanup --repo <owner/name> --path <p>   remove a prepared worktree
  *
  * It posts nothing to GitHub. `submit` only adds drafts to the approval queue (lib/drafts/queue.ts); the person approves, edits or rejects each one
@@ -21,6 +22,8 @@ import { addDraft, draftsPath, listDrafts, rejectDraft } from './lib/drafts/queu
 import { isSmell, parseDiffLines, planReview } from './lib/teammate/bar.ts';
 import type { Finding } from './lib/teammate/bar.ts';
 import { firstPass, installDeps } from './lib/teammate/firstpass.ts';
+import { findJiraKeys, readJira } from './lib/teammate/context.ts';
+import type { ReviewContext } from './lib/teammate/context.ts';
 import { cleanup, lock, prepare, unlock } from './lib/teammate/worktree.ts';
 import type { Runner } from './lib/teammate/worktree.ts';
 import { printJson } from './lib/json-out.ts';
@@ -42,7 +45,7 @@ function self(): string {
 }
 
 /** What `submit` reads: the PR and head the review was of, the worktree it was read in, and the agent's compliment and findings. */
-export interface Submission { repo: string; pr: number; head: string; base: string; path: string; compliment: string; findings: Finding[]; /** The PR author's login (from `prepare`), kept on the draft so the Podium's needs-you list can name them. */ author?: string }
+export interface Submission { repo: string; pr: number; head: string; base: string; path: string; compliment: string; findings: Finding[]; /** What the PR does, the ticket match and the core logic links: required, every draft opens with them. */ context?: ReviewContext; /** The id of a pending draft for this same head that this richer one replaces. */ supersedes?: string; /** The PR author's login (from `prepare`), kept on the draft so the Podium's needs-you list can name them. */ author?: string }
 
 const reviewPath = (path: string): string => {
   const root = resolve(worktreesDir());
@@ -57,13 +60,16 @@ export function submit(file: string, s: Submission, diff: string): { queued: { i
   // The smells pass is for the first round only: once a review of this PR for another head is on record (queued, posted or rejected), smell findings are dropped.
   const later = listDrafts(file).some((d) => d.source === 'review' && d.repo === s.repo && d.pr === s.pr && !d.key.includes(`@${s.head.slice(0, 12)}:`));
   const findings = later ? s.findings.filter((f) => !isSmell(f)) : s.findings;
-  const plan = planReview({ repo: s.repo, pr: s.pr, head: s.head, ...(s.author ? { author: s.author } : {}) }, s.compliment, findings, parseDiffLines(diff));
+  if (!s.context) return { queued: null, problem: 'a review needs its context: what the PR does, the ticket match and the core logic changes', dropped: [], downgraded: 0 };
+  const old = s.supersedes ? listDrafts(file).find((d) => d.id === s.supersedes) : undefined;
+  if (s.supersedes && !(old && old.source === 'review' && old.repo === s.repo && old.pr === s.pr && old.key.includes(`@${s.head.slice(0, 12)}:`))) throw new Error('supersedes must name a review draft for this PR and head');
+  const plan = planReview({ repo: s.repo, pr: s.pr, head: s.head, ...(s.supersedes ? { supersedes: s.supersedes } : {}), ...(s.author ? { author: s.author } : {}) }, s.compliment, findings, parseDiffLines(diff), s.context);
   if (!plan.draft) return { queued: null, problem: plan.problem, dropped: plan.dropped, downgraded: plan.downgraded };
   const out = addDraft(file, plan.draft);
   // A push makes an earlier review of this PR stale: approving it would approve an old commit. Retire the ones still waiting, with the reason on record.
   if (out.created) {
     for (const d of listDrafts(file)) {
-      if (d.source === 'review' && d.repo === s.repo && d.pr === s.pr && d.id !== out.id && (d.state === 'pending' || d.state === 'failed')) rejectDraft(file, d.id, `superseded by a newer push (${s.head.slice(0, 7)})`);
+      if (d.source === 'review' && d.repo === s.repo && d.pr === s.pr && d.id !== out.id && (d.state === 'pending' || d.state === 'failed')) rejectDraft(file, d.id, d.key.includes(`@${s.head.slice(0, 12)}:`) ? `superseded by a fuller review of the same head (${s.head.slice(0, 7)})` : `superseded by a newer push (${s.head.slice(0, 7)})`);
     }
   }
   return { queued: out.created ? { id: out.id } : null, dropped: plan.dropped, downgraded: plan.downgraded };
@@ -75,10 +81,10 @@ const execIn = (cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 };
 
-function main(argv: string[]): number {
+async function main(argv: string[]): Promise<number> {
   const { values: v, positionals } = parseArgs({ args: argv, allowPositionals: true, options: { repo: { type: 'string' }, pr: { type: 'string' }, path: { type: 'string' }, vault: { type: 'string' }, project: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd] = positionals;
-  if (v.help || !['prepare', 'firstpass', 'install', 'submit', 'cleanup'].includes(cmd ?? '')) { console.log(USAGE); return v.help ? 0 : 2; }
+  if (v.help || !['prepare', 'firstpass', 'install', 'ticket', 'submit', 'cleanup'].includes(cmd ?? '')) { console.log(USAGE); return v.help ? 0 : 2; }
   if (cmd !== 'submit') {
     if (!CONTAINER_ROOT) { console.error('container_root is not set'); return 2; }
     if (!v.repo) { console.error(USAGE); return 2; }
@@ -93,6 +99,14 @@ function main(argv: string[]): number {
     if (cmd === 'firstpass') { printJson(fp, { compact: true }); return 0; }
     unlock(path);
     try { printJson(installDeps({ path, packages: fp.packages, containerRoot: CONTAINER_ROOT, exec: execIn }), { compact: true }); } finally { lock(path); }
+    return 0;
+  }
+  if (cmd === 'ticket') {
+    const r = run('gh', ['pr', 'view', String(Number(v.pr)), '--repo', v.repo as string, '--json', 'title,body,headRefName']);
+    if (r.status !== 0) throw new Error(`gh pr view failed: ${r.stderr.split('\n')[0]?.slice(0, 200)}`);
+    const pr = JSON.parse(r.stdout) as { title?: string; body?: string; headRefName?: string };
+    const keys = findJiraKeys({ title: pr.title, branch: pr.headRefName, body: pr.body });
+    printJson({ keys, ticket: keys[0] ? await readJira(keys[0], process.env, (u, i) => fetch(u, i)) : { status: 'none' } }, { compact: true });
     return 0;
   }
   if (cmd === 'cleanup') {
@@ -111,5 +125,5 @@ function main(argv: string[]): number {
 
 const isMain = (): boolean => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };
 if (isMain()) {
-  try { process.exitCode = main(process.argv.slice(2)); } catch (e) { console.error(`teammate-review: ${(e instanceof Error ? e.message : String(e)).split('\n')[0]}`); process.exitCode = 1; }
+  main(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e: unknown) => { console.error(`teammate-review: ${(e instanceof Error ? e.message : String(e)).split('\n')[0]}`); process.exitCode = 1; });
 }
