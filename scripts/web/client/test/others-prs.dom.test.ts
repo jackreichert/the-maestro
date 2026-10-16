@@ -12,10 +12,12 @@ const pr = (n: number, over: Partial<OthersPrRow> = {}): OthersPrRow => ({ repo:
 const data = (prs: OthersPrRow[], over: Partial<OthersPrsData['prData']> = {}): OthersPrsData => ({ generatedAt: '2026-10-15T12:00:00Z', prData: { fetchedAt: '2026-10-15T11:55:00Z', stale: false, ...over }, total: prs.length, prs });
 const draft = (n: number, over: Partial<DraftRow> = {}): DraftRow => ({ rev: '0123456789ab', id: `dr-0000000${n}`, source: 'review', repo: 'acme/app', pr: n, prUrl: `https://github.com/acme/app/pull/${n}`, severity: 'suggestion', text: 'x', state: 'pending', createdAt: '2026-10-15T10:00:00Z', ...over });
 const queues: string[] = [];
+const pick = (root: ParentNode, id: string): void => { (root.querySelector(`button.tab[data-tab="${id}"]`) as HTMLButtonElement).click(); };
 const drafts = (rows: DraftRow[]): OthersDrafts => ({ rows, queue: (match, empty, quiet, authorOf) => { const el = document.createElement('div'); el.className = 'queue'; el.textContent = rows.filter(match).map((d) => `${d.repo}#${d.pr} by ${authorOf(d) ?? '?'}`).join(',') + (quiet ? '' : '|decided'); queues.push(empty); return el; } });
 
 test('one row per PR, linked as repo#number with title, author, base, age, review state and thread counts as words', async () => {
-  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { youAsked: true, review: 'changes-requested', unresolved: 3, copilotThreads: 2 }), pr(2, { review: 'approved' })]), loaded: true }, drafts: drafts([]) });
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { youAsked: true, review: 'changes-requested', unresolved: 3, copilotThreads: 2 }), pr(2, { review: 'approved', unresolved: 1 })]), loaded: true }, drafts: drafts([]) });
+  pick(root, 'threads');
   const rows = [...root.querySelectorAll('li.pr')];
   assert.equal(rows.length, 2);
   const first = rows[0]?.textContent ?? '';
@@ -29,7 +31,10 @@ test('one row per PR, linked as repo#number with title, author, base, age, revie
 
 test('a PR with a waiting draft says "Draft ready" and shows the existing queue for it; a decided draft does not count', async () => {
   const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1), pr(2)]), loaded: true }, drafts: drafts([draft(1), draft(2, { state: 'rejected' })]) });
-  const [a, b] = [...root.querySelectorAll('li.pr')];
+  const b = root.querySelector('li.pr');
+  assert.equal(numbers(root).join(), '2', 'a decided draft leaves the PR in its own tab');
+  pick(root, 'in-review');
+  const a = root.querySelector('li.pr');
   assert.match(a?.textContent ?? '', /Draft ready/);
   assert.equal(a?.querySelector('.queue')?.textContent, 'acme/app#1 by pat-fake');
   assert.match(b?.textContent ?? '', /No draft yet/);
@@ -69,6 +74,7 @@ test('a hands-off PR says so in words', async () => {
 
 test('the author sits beside repo#number: display name with login when GitHub gave a name, else the login; a draft\'s own author wins', async () => {
   const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { authorName: 'Pat Example' }), pr(2)]), loaded: true }, drafts: drafts([draft(1), draft(2, { author: 'drafted-by-fake' })]) });
+  pick(root, 'in-review');
   const [a, b] = [...root.querySelectorAll('li.pr')];
   assert.match(a?.querySelector('h3')?.textContent ?? '', /acme\/app#1\s*by Pat Example \(pat-fake\)/);
   assert.match(b?.querySelector('h3')?.textContent ?? '', /acme\/app#2\s*by pat-fake/);
@@ -106,11 +112,11 @@ test('Load more adds 25, updates the count, and moves focus to the first newly l
   cleanup();
 });
 
-test('rows with a waiting draft and rows that ask you to review stay above the paging, never behind it', async () => {
-  const list = many(80, (n) => (n === 70 ? { youAsked: true } : {}));
-  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(list), loaded: true }, drafts: drafts([draft(75)]) });
+test('rows that ask you to review stay above the paging, never behind it', async () => {
+  const list = many(80, (n) => (n === 70 || n === 75 ? { youAsked: true } : {}));
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(list), loaded: true }, drafts: drafts([]) });
   const first = numbers(root);
-  assert.deepEqual(first.slice(0, 2), [70, 75], 'asked and drafted rows lead, in list order');
+  assert.deepEqual(first.slice(0, 2), [70, 75], 'rows asked of you lead, in list order');
   assert.equal(first.length, 2 + 25);
   assert.equal(root.querySelector('.pager [role=status]')?.textContent, 'Showing 27 of 80');
   assert.equal(new Set(first).size, first.length, 'a pinned row is not listed twice');
@@ -128,6 +134,80 @@ test('a redraw (a draft appearing) keeps the pages already loaded', async () => 
   const { el, root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(many(60)), loaded: true }, drafts: drafts([]) });
   (root.querySelector('button.more-prs') as HTMLButtonElement).click();
   el.drafts = drafts([draft(3)]);
-  assert.equal(root.querySelectorAll('li.pr').length, 51, 'two pages of the rest, plus the one newly pinned row');
+  assert.equal(root.querySelectorAll('li.pr').length, 50, 'two pages of the rest; the drafted PR moved to In review');
+  assert.equal(root.querySelector('.pager [role=status]')?.textContent, 'Showing 50 of 59');
+  cleanup();
+});
+
+test('five sub-tabs with a count on each label; Ready for approval opens first and Stale is last and muted', async () => {
+  const rows = [pr(1), pr(2, { unresolved: 2 }), pr(3, { ci: 'fail' }), pr(4, { awaitingAuthor: true }), pr(5, { stale: true, staleWhy: 'Slack post 3d, no reply' }), pr(6)];
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(rows), loaded: true }, drafts: drafts([]) });
+  const tabs = [...root.querySelectorAll('button.tab')];
+  assert.deepEqual(tabs.map((t) => t.textContent), ['Ready for approval (2)', 'Threads open (1)', 'Not ready (1)', 'In review (1)', 'Stale (1)']);
+  assert.equal(root.querySelector('[role=tablist]')?.getAttribute('aria-label'), 'Teammate PRs by state');
+  assert.deepEqual(tabs.map((t) => [t.getAttribute('aria-selected'), t.getAttribute('tabindex')]), [['true', '0'], ['false', '-1'], ['false', '-1'], ['false', '-1'], ['false', '-1']]);
+  assert.ok(tabs[4]?.classList.contains('muted'));
+  assert.equal(numbers(root).join(), '1,6');
+  const panel = root.querySelector('[role=tabpanel]');
+  assert.equal(panel?.getAttribute('aria-labelledby'), 'tab-ready');
+  assert.equal(tabs[0]?.getAttribute('aria-controls'), panel?.id);
+  cleanup();
+});
+
+test('arrow keys, Home and End move between tabs and focus follows', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1), pr(2, { unresolved: 1 })]), loaded: true }, drafts: drafts([]) });
+  const press = (key: string): void => { (root.querySelector('button.tab[aria-selected=true]') as HTMLElement).dispatchEvent(new (globalThis as unknown as { KeyboardEvent: typeof KeyboardEvent }).KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })); };
+  press('ArrowRight');
+  assert.equal(root.querySelector('button.tab[aria-selected=true]')?.getAttribute('data-tab'), 'threads');
+  assert.equal(numbers(root).join(), '2');
+  assert.equal((root as unknown as ShadowRoot).activeElement?.getAttribute('data-tab'), 'threads');
+  press('End');
+  assert.equal(root.querySelector('button.tab[aria-selected=true]')?.getAttribute('data-tab'), 'stale');
+  press('ArrowRight');
+  assert.equal(root.querySelector('button.tab[aria-selected=true]')?.getAttribute('data-tab'), 'ready');
+  press('ArrowLeft');
+  assert.equal(root.querySelector('button.tab[aria-selected=true]')?.getAttribute('data-tab'), 'stale');
+  cleanup();
+});
+
+test('an empty sub-tab says why in words, not a blank panel', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1)]), loaded: true }, drafts: drafts([]) });
+  pick(root, 'stale');
+  assert.match(root.querySelector('[role=tabpanel]')?.textContent ?? '', /Nothing has gone stale/);
+  assert.equal(root.querySelector('li.pr'), null);
+  cleanup();
+});
+
+test('Not ready rows show each reason; Stale rows show the author, the last ask and why it went stale', async () => {
+  const rows = [pr(1, { ci: 'fail', conflicting: true }), pr(2, { notAsked: true }), pr(3, { stale: true, staleWhy: 'never posted, opened 4d ago', askedAt: '2026-10-11T12:00:00Z', authorName: 'Pat Example' })];
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(rows), loaded: true }, drafts: drafts([]) });
+  pick(root, 'not-ready');
+  const [a, b] = [...root.querySelectorAll('li.pr')];
+  assert.match(a?.textContent ?? '', /Checks failing/);
+  assert.match(a?.textContent ?? '', /Merge conflict/);
+  assert.match(b?.textContent ?? '', /Not asked yet/);
+  pick(root, 'stale');
+  const t = root.querySelector('li.pr')?.textContent ?? '';
+  for (const re of [/by Pat Example \(pat-fake\)/, /Last ask 4 d ago/, /never posted, opened 4d ago/]) assert.match(t, re);
+  cleanup();
+});
+
+test('every row says how long its author has waited, and the longest wait leads inside a tab', async () => {
+  const rows = [pr(1, { askedAt: '2026-10-15T09:00:00Z' }), pr(2, { askedAt: '2026-10-14T12:00:00Z' }), pr(3, { askedAt: '2026-10-15T11:00:00Z' }), pr(4)];
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(rows), loaded: true }, drafts: drafts([]) });
+  assert.deepEqual(numbers(root), [2, 1, 3, 4], 'oldest ask first; a PR with no known ask last');
+  const [first, second] = [...root.querySelectorAll('li.pr')];
+  assert.match(first?.textContent ?? '', /Waiting 1 d/);
+  assert.match(second?.textContent ?? '', /Waiting 3 h/);
+  cleanup();
+});
+
+test('each sub-tab pages on its own: Load more in one does not change another', async () => {
+  const rows = [...many(30), ...Array.from({ length: 30 }, (_, i) => pr(100 + i, { unresolved: 1 }))];
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(rows), loaded: true }, drafts: drafts([]) });
+  (root.querySelector('button.more-prs') as HTMLButtonElement).click();
+  assert.equal(root.querySelector('.pager [role=status]')?.textContent, 'Showing 30 of 30');
+  pick(root, 'threads');
+  assert.equal(root.querySelector('.pager [role=status]')?.textContent, 'Showing 25 of 30');
   cleanup();
 });
