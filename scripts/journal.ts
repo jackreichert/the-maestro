@@ -1159,6 +1159,7 @@ function cmdClose(newKind: string): void {
         needle,
         note: arg('answer') || arg('why'),
         ticket: arg('ticket'),
+        followUp: true,
         extras: () => ({ ...approvalClose(newKind), ...(noRetro !== null ? { noRetro: noRetro.replace(/\s+/g, ' ').trim() } : {}), ...usageFromArgs() }),
         ...(newKind === 'done' && noRetro === null ? { guard: (target: LedgerItem, entries: LedgerRow[]) => retroGate(entries, target) } : {}),
     });
@@ -1169,6 +1170,7 @@ function cmdClose(newKind: string): void {
     const { target, note } = result;
     console.log(`${newKind}  ${target.id}  ${target.text}${note ? `\n      ${note}` : ''}`);
     if (result.parent) console.log(`      ${parentPromptLine(result.parent)}`);
+    if (result.followUp) console.log(`      queued ${result.followUp.id}  ${result.followUp.text}`);
 }
 
 /** File an existing item under a workstream (or clear it with --stream none). */

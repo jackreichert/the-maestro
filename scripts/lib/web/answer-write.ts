@@ -80,7 +80,7 @@ export function answerAsk(o: WriteOptions, req: AnswerBody): AnswerOutcome {
     if (pendingInNote(statusDir, req.id)) return refuse('pending', 'That ask already has an answer typed in the note, waiting to be recorded.');
     const store = openStore({ vault: o.web.vault, project: o.web.project, dryRun: false, warn: o.web.warn ?? (() => {}) });
     const closed = closeItem({ readLedger: store.readLedger, append: store.append, newId: store.newId, fold: (entries) => fold(entries, store.loadRegistry()), today: () => o.now().toISOString().slice(0, 10), now: () => o.now().toISOString() },
-      { kind: 'resolved', needle: req.id, note: text, skipIfClosed: true });
+      { kind: 'resolved', needle: req.id, note: text, skipIfClosed: true, followUp: req.mode !== 'skip' });
     if (closed.kind === 'already-closed') return refuse('answered', 'That ask is already closed.');
     if (closed.kind !== 'closed') return refuse('unknown', 'No such ask is waiting for an answer.');
     try { syncNote(statusDir, req.id, text); } catch (e) { o.log(`answered ask ${req.id} but could not update the note: ${e instanceof Error ? e.message.split('\n')[0] : 'error'}`); }

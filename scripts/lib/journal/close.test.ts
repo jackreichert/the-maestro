@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fold } from '../ledger-core.ts';
 import type { LedgerRow } from '../ledger-core.ts';
-import { closeItem, matchTarget } from './close.ts';
+import { closeItem, matchTarget, prRef } from './close.ts';
 import type { CloseContext } from './close.ts';
 
 const DAY = '2026-10-06';
@@ -142,4 +142,71 @@ test('a guard refuses an open target and nothing is appended; a closed target sk
     let asked = false;
     assert.equal(closeItem(ctx, { kind: 'done', needle: 'aaa1', guard: () => { asked = true; return 'x'; } }).kind, 'closed');
     assert.equal(asked, false);
+});
+
+// ---- follow-up for a resolved ask that names a PR (MAESTRO-309) ----
+
+const askSeed = (text: string): LedgerRow[] => [{ id: 'ask1', kind: 'question', ts: `${DAY}T09:00:00Z`, date: DAY, text, stream: 'S', repo: 'api', ticket: 'T-2' }];
+/** Like ctxFor, but every call to newId gives a fresh id, as the real store does. */
+function ctxWithIds(rows: LedgerRow[]): CloseContext {
+    let n = 0;
+    return { ...ctxFor(rows).ctx, newId: () => `id${(n += 1)}` };
+}
+
+test('prRef prefers a qualified reference, then a PR-worded one, then a bare four or five digit number', () => {
+    assert.equal(prRef('see org/api#4071 please'), 'org/api#4071');
+    assert.equal(prRef('issue #12 and org/api#99'), 'org/api#99');
+    assert.equal(prRef('https://github.com/org/api/pull/812 is stuck'), 'org/api#812');
+    assert.equal(prRef('PR #7 waits'), '#7');
+    assert.equal(prRef('the pull request #123 waits'), '#123');
+    assert.equal(prRef('rest-api #4071 needs a rebase'), '#4071');
+    assert.equal(prRef('recolour to #123456 and #fff and #123'), null);
+    assert.equal(prRef('step #1 then step #12'), null);
+    assert.equal(prRef('https://x.example/page#4071'), null);
+    assert.equal(prRef('no reference here'), null);
+    assert.equal(prRef(undefined), null);
+});
+
+test('closeItem followUp: resolving an ask that names a PR queues a to-do carrying the answer, the PR and the ask', () => {
+    const rows = askSeed('Merge order for #4071?');
+    const result = closeItem(ctxWithIds(rows), { kind: 'resolved', needle: 'ask1', note: 'merge the staging twin first', followUp: true });
+    assert.equal(result.kind, 'closed');
+    const queued = rows.find((r) => r.kind === 'wip');
+    assert.ok(queued, 'a follow-up row was appended');
+    assert.equal(queued.queued, true);
+    assert.deepEqual(queued.refs, ['#4071']);
+    assert.match(queued.text ?? '', /^Follow up on #4071 \(ask ask1\): merge the staging twin first/);
+    assert.deepEqual([queued.stream, queued.repo, queued.ticket], ['S', 'api', 'T-2']);
+    assert.equal(result.kind === 'closed' && result.followUp?.id, queued.id);
+    const items = fold(rows, null).items;
+    assert.equal(items.find((i) => i.id === queued.id)?.queued, true, 'it folds to an open queued item');
+});
+
+test('closeItem followUp: the PR may be named in the answer alone', () => {
+    const rows = askSeed('What next?');
+    closeItem(ctxWithIds(rows), { kind: 'resolved', needle: 'ask1', note: 'rebase org/api#77', followUp: true });
+    assert.deepEqual(rows.find((r) => r.kind === 'wip')?.refs, ['org/api#77']);
+});
+
+test('closeItem followUp: nothing is queued without a PR, without the option, for a non-ask or a non-resolve', () => {
+    const plain = askSeed('Which color?');
+    closeItem(ctxWithIds(plain), { kind: 'resolved', needle: 'ask1', note: 'blue', followUp: true });
+    assert.equal(plain.some((r) => r.kind === 'wip'), false);
+    const off = askSeed('Merge #4071?');
+    closeItem(ctxWithIds(off), { kind: 'resolved', needle: 'ask1', note: 'yes' });
+    assert.equal(off.some((r) => r.kind === 'wip'), false, 'automatic closers leave followUp off');
+    const dropped = askSeed('Merge #4071?');
+    closeItem(ctxWithIds(dropped), { kind: 'dropped', needle: 'ask1', note: 'no', followUp: true });
+    assert.equal(dropped.some((r) => r.kind === 'wip'), false);
+    const wip: LedgerRow[] = [{ id: 'w1', kind: 'wip', ts: `${DAY}T09:00:00Z`, date: DAY, text: 'ship #4071' }];
+    closeItem(ctxWithIds(wip), { kind: 'resolved', needle: 'w1', note: 'done', followUp: true });
+    assert.equal(wip.filter((r) => r.kind === 'wip').length, 1, 'a wip item is not an ask');
+});
+
+test('closeItem followUp: an open follow-up for the same ask is not queued twice', () => {
+    const rows = askSeed('Merge #4071?');
+    rows.push({ id: 'old', kind: 'wip', queued: true, ts: `${DAY}T09:05:00Z`, date: DAY, text: 'Follow up on #4071 (ask ask1): yes' });
+    const result = closeItem(ctxWithIds(rows), { kind: 'resolved', needle: 'ask1', note: 'yes', followUp: true });
+    assert.equal(result.kind === 'closed' && result.followUp, undefined);
+    assert.equal(rows.filter((r) => r.kind === 'wip').length, 1);
 });
