@@ -22,10 +22,27 @@ export interface Settled { id: string; repo: string; pr: number; reason: string 
 interface Login { login?: string; is_bot?: boolean }
 interface View {
   state?: string; reviewDecision?: string; author?: Login | null; createdAt?: string;
-  reviewRequests?: ({ login?: string } | null)[]; reviews?: ({ author?: Login | null; state?: string; submittedAt?: string; body?: string } | null)[]; commits?: ({ committedDate?: string } | null)[];
+  reviewRequests?: ({ login?: string } | null)[]; commits?: ({ committedDate?: string } | null)[];
+}
+interface RestReview { user?: { login?: string; type?: string } | null; state?: string; submitted_at?: string; body?: string | null }
+
+/** The PR's submitted reviews from the REST API, which (unlike `gh pr view`) says whether an author is a Bot; null when GitHub cannot say. */
+function readReviews(run: GhRead, repo: string, pr: number): SettledReview[] | null {
+  let r;
+  try { r = run(['api', '--paginate', `repos/${repo}/pulls/${pr}/reviews`, '--jq', '.[] | tojson']); } catch { return null; }
+  if (r.status !== 0) return null;
+  const out: SettledReview[] = [];
+  for (const line of r.stdout.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const x = JSON.parse(line) as RestReview;
+      if (x.state && x.submitted_at) out.push({ login: x.user?.login ?? '', bot: isBotAuthor({ login: x.user?.login, type: x.user?.type }), state: x.state, at: x.submitted_at, body: x.body ?? '' });
+    } catch { /* a line that is not a review is skipped */ }
+  }
+  return out;
 }
 
-const FIELDS = 'state,reviewDecision,author,createdAt,reviewRequests,reviews,commits';
+const FIELDS = 'state,reviewDecision,author,createdAt,reviewRequests,commits';
 
 /** The PR's facts, or null when GitHub cannot say or the answer is not shaped like a PR. */
 function read(run: GhRead, repo: string, pr: number, self: string): SettledFacts | null {
@@ -36,7 +53,8 @@ function read(run: GhRead, repo: string, pr: number, self: string): SettledFacts
   try { v = JSON.parse(r.stdout) as View; } catch { return null; }
   const state = v.state;
   if ((state !== 'OPEN' && state !== 'MERGED' && state !== 'CLOSED') || typeof v.author?.login !== 'string') return null;
-  const reviews: SettledReview[] = (v.reviews ?? []).flatMap((x) => (x?.state && x.submittedAt ? [{ login: x.author?.login ?? '', bot: isBotAuthor({ login: x.author?.login, type: x.author?.is_bot ? 'Bot' : null }), state: x.state, at: x.submittedAt, body: x.body ?? '' }] : []));
+  const reviews = readReviews(run, repo, pr);
+  if (!reviews) return null;
   const dates = (v.commits ?? []).map((c) => c?.committedDate ?? '').filter(Boolean).sort();
   const headAt = dates[dates.length - 1];
   return {
