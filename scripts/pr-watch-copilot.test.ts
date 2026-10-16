@@ -130,7 +130,7 @@ test('a snapshot saved before the follow-up existed adopts its heads instead of 
   const run: Run = () => ({ status: 0, stdout: '', stderr: '' });
   const legacy = { board: { 'org/repo#5': { url: 'u', repo: 'org/repo', number: 5, isDraft: false, head: 'sha-a', headRef: '', base: '', needsCopilot: false, decision: 'NONE', threads: [], replies: [], comments: [], reviews: [] } }, reported: {} };
   assert.equal('copilot' in legacy, false);
-  const next = prWatch.check('open-prs', { run: ((cmd, args) => (args[0] === 'api' ? { status: 0, stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [onHead('sha-b')] } } }), stderr: '' } : run(cmd, args))) as Run, now: T0 + 5 * GRACE_MS, prev: legacy, config: { ghLogin: 'me', copilotOrgs: ORGS } });
+  const next = prWatch.check('open-prs', { run: ((cmd, args) => (args[0] === 'api' ? { status: 0, stdout: JSON.stringify({ data: args.join(' ').includes('nodes(ids:') ? { nodes: [onHead('sha-b')] } : { search: { pageInfo: { hasNextPage: false }, nodes: [onHead('sha-b')] } } }), stderr: '' } : run(cmd, args))) as Run, now: T0 + 5 * GRACE_MS, prev: legacy, config: { ghLogin: 'me', copilotOrgs: ORGS } });
   assert.equal(Object.values(next.copilot ?? {})[0]?.phase, 'done', 'adopted, not watching');
   assert.deepEqual(prWatch.diff(legacy, next).filter((e) => e.summary.startsWith('COPILOT-')), []);
 });

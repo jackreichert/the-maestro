@@ -35,7 +35,7 @@ import type { HelperEntry, WaitNode } from '../lib/teammate/wait.ts';
 import { isSelfReview } from '../lib/self-review.ts';
 import { FAILING_CHECK_PHRASE, STEER_PREFIX } from '../lib/steer-line.ts';
 import { DRAFT_PROMOTED, isDraftPromoted } from '../lib/draft-promotion.ts';
-import { searchAllPages } from '../lib/gh-search.ts';
+import { readNodesById, searchAllPages } from '../lib/gh-search.ts';
 import { markPrsDirty } from '../lib/status-page/dirty.ts';
 import { advance, begin, requestReview, trackKey } from '../lib/copilot-follow.ts';
 import type { Tracks } from '../lib/copilot-follow.ts';
@@ -77,6 +77,9 @@ export interface BoardPr {
   replies: Ref[];
   comments: Ref[];
   reviews: (Ref & { state: string })[];
+  /** GitHub's updatedAt when `threads`, `replies`, `comments` and `reviews` were last read, and when (ms). They are re-read only when updatedAt moves or the read is old; see `needsDetail`. Absent in older snapshots, which counts as stale. */
+  updatedAt?: string;
+  detailAt?: number;
 }
 
 /** Every open PR keyed `owner/repo#n`. */
@@ -114,12 +117,14 @@ export interface PrWatchState extends Snapshot {
   carried?: Snapshot;
 }
 
-/** The fields of the GraphQL search node that QUERY selects. */
+/** The fields of the GraphQL search node that QUERY selects: everything cheap, for every open PR on every tick. */
 interface Login { login?: string }
 interface PrNode {
+  id: string;
   number: number;
   url: string;
   isDraft: boolean;
+  updatedAt?: string;
   reviewDecision: string | null;
   mergeable?: string | null;
   headRefName?: string;
@@ -128,10 +133,15 @@ interface PrNode {
   repository: { nameWithOwner: string };
   reviewRequests: { nodes: { requestedReviewer?: Login | null }[] };
   latestReviews: { nodes: { author?: Login | null; commit?: { oid?: string } | null }[] };
+  commits?: { nodes: { commit?: { statusCheckRollup?: { state?: string | null } | null } | null }[] };
+}
+
+/** The costly part, read by id (see DETAIL_SELECTION) only for the PRs that need it. */
+interface DetailNode {
+  id: string;
   reviewThreads: { nodes: { id: string; isResolved: boolean; comments: { nodes: { author?: Login | null; url: string }[] }; last: { nodes: { id: string; author?: Login | null; url: string }[] } }[] };
   comments: { nodes: { id: string; author?: Login | null; url: string }[] };
   reviews: { nodes: { id: string; author?: Login | null; state: string; body?: string | null; url: string }[] };
-  commits?: { nodes: { commit?: { statusCheckRollup?: { state?: string | null } | null } | null }[] };
 }
 
 // Scheduling: default seconds between checks (the old watcher's steady pace; idle back-off stretches it), and whether a check calls the network.
@@ -152,15 +162,24 @@ const COPILOT = 'copilot-pull-request-reviewer';
 const isBot = (login: string): boolean => login === COPILOT || login.endsWith('[bot]');
 const TARGETS = new Set(['open-prs', 'open-prs:baseline']);
 
+// Two queries because GraphQL charges by the connections asked for, not the ones that come back: the thread and comment detail of 50
+// PRs cost 103 points a tick (2026-10-15), while this light read of the same PRs costs about 3.
 const QUERY = `query($after: String) { search(query: "${PR_SEARCH}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
-  number url isDraft reviewDecision mergeable headRefName baseRefName headRefOid repository { nameWithOwner }
+  id number url isDraft updatedAt reviewDecision mergeable headRefName baseRefName headRefOid repository { nameWithOwner }
   reviewRequests(first: 20) { nodes { requestedReviewer { ... on Bot { login } } } }
   latestReviews(first: 20) { nodes { author { login } commit { oid } } }
-  reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { author { login } url } } last: comments(last: 1) { nodes { id author { login } url } } } }
-  comments(last: 20) { nodes { id author { login } url } }
-  reviews(last: 20) { nodes { id author { login } state body url } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 } } } }`;
+
+/** What lib/gh-search.ts `readNodesById` selects on each PR for its detail. */
+const DETAIL_SELECTION = `
+  reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { author { login } url } } last: comments(last: 1) { nodes { id author { login } url } } } }
+  comments(last: 20) { nodes { id author { login } url } }
+  reviews(last: 20) { nodes { id author { login } state body url } }`;
+
+/** A PR's detail is re-read when its updatedAt moves, and otherwise after this long (a resolved thread may not move updatedAt): sooner while it has open threads. */
+export const DETAIL_REFRESH_MS = 60 * 60_000;
+export const DETAIL_REFRESH_OPEN_MS = 10 * 60_000;
 
 /** Throws unless the target is `open-prs` or `open-prs:baseline` (the loop calls this at `add`). */
 export function validate(target: string): void {
@@ -195,24 +214,65 @@ function failingChecksOf(pr: PrNode): string[] {
   return FAILING_ROLLUP.has(state) ? [state] : [];
 }
 
-/** Every open PR as a plain board keyed `owner/repo#n`, reduced to what a diff needs. */
+/** The part of a BoardPr that costs GraphQL points to read. */
+type Detail = Pick<BoardPr, 'threads' | 'replies' | 'comments' | 'reviews' | 'botThreads'>;
+
+/** The detail of one PR as the board keeps it, from what GitHub returned. */
+function detailOf(node: DetailNode, self: string): Detail {
+  const threads = node.reviewThreads.nodes.flatMap((t) => {
+    const first = t.comments.nodes[0];
+    const who = first?.author?.login;
+    return !t.isResolved && first && who && who !== self ? [{ id: t.id, who, url: first.url }] : [];
+  });
+  return {
+    threads,
+    botThreads: threads.filter((t) => isBot(t.who)).length,
+    // The newest comment on each open thread, so a reply in an existing thread wakes us too, not just new threads.
+    replies: node.reviewThreads.nodes.flatMap((t) => {
+      const last = t.last.nodes[0];
+      const who = last?.author?.login;
+      return !t.isResolved && last && who && who !== self ? [{ id: last.id, who, url: last.url }] : [];
+    }),
+    comments: node.comments.nodes.flatMap((c) => {
+      const who = c.author?.login;
+      return who && who !== self ? [{ id: c.id, who, url: c.url }] : [];
+    }),
+    reviews: node.reviews.nodes.flatMap((r) => {
+      const who = r.author?.login;
+      // Copilot's review body is a summary; its actionable findings arrive as threads.
+      return who && who !== self && who !== COPILOT && (r.body?.trim() || r.state !== 'COMMENTED') ? [{ id: r.id, who, state: r.state, url: r.url }] : [];
+    }),
+  };
+}
+
+/** Whether a PR's detail must be read again: it is new, GitHub says it changed, or what we hold is old (sooner while it has open threads). */
+function needsDetail(pr: PrNode, old: BoardPr | undefined, now: number): boolean {
+  if (!old || old.detailAt === undefined || !pr.updatedAt || old.updatedAt !== pr.updatedAt) return true;
+  const open = old.threads.length > 0 || old.replies.length > 0;
+  return now - old.detailAt >= (open ? DETAIL_REFRESH_OPEN_MS : DETAIL_REFRESH_MS);
+}
+
+/** Every open PR as a plain board keyed `owner/repo#n`, reduced to what a diff needs. Thread and comment detail is re-read only for PRs that need it. */
 function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
   const owners = new Set((ctx.config?.copilotOrgs ?? COPILOT_ORGS).map((o) => o.toLowerCase()));
   // Fail closed: Copilot is requested only where the repo owner is listed in copilot_orgs (GitHub logins are case-insensitive).
   const copilotAllowed = (nameWithOwner: string) => owners.has((nameWithOwner.split('/')[0] ?? '').toLowerCase());
   const selfRepos = ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS;
-  const board: Board = {};
+  const now = ctx.now ?? Date.now();
   // Paginated: the search returns 50 PRs a page, and PRs past the first page must not look closed.
-  for (const pr of searchAllPages<PrNode>(QUERY, ctx.run)) {
+  const nodes = searchAllPages<PrNode>(QUERY, ctx.run);
+  const keyOf = (pr: PrNode): string => `${pr.repository.nameWithOwner}#${pr.number}`;
+  const details = readNodesById<DetailNode>(nodes.filter((pr) => needsDetail(pr, before[keyOf(pr)], now)).map((pr) => pr.id), DETAIL_SELECTION, ctx.run);
+  const board: Board = {};
+  for (const pr of nodes) {
     const copilotSeen =
       pr.reviewRequests.nodes.some((r) => r.requestedReviewer?.login === COPILOT) ||
       pr.latestReviews.nodes.some((r) => r.author?.login === COPILOT);
-    const key = `${pr.repository.nameWithOwner}#${pr.number}`;
-    const threads = pr.reviewThreads.nodes.flatMap((t) => {
-      const first = t.comments.nodes[0];
-      const who = first?.author?.login;
-      return !t.isResolved && first && who && who !== self ? [{ id: t.id, who, url: first.url }] : [];
-    });
+    const key = keyOf(pr);
+    const fresh = details.get(pr.id);
+    const old = before[key];
+    // A PR whose detail could not be read this tick (closed in between) keeps what it had; a new one with none has none.
+    const detail: Detail = fresh ? detailOf(fresh, self) : { threads: old?.threads ?? [], replies: old?.replies ?? [], comments: old?.comments ?? [], reviews: old?.reviews ?? [], botThreads: old?.botThreads ?? 0 };
     board[key] = {
       url: pr.url,
       repo: pr.repository.nameWithOwner,
@@ -221,7 +281,7 @@ function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
       head: pr.headRefOid,
       headRef: pr.headRefName || '',
       base: pr.baseRefName || '',
-      mergeable: settledMergeable(pr.mergeable, before[key]),
+      mergeable: settledMergeable(pr.mergeable, old),
       selfReview: isSelfReview(pr.repository.nameWithOwner, selfRepos),
       needsCopilot: pr.isDraft && !copilotSeen && copilotAllowed(pr.repository.nameWithOwner),
       decision: pr.reviewDecision || 'NONE',
@@ -229,23 +289,9 @@ function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
       copilotOrg: copilotAllowed(pr.repository.nameWithOwner),
       copilotPending: pr.reviewRequests.nodes.some((r) => r.requestedReviewer?.login === COPILOT),
       copilotOnHead: pr.latestReviews.nodes.some((r) => r.author?.login === COPILOT && r.commit?.oid === pr.headRefOid),
-      botThreads: threads.filter((t) => isBot(t.who)).length,
-      threads,
-      // The newest comment on each open thread, so a reply in an existing thread wakes us too, not just new threads.
-      replies: pr.reviewThreads.nodes.flatMap((t) => {
-        const last = t.last.nodes[0];
-        const who = last?.author?.login;
-        return !t.isResolved && last && who && who !== self ? [{ id: last.id, who, url: last.url }] : [];
-      }),
-      comments: pr.comments.nodes.flatMap((c) => {
-        const who = c.author?.login;
-        return who && who !== self ? [{ id: c.id, who, url: c.url }] : [];
-      }),
-      reviews: pr.reviews.nodes.flatMap((r) => {
-        const who = r.author?.login;
-        // Copilot's review body is a summary; its actionable findings arrive as threads.
-        return who && who !== self && who !== COPILOT && (r.body?.trim() || r.state !== 'COMMENTED') ? [{ id: r.id, who, state: r.state, url: r.url }] : [];
-      }),
+      ...detail,
+      ...(pr.updatedAt ? { updatedAt: fresh ? pr.updatedAt : old?.updatedAt ?? pr.updatedAt } : {}),
+      ...(fresh ? { detailAt: now } : old?.detailAt !== undefined ? { detailAt: old.detailAt } : {}),
     };
   }
   return board;

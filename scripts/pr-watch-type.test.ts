@@ -433,6 +433,7 @@ test('steering: an empty or unchanged board emits no new steering event', () => 
 function boardFromFixture(node: unknown): prWatch.PrWatchState {
   const run: Run = (_cmd, args) => {
     if (args[0] === 'api' && args[1] === 'graphql') {
+      if (args.join(' ').includes('nodes(ids:')) return { status: 0, stdout: JSON.stringify({ data: { nodes: [node] } }), stderr: '' };
       assert.match(args.join(' '), /statusCheckRollup \{ state \}/);
       return { status: 0, stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [node] } } }), stderr: '' };
     }
@@ -456,4 +457,82 @@ test('search node: no failing check leaves failingChecks empty and emits no fail
   const next = boardFromFixture(node);
   assert.deepEqual(next.board['org/repo#9']?.failingChecks, []);
   assert.equal(steerOf({}, next.board).some((e) => e.summary.includes('failing check')), false);
+});
+
+/** The by-id detail reads the stub has served, one per batch, as `detail <ids>`. */
+const detailReads = (log: string): string[] => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter((l) => l.startsWith('detail ')) : []);
+
+test('detail: an unchanged PR is not re-read, a changed one is, and only that one (the 103-point read stays off an idle board)', () => {
+  const callLog = join(mkdtempSync(join(tmpdir(), 'pw-detail-')), 'calls.log');
+  const w = world({ pages: [[prNode(1), prNode(2)]], callLog });
+  const first = prWatch.check('open-prs', w.ctx({ now: NOON }));
+  assert.deepEqual(detailReads(callLog), ['detail PR_org_repo_1,PR_org_repo_2'], 'a first check reads everything once');
+  const idle = prWatch.check('open-prs', w.ctx({ prev: first, now: NOON + 5 * 60_000 }));
+  assert.equal(detailReads(callLog).length, 1, 'nothing changed, nothing read');
+  assert.deepEqual(idle.board, first.board);
+  w.serve({ pages: [[prNode(1), prNode(2, { reviewThreads: { nodes: [thread('t1')] } })]], callLog });
+  const busy = prWatch.check('open-prs', w.ctx({ prev: idle, now: NOON + 10 * 60_000 }));
+  assert.deepEqual(detailReads(callLog).slice(1), ['detail PR_org_repo_2'], 'only the PR whose updatedAt moved');
+  assert.deepEqual(summaries(prWatch.diff(idle, busy)), ['THREAD org/repo#2 by rev: https://x/t1']);
+});
+
+test('detail: what an unchanged PR held is carried to the next board, so its open threads keep steering', () => {
+  const callLog = join(mkdtempSync(join(tmpdir(), 'pw-detail-')), 'calls.log');
+  const w = world({ pages: [[prNode(3, { reviewThreads: { nodes: [thread('t1')] } })]], callLog });
+  const first = prWatch.check('open-prs', w.ctx({ now: NOON }));
+  const next = prWatch.check('open-prs', w.ctx({ prev: first, now: NOON + 60_000 }));
+  assert.equal(detailReads(callLog).length, 1);
+  assert.deepEqual(next.board['org/repo#3']?.threads, [{ id: 't1', who: 'rev', url: 'https://x/t1' }]);
+  assert.equal(next.board['org/repo#3']?.botThreads, 0);
+});
+
+test('detail: a PR is re-read after an hour, and after ten minutes while it has open threads, even if updatedAt did not move', () => {
+  const quiet = join(mkdtempSync(join(tmpdir(), 'pw-detail-')), 'calls.log');
+  const q = world({ pages: [[prNode(1)]], callLog: quiet });
+  const q1 = prWatch.check('open-prs', q.ctx({ now: NOON }));
+  prWatch.check('open-prs', q.ctx({ prev: q1, now: NOON + prWatch.DETAIL_REFRESH_MS - 1 }));
+  assert.equal(detailReads(quiet).length, 1);
+  prWatch.check('open-prs', q.ctx({ prev: q1, now: NOON + prWatch.DETAIL_REFRESH_MS }));
+  assert.equal(detailReads(quiet).length, 2);
+  const open = join(mkdtempSync(join(tmpdir(), 'pw-detail-')), 'calls.log');
+  const o = world({ pages: [[prNode(1, { reviewThreads: { nodes: [thread('t1')] } })]], callLog: open });
+  const o1 = prWatch.check('open-prs', o.ctx({ now: NOON }));
+  prWatch.check('open-prs', o.ctx({ prev: o1, now: NOON + prWatch.DETAIL_REFRESH_OPEN_MS - 1 }));
+  assert.equal(detailReads(open).length, 1);
+  prWatch.check('open-prs', o.ctx({ prev: o1, now: NOON + prWatch.DETAIL_REFRESH_OPEN_MS }));
+  assert.equal(detailReads(open).length, 2);
+});
+
+test('detail: a snapshot from before detail was cached (no updatedAt or detailAt) is read once, not trusted', () => {
+  const callLog = join(mkdtempSync(join(tmpdir(), 'pw-detail-')), 'calls.log');
+  const w = world({ pages: [[prNode(1)]], callLog });
+  const first = prWatch.check('open-prs', w.ctx({ now: NOON }));
+  const { updatedAt: _u, detailAt: _d, ...old } = first.board['org/repo#1'] as prWatch.BoardPr;
+  const legacy = { ...first, board: { 'org/repo#1': old } };
+  const next = prWatch.check('open-prs', w.ctx({ prev: legacy, now: NOON + 1000 }));
+  assert.equal(detailReads(callLog).length, 2);
+  assert.equal(next.board['org/repo#1']?.detailAt, NOON + 1000);
+});
+
+test('detail: more than 25 changed PRs are read in batches of 25', () => {
+  const callLog = join(mkdtempSync(join(tmpdir(), 'pw-detail-')), 'calls.log');
+  const nodes = Array.from({ length: 60 }, (_, i) => prNode(i + 1));
+  const w = world({ pages: paged(nodes), callLog });
+  const board = prWatch.check('open-prs', w.ctx({ now: NOON })).board;
+  assert.equal(Object.keys(board).length, 60);
+  assert.deepEqual(detailReads(callLog).map((l) => l.split(',').length), [25, 25, 10]);
+});
+
+test('detail: an id that is not a plain node id is refused before it reaches the query text', () => {
+  const run: Run = (_cmd, args) => args.join(' ').includes('nodes(ids:')
+    ? { status: 0, stdout: '{}', stderr: '' }
+    : { status: 0, stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [{ ...prNode(1), id: 'x"]) { id } } #' }] } } }), stderr: '' };
+  assert.throws(() => prWatch.check('open-prs', { run, config: { ghLogin: 'me', copilotOrgs: [] } }), /not a plain node id/);
+});
+
+test('detail: a failed detail read fails the check, so the loop keeps the last good snapshot', () => {
+  const run: Run = (_cmd, args) => args.join(' ').includes('nodes(ids:')
+    ? { status: 1, stdout: '', stderr: 'API rate limit already exceeded' }
+    : { status: 0, stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [prNode(1)] } } }), stderr: '' };
+  assert.throws(() => prWatch.check('open-prs', { run, config: { ghLogin: 'me', copilotOrgs: [] } }), /\(nodes by id\) failed: API rate limit/);
 });
