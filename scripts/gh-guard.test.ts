@@ -1,7 +1,7 @@
 import './lib/hermetic-config.ts';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -89,18 +89,46 @@ test('a success after a refusal starts the backoff over', async () => {
   assert.equal(readState(ok.dir).failures, undefined);
 });
 
-test('killing the guard kills the gh it started: no orphan outlives a caller timeout', async () => {
-  const bin = mkdtempSync(join(tmpdir(), 'gh-orphan-'));
-  symlinkSync('/bin/sleep', join(bin, 'gh'));
-  const marker = '31.337';
-  const guard = spawn(process.execPath, [new URL('./gh-guard.ts', import.meta.url).pathname, marker], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, MAESTRO_EVENT_DIR: bin, MAESTRO_LOCAL_CONFIG: '' }, stdio: 'ignore' });
-  const alive = (): boolean => spawnSync('pgrep', ['-f', `gh ${marker}`]).status === 0;
+/** A directory whose `gh` is node itself, held asleep by a --require stub, so a real guard process has a child it can kill. The stub only acts in a process named gh. */
+function sleepingGh(): { env: NodeJS.ProcessEnv; dir: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'gh-sleeper-'));
+  symlinkSync(process.execPath, join(dir, 'gh'));
+  const stub = join(dir, 'hold.cjs');
+  writeFileSync(stub, "if (process.argv0 === 'gh') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);\n");
+  return { dir, env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, NODE_OPTIONS: `--require ${stub}`, MAESTRO_EVENT_DIR: dir, MAESTRO_LOCAL_CONFIG: '' } };
+}
+const childOf = (pid: number): number | null => { const r = spawnSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' }); return r.status === 0 ? Number(r.stdout.split('\n')[0]) : null; };
+const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+async function waitForChild(pid: number): Promise<number> {
   const deadline = Date.now() + 8000;
-  while (!alive() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(alive(), 'gh started');
+  let child = childOf(pid);
+  while (child === null && Date.now() < deadline) { await new Promise((r) => setTimeout(r, 50)); child = childOf(pid); }
+  assert.ok(child !== null, 'the guard started a gh');
+  return child as number;
+}
+const GUARD = new URL('./gh-guard.ts', import.meta.url).pathname;
+
+test('killing the guard kills the gh it started: no orphan outlives a caller timeout', async () => {
+  const { env } = sleepingGh();
+  const guard = spawn(process.execPath, [GUARD, '31.337'], { env, stdio: 'ignore' });   // not a GraphQL call, so no probe: this is the real call
+  const child = await waitForChild(guard.pid as number);
   const exited = new Promise((r) => guard.on('exit', r));
   guard.kill('SIGTERM');
   await exited;
   await new Promise((r) => setTimeout(r, 300));
-  assert.equal(alive(), false, 'the child was stopped with the guard');
+  assert.equal(alive(child), false, 'the child was stopped with the guard');
+});
+
+test('a signal during the budget probe stops the guard: the real call is never started', async () => {
+  const { env } = sleepingGh();
+  const guard = spawn(process.execPath, [GUARD, 'pr', 'view', '1'], { env, stdio: 'ignore' });   // a GraphQL call: the first child is the probe
+  const probe = await waitForChild(guard.pid as number);
+  const exited = new Promise<number | null>((r) => guard.on('exit', r));
+  guard.kill('SIGTERM');
+  const code = await Promise.race([exited, new Promise<string>((r) => setTimeout(() => r('still running'), 4000))]);
+  if (code === 'still running') guard.kill('SIGKILL');
+  assert.equal(code, 143, 'the guard exited with the signal, instead of going on to the real call');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(alive(probe), false, 'the probe was stopped');
+  assert.equal(childOf(guard.pid as number), null, 'no second gh was started');
 });

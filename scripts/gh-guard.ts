@@ -13,6 +13,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
+import os from 'node:os';
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EVENT_DIR, WATCH_TZ } from './local-config.ts';
@@ -74,19 +75,20 @@ export async function runGuarded(args: string[], deps: GuardDeps): Promise<numbe
 }
 
 /**
- * The real gh, as a child that gets the caller's termination signals: a caller's timeout kills this guard, and without forwarding the
- * gh it started would live on, orphaned.
+ * The real gh, as a child that gets the caller's SIGTERM, SIGINT and SIGHUP: a caller's timeout kills this guard, and without forwarding the
+ * gh it started would live on, orphaned. Once signalled the guard exits when that child does, so it never goes on to send a later call (the
+ * real one after a probe) that the caller has given up on. A SIGKILL cannot be forwarded; that child is left running.
  */
 const realGh: GuardDeps['gh'] = (args, passStdout) => new Promise((resolve) => {
   const child = spawn('gh', args, { stdio: ['inherit', passStdout ? 'inherit' : 'pipe', 'pipe'] });
-  const forward = (sig: NodeJS.Signals) => () => { child.kill(sig); };
-  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(sig, forward(sig));
+  let signalled: NodeJS.Signals | null = null;
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(sig, () => { signalled = sig; child.kill(sig); });
   let stdout = '';
   let stderr = '';
   child.stdout?.on('data', (d) => { stdout += d; });
   child.stderr?.on('data', (d) => { stderr += d; });
   child.on('error', (e) => resolve({ status: 127, stdout: '', stderr: `${e.message}\n` }));
-  child.on('close', (code) => resolve({ status: code, stdout, stderr }));
+  child.on('close', (code) => { if (signalled) process.exit(128 + (os.constants.signals[signalled] ?? 15)); resolve({ status: code, stdout, stderr }); });
 });
 
 const isMain = (): boolean => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };
