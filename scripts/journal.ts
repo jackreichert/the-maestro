@@ -171,7 +171,8 @@ import { formatFindings, lintText } from './lib/paste-lint.ts';
 import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { helpFor, isCommand, wantsHelp, listText } from './lib/journal/help.ts';
-import { openStore } from './lib/journal/store.ts';
+import { LedgerScanError, openStore, rowScanProblems } from './lib/journal/store.ts';
+import { describeFindings, scanFields } from './lib/secret-scan.ts';
 import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
@@ -1859,9 +1860,15 @@ function triageBeforeRoll(d: string): void {
 
 function cmdVerify() {
     const { rows, problems } = verifyLedger();
-    if (asJson) printJson({ ledger: ledgerPath, rows, problems });
+    // Rows written before the store scanned every write: a warning, never a failure (the rows are history), naming the row id, field and rule only.
+    const shapes = readLedger().flatMap((r) => { const p = rowScanProblems(r); return p.length ? [{ id: r.id ?? '', problems: p }] : []; });
+    if (asJson) printJson({ ledger: ledgerPath, rows, problems, scanWarnings: shapes });
     else {
         console.log(`verify: ${rows} row(s), ${problems.length} problem(s)  (${ledgerPath})`);
+        if (shapes.length) {
+            console.log(`  warning: ${shapes.length} row(s) carry a secret or PHI shape (history, not a failure); the value is never printed:`);
+            shapes.slice(0, 20).forEach((s) => console.log(`    [${s.id}] ${s.problems.join('; ')}`));
+        }
         problems.slice(0, 50).forEach((p) => console.log(`  line ${p.line}${p.id ? ` [${p.id}]` : ''}: ${p.problem}`));
         if (problems.length > 50) console.log(`  ... and ${problems.length - 50} more`);
     }
@@ -2585,6 +2592,8 @@ function cmdHandoff() {
     }
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
     const sweep = runWorktreeSweep(true);
+    const handoffProblems = describeFindings(scanFields({ '--learn': oneLineArg('learn'), '--next': oneLineArg('next') }));
+    if (handoffProblems.length) die(`refused: the handoff is durable and shared, and a field looks like it holds a secret or PHI.\n${handoffProblems.map((p) => `  ${p}`).join('\n')}`);
     const body = handoffText(stream, since, sweep?.kept, { learn: oneLineArg('learn'), next: oneLineArg('next'), sweep, verbose: has('verbose') });
     const contextFile = has('update-context') ? arg('context-file') || join(ticketsBase(), 'Projects', project, 'CONTEXT.md') : '';
     if (dryRun) { console.log(body); if (contextFile) console.log(`would point ${contextFile} at ${basename(path)}`); return; }
@@ -2989,6 +2998,7 @@ function cmdFind() {
 
 // ── dispatch ────────────────────────────────────────────────────────────────
 
+try {
 switch (cmd) {
     case 'log': cmdLog('note'); break;
     case 'start': cmdStart(); break;
@@ -3062,4 +3072,9 @@ switch (cmd) {
         // No command given: the list (an unknown command was already refused above).
         console.log(listText());
         process.exit(0);
+}
+} catch (e) {
+    // A row the store refused for a secret or PHI shape: say so plainly, with no stack and no value.
+    if (e instanceof LedgerScanError) die(e.message);
+    throw e;
 }
