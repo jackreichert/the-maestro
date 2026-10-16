@@ -127,3 +127,18 @@ test('--agent-type supplies --model from the agent definition', () => {
     assert.equal(r.code, 0, r.err);
     assert.equal(rows().find((x) => x.text === 'x')?.model, 'claude-opus-5-5');
 });
+
+test('a fill-in marker is refused in every mark flag, and an empty HOME never makes the agent lookup read the working directory', () => {
+    for (const flag of ['--tokens', '--harness', '--agent']) assert.equal(run(['start', 'x', flag, '<NAME>', ...MARK]).code, 1, flag);
+    mkdirSync(join(home, '.claude', 'agents'), { recursive: true });
+    mkdirSync(join(home, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(home, '.claude', 'agents', 'evil.md'), '---\nmodel: claude-opus-5-5\n---\n');
+    const r = spawnSync(process.execPath, [SCRIPT, 'start', 'y', '--agent-type', 'evil', '--used', 'tool:Agent', '--vault', vault, '--project', 'test-proj'], { encoding: 'utf8', cwd: home, env: { ...process.env, HOME: '', VAULT_ROOT: '', MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_WINDOW: 'w1' } });
+    assert.equal(r.status, 1, 'the definition under cwd/.claude/agents is not read');
+});
+
+test('a plugin-qualified --agent-type is told to pass the bare name', () => {
+    const r = run(['start', 'x', '--agent-type', 'anduril:worker', '--used', 'tool:Agent']);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /pass the bare agent name/);
+});

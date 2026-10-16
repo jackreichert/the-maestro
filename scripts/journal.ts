@@ -262,7 +262,7 @@ import { daysBefore, maintainLine } from './lib/journal/maintain.ts';
 import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
 import { toolCommand } from './lib/tool-bin.ts';
-import { correctedCommand, inferStreamForRepo, modelOfAgentType } from './lib/journal/start-hints.ts';
+import { correctedCommand, inferStreamForRepo, isPlaceholder, modelOfAgentType } from './lib/journal/start-hints.ts';
 import { dryRunJson, printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -442,7 +442,7 @@ function normaliseModel(raw: string | null): string | null {
 }
 
 /** Where an agent type's definition (`<type>.md`, with a `model:` line) may live: the user's .claude/agents only, so a checked-out repo cannot set the model a row records. */
-const agentDirs = (): string[] => [join(process.env.HOME ?? '', '.claude', 'agents')];
+const agentDirs = (): string[] => (homedir() ? [join(homedir(), '.claude', 'agents')] : []);
 
 /** The usage marks every written row carries, from --model, --used and the optional --tokens, --harness and --agent. */
 interface Usage { model?: string; used?: string[]; tokens?: string; harness?: string; agent?: string }
@@ -451,12 +451,12 @@ function usageFromArgs(): Usage {
     const model = normaliseModel(arg('model') || modelOfAgentType(arg('agent-type') ?? '', agentDirs()) || null);
     const used = parseList('used');
     // A fill-in marker copied from a refusal is not a mark: recording it would write a guess as if it were a measurement.
-    if ([model ?? '', ...(used ?? [])].some((v) => v.includes('<'))) { console.error('--model and --used must be real values, not the <...> fill-in markers a refusal prints.'); process.exit(1); }
+    if ([model, ...(used ?? []), arg('tokens'), arg('harness'), arg('agent')].some((v) => isPlaceholder(v ?? ''))) { console.error('--model, --used, --tokens, --harness and --agent must be real values, not the <...> fill-in markers a refusal prints.'); process.exit(1); }
     if (!has('allow-unmarked') && (!model || !used)) {
         console.error('Every ledger entry needs --model "<name>" and --used "skill:x,tool:y".');
         console.error('Do not guess. Unknown is --model unrecorded --used unrecorded. Tests may pass --allow-unmarked.');
         const missing: Record<string, string> = { ...(model ? {} : { model: '<MODEL>' }), ...(used ? {} : { used: '<SKILLS_AND_TOOLS>' }) };
-        if (!model && arg('agent-type')) console.error(`--agent-type ${arg('agent-type')} named no model: ${arg('agent-type')}.md is not in ~/.claude/agents, or it has no model: line.`);
+        if (!model && arg('agent-type')) console.error(`--agent-type ${arg('agent-type')} named no model: ${/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(arg('agent-type') ?? '') ? `${arg('agent-type')}.md is not in ~/.claude/agents, or it has no model: line` : 'pass the bare agent name (plugin-qualified names and paths are not read)'}.`);
         console.error(`Run: ${correctedCommand(process.argv.slice(2), missing)}`);
         console.error(`Replace ${Object.keys(missing).map((k) => `<${k === 'model' ? 'MODEL' : 'SKILLS_AND_TOOLS'}>`).join(' and ')} with real values first (for example --used "skill:the-maestro,tool:journal.ts").`);
         process.exit(1);

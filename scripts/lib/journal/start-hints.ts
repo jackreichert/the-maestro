@@ -15,15 +15,14 @@ const skipsValue = (argv: readonly string[], i: number): boolean => !(argv[i] as
 
 /**
  * The command line to run instead: `argv` (the words after the script) with each `set` flag given the new value, appended when
- * absent. A flag with no value in `set` is left as it was; `drop` removes flags (and their values) outright.
+ * absent. Flags not in `set` are kept as they were.
  */
-export function correctedCommand(argv: readonly string[], set: Record<string, string>, drop: readonly string[] = []): string {
+export function correctedCommand(argv: readonly string[], set: Record<string, string>): string {
   const out: string[] = [];
   const seen = new Set<string>();
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     const name = a.startsWith('--') ? a.slice(2).split('=')[0] as string : '';
-    if (name && drop.includes(name)) { if (skipsValue(argv, i)) i++; continue; }
     if (name && name in set) {
       seen.add(name);
       out.push(`--${name}`, shq(set[name] as string));
