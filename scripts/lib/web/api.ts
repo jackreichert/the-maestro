@@ -19,6 +19,7 @@ import type { Groups } from '../journal/board.ts';
 import { withholdJson } from '../json-out.ts';
 import { statusJson } from '../journal/status-json.ts';
 import { foldLeases, summarizeLeases } from '../journal/leases.ts';
+import { ledgerDay } from '../day-basis.ts';
 import { triageItems } from '../journal/triage.ts';
 import { ticketNoteRef } from '../status-page/render.ts';
 import type { PageConfig, Ref } from '../status-page/render.ts';
@@ -55,16 +56,16 @@ export interface Board { inputs: GatheredInputs; g: Groups }
 
 /** One consistent read of everything a response needs. Done-today is the page zone's day, matched on close timestamps, not the UTC date stored on each row. */
 export function readBoard(cfg: WebConfig, now: Date): Board {
-  const utcDay = now.toISOString().slice(0, 10);
+  const utcDay = ledgerDay(now);
   const day = localDate(now, cfg.page.tz);
   const store = openStore({ vault: cfg.vault, project: cfg.project, dryRun: false, warn: cfg.warn ?? (() => {}) });
   const entries = store.readLedger();   // read once: the board and the triage metadata see the same rows
-  const ctx = boardContextFor({ ...store, readLedger: () => entries }, { has: () => false, today: () => utcDay, dryRun: false });
+  const ctx = boardContextFor({ ...store, readLedger: () => entries }, { has: () => false, today: () => utcDay, deferDay: () => day, dryRun: false });
   const g = groups(ctx);
   const view = footerDone(g, day, { tz: cfg.page.tz });
   const journal = (sub: 'status' | 'triage'): unknown => (sub === 'status'
-    ? statusJson(g, day, NO_SESSION, view.all, view.sinceRoll, liveLeases(g, entries, now), cfg.staleWipDays)
-    : { items: triageItems({ readLedger: ctx.readLedger, fold: ctx.fold, today: ctx.today, resolveRefFile: () => null }, utcDay, utcDay) });
+    ? statusJson(g, day, NO_SESSION, view.all, view.sinceRoll, liveLeases(g, entries, now), cfg.staleWipDays, utcDay)
+    : { items: triageItems({ readLedger: ctx.readLedger, fold: ctx.fold, today: ctx.today, deferDay: ctx.deferDay, resolveRefFile: () => null }, utcDay, utcDay) });
   return { inputs: gatherInputsCached(cfg.statusDir, cfg.page, { journal, now: () => now }), g };
 }
 

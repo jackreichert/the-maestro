@@ -7,6 +7,7 @@
 import type { LedgerItem } from '../ledger-core.ts';
 import type { Pr } from '../status-page/render.ts';
 import { localDate } from '../status-page/priorities.ts';
+import { askAgeDays } from '../day-basis.ts';
 import { family } from '../model-family.ts';
 import { inQueueOwners, reviewQueue } from '../review-queue.ts';
 import { isSelfReview, splitSelfReview } from '../self-review.ts';
@@ -121,17 +122,6 @@ export function doneItems(items: LedgerItem[], days: number, tz: string, now: Da
 const AGE_BUCKETS: { label: string; below: number }[] = [
   { label: 'under 1 d', below: 1 }, { label: '1-3 d', below: 3 }, { label: '3-7 d', below: 7 }, { label: 'over 7 d', below: Infinity },
 ];
-
-/**
- * Whole page days an ask has waited: today's page date minus the ask's page date, never negative. The ask's day is its time `ts`
- * in `tz` (the ledger `date` is a UTC day, so an evening ask would otherwise be a day in the future), else its `date`. The ask
- * card and the age chart both use this, so they cannot disagree.
- */
-export function askAgeDays(a: { ts?: string; date?: string }, now: Date, tz: string): number {
-  const day = a.ts !== undefined && Number.isFinite(Date.parse(a.ts)) ? localDate(new Date(a.ts), tz) : a.date;
-  const since = Date.parse(day ?? '');
-  return Number.isFinite(since) ? Math.max(0, Math.round((Date.parse(localDate(now, tz)) - since) / DAY_MS)) : 0;
-}
 
 /** Open asks by whole days waited (`askAgeDays`): under 1 d, 1-3 d, 3-7 d, over 7 d. An ask with no readable time counts as brand new. */
 export function awaitingAge(awaiting: LedgerItem[], now: Date, tz: string): AgeBucket[] {

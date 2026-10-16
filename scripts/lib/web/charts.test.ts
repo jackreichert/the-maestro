@@ -1,7 +1,8 @@
 // Run: node --test scripts/lib/web/charts.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DONE_ITEMS_MAX, askAgeDays, awaitingAge, buildCharts, doneItems, lastDays, modelMix, prAgeBuckets, prMix, throughputByDay } from './charts.ts';
+import { askAgeDays } from '../day-basis.ts';
+import { DONE_ITEMS_MAX, awaitingAge, buildCharts, doneItems, lastDays, modelMix, prAgeBuckets, prMix, throughputByDay } from './charts.ts';
 import type { LedgerItem } from '../ledger-core.ts';
 import type { Pr } from '../status-page/render.ts';
 

@@ -1,4 +1,5 @@
 // Cases for journal; run through journal.shard-N.test.ts (see lib/shard.ts)
+import { userDay } from './lib/day-basis.ts';
 import { beforeEach } from 'node:test';
 import { ASK_TEMPLATE } from './lib/ask-template-fixture.ts';
 import { test } from './lib/shard.ts';
@@ -2129,6 +2130,8 @@ test('handoff section 4 keeps every open question: one boxed as a rule by its ap
 // ── prime, gates, defer ────────────────────────────────────────
 
 const inDays = (n: number): string => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+/** A `defer --until` date n days from the user's today: deferrals lapse on the calendar day in watch_tz, not the UTC day (lib/day-basis.ts). */
+const deferDays = (n: number): string => userDay(process.env.MAESTRO_WATCH_TZ ?? '', new Date(Date.now() + n * 864e5));
 
 /** A fake `gh` behind MAESTRO_GH_BIN answering `pr view <n> --repo <r> --json ...` from the env var STUB_STATE (a bare state, or 'fail'). */
 function ghStubEnv(): Record<string, string> {
@@ -2196,15 +2199,15 @@ test('resume checks ticket gates against the tickets vault', () => {
 test('defer hides an open item from status, the footer and prime until its date, and refuses bad input', () => {
     const id = idOf(run('start', 'after the push', ...MARK).out);
     run('start', 'still on the board', ...MARK);
-    assert.equal(run('defer', id, '--until', inDays(-1), ...MARK).code, 1);
+    assert.equal(run('defer', id, '--until', deferDays(-1), ...MARK).code, 1);
     assert.equal(run('defer', id, '--until', 'soon', ...MARK).code, 1);
     assert.equal(run('defer', id, ...MARK).code, 1);
-    assert.equal(run('defer', 'zzzz', '--until', inDays(3), ...MARK).code, 1);
+    assert.equal(run('defer', 'zzzz', '--until', deferDays(3), ...MARK).code, 1);
     const done = idOf(run('start', 'finished', ...MARK).out);
     run('done', done, ...MARK);
-    assert.equal(run('defer', done, '--until', inDays(3), ...MARK).code, 1);
+    assert.equal(run('defer', done, '--until', deferDays(3), ...MARK).code, 1);
     const rows = ledger().length;
-    const r = run('defer', id, '--until', inDays(3), ...MARK);
+    const r = run('defer', id, '--until', deferDays(3), ...MARK);
     assert.equal(r.code, 0, r.err);
     assert.equal(ledger().length, rows + 1);
     assert.equal(ledger().at(-1)?.kind, 'defer');
@@ -2212,18 +2215,18 @@ test('defer hides an open item from status, the footer and prime until its date,
     assert.match(run('status', '--footer').out.split('\n')[0], /1 in flight/);
     assert.doesNotMatch(run('prime').out, /after the push/);
     assert.match(run('prime').out, /1 deferred item\(s\) hidden/);
-    assert.match(run('triage').out, new RegExp(`${id} .*deferred until ${inDays(3)}`));
+    assert.match(run('triage').out, new RegExp(`${id} .*deferred until ${deferDays(3)}`));
     assert.equal(run('verify').code, 0);
 });
 
 test('a deferral that has reached its date no longer hides the item, and a later defer moves the date', () => {
     const id = idOf(run('start', 'comes back', ...MARK).out);
     const file = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
-    writeFileSync(file, `${readFileSync(file, 'utf8')}${JSON.stringify({ id: 'dd01', ts: new Date().toISOString(), date: '2020-01-01', kind: 'defer', defers: id, until: inDays(0), text: 'old', model: 'm', used: ['x'] })}\n`);
+    writeFileSync(file, `${readFileSync(file, 'utf8')}${JSON.stringify({ id: 'dd01', ts: new Date().toISOString(), date: '2020-01-01', kind: 'defer', defers: id, until: deferDays(0), text: 'old', model: 'm', used: ['x'] })}\n`);
     assert.deepEqual(statusJson().inflight.map((i) => i.id), [id], 'until today is not in the future: shown');
-    run('defer', id, '--until', inDays(2), ...MARK);
+    run('defer', id, '--until', deferDays(2), ...MARK);
     assert.deepEqual(statusJson().inflight, []);
-    run('defer', id, '--until', inDays(1), ...MARK);
+    run('defer', id, '--until', deferDays(1), ...MARK);
     assert.deepEqual(statusJson().inflight, [], 'latest defer wins, still in the future');
     run('done', id, ...MARK);
     assert.equal(run('verify').code, 0);
@@ -2406,12 +2409,12 @@ test('deferring the last open item of a stream empties its page, and an expired 
     const id = idOf(run('start', 'only item', '--stream', 'Solo', '--new-stream', ...MARK).out);
     const journal = join(vault, 'Projects', 'test-proj', 'Journal');
     assert.match(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
-    run('defer', id, '--until', inDays(2), ...MARK);
+    run('defer', id, '--until', deferDays(2), ...MARK);
     assert.doesNotMatch(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
     assert.doesNotMatch(readFileSync(join(journal, 'CURRENT.md'), 'utf8'), /only item/);
     // The date passes: the deferral now ends today, and CURRENT.md was last written on an earlier day.
     const file = join(journal, 'ledger.jsonl');
-    writeFileSync(file, readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { const r = parse(l); return r.kind === 'defer' ? JSON.stringify({ ...r, until: inDays(0) }) : l; }).join('\n') + '\n');
+    writeFileSync(file, readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { const r = parse(l); return r.kind === 'defer' ? JSON.stringify({ ...r, until: deferDays(0) }) : l; }).join('\n') + '\n');
     writeFileSync(join(journal, 'CURRENT.md'), readFileSync(join(journal, 'CURRENT.md'), 'utf8').replace(/updated: .*/, 'updated: 2020-01-01'));
     run('prime');
     assert.match(readFileSync(join(journal, 'CURRENT.md'), 'utf8'), /only item/);
