@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { CONFIGURED_PROJECT, LEDGER_ROOT, VAULT_ROOT } from '../local-config.ts';
+import { join } from 'node:path';
+import { saveBrief } from '../lib/journal/brief-link.ts';
 import { openStore } from '../lib/journal/store.ts';
 import type { LedgerRow } from '../lib/ledger-core.ts';
 import { resolveWindowId, windowEnv } from '../lib/window-id.ts';
@@ -19,13 +21,16 @@ export interface HookLedger {
   now: () => number;
   /** A fresh row id not in `existing`. */
   newId: (existing: { id?: string }[]) => string;
+  /** Saves a dispatch prompt as a brief file and returns its path; null when it cannot be saved (a secret in it, no folder). Absent: no brief is kept. */
+  saveBrief?: (text: string, title: string, id: string, day: string) => string | null;
 }
 
 const flag = (argv: string[], name: string): string => { const k = argv.indexOf(`--${name}`); return k >= 0 ? argv[k + 1] ?? '' : ''; };
 
 export function realLedger(argv: string[]): HookLedger {
   const store = openStore({ vault: flag(argv, 'vault') || LEDGER_ROOT || VAULT_ROOT, project: flag(argv, 'project') || CONFIGURED_PROJECT, dryRun: false, warn: () => {} });
-  return { readLedger: () => store.readLedger(), append: (rows) => { store.appendMany(rows); }, now: () => Date.now(), newId: (existing) => store.newId(existing) };
+  return { readLedger: () => store.readLedger(), append: (rows) => { store.appendMany(rows); }, now: () => Date.now(), newId: (existing) => store.newId(existing),
+    saveBrief: (text, title, id, day) => { try { return saveBrief(join(store.dir, 'Briefs'), text, { day, title, id }); } catch { return null; } } };
 }
 
 /** An id source that never repeats one already in `rows` or handed out before. */

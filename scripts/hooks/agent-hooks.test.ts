@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,8 +21,9 @@ const SESSION = 'abcdef123456-0000';
 const WIN = 'abcdef123456';
 
 /** An in-memory ledger whose clock the test moves. */
-function memory(seed: LedgerRow[] = []): HookLedger & { rows: LedgerRow[]; at: number } {
-  const m = { rows: [...seed], at: T0, readLedger: () => m.rows, append: (r: LedgerRow[]) => { m.rows.push(...r); }, now: () => m.at, newId: (ex: { id?: string }[]) => `h${ex.length}` };
+function memory(seed: LedgerRow[] = []): HookLedger & { rows: LedgerRow[]; at: number; briefs: { text: string; title: string }[] } {
+  const m = { rows: [...seed], at: T0, briefs: [] as { text: string; title: string }[], readLedger: () => m.rows, append: (r: LedgerRow[]) => { m.rows.push(...r); }, now: () => m.at, newId: (ex: { id?: string }[]) => `h${ex.length}`,
+    saveBrief: (text: string, title: string, id: string) => { m.briefs.push({ text, title }); return `/briefs/${id}.md`; } };
   return m;
 }
 const items = (rows: LedgerRow[]) => fold(rows, null).items;
@@ -138,14 +139,14 @@ test('the real hooks write the ledger, print nothing, and fail open on bad input
     const d = runHook('agent-dispatch.ts', JSON.stringify(call('Build the widget')), vault);
     assert.equal(d.status, 0, d.stderr);
     assert.equal(d.stdout, '');
-    assert.equal(readFileSync(ledger, 'utf8').split('\n').filter(Boolean).length, 3, 'wip, marked lease and next');
+    assert.equal(readFileSync(ledger, 'utf8').split('\n').filter(Boolean).length, 4, 'wip, brief, marked lease and next');
     const r = runHook('agent-return.ts', JSON.stringify({ session_id: SESSION, agent_type: 'general-purpose' }), vault);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, '');
-    assert.equal(readFileSync(ledger, 'utf8').split('\n').filter(Boolean).length, 5);
+    assert.equal(readFileSync(ledger, 'utf8').split('\n').filter(Boolean).length, 6);
     const e = runHook('session-end-requeue.ts', JSON.stringify({ session_id: SESSION }), vault);
     assert.equal(e.status, 0, e.stderr);
-    assert.equal(readFileSync(ledger, 'utf8').split('\n').filter(Boolean).length, 7, 'queue and unlease');
+    assert.equal(readFileSync(ledger, 'utf8').split('\n').filter(Boolean).length, 8, 'queue and unlease');
     for (const f of ['agent-dispatch.ts', 'agent-return.ts', 'session-end-requeue.ts']) {
       const bad = runHook(f, 'not json {{{', vault);
       assert.equal(bad.status, 0);
@@ -168,4 +169,55 @@ test('a dispatch against a large ledger stays under the 300 ms budget (hook work
   agentReturned({ session_id: SESSION, agent_type: 'general-purpose' }, led);
   const ms = Number(process.hrtime.bigint() - t) / 1e6;
   assert.ok(ms < 300, `dispatch plus return took ${ms.toFixed(0)} ms`);
+});
+
+test('a dispatch that opens a row keeps the prompt as its brief; one that reuses a row does not write another', () => {
+  const led = memory();
+  dispatch(call('Build the widget', 'Full prompt: build it, then verify.'), led);
+  const wip = led.rows.find((r) => r.kind === 'wip');
+  const brief = led.rows.find((r) => r.kind === 'brief');
+  assert.equal(brief?.briefs, wip?.id);
+  assert.equal(brief?.brief, `/briefs/${wip?.id}.md`);
+  assert.deepEqual(led.briefs, [{ text: 'Full prompt: build it, then verify.', title: 'Build the widget' }]);
+  assert.equal(items(led.rows).find((i) => i.id === wip?.id)?.brief, brief?.brief, 'the fold carries the brief on the item');
+  dispatch(call('Build the widget', 'Second prompt'), led);
+  assert.equal(led.rows.filter((r) => r.kind === 'brief').length, 1, 'the reused row keeps its first brief');
+});
+
+test('a prompt that cannot be saved still opens the row, without a brief row', () => {
+  const led = memory();
+  led.saveBrief = () => null;
+  dispatch(call('Build the widget', 'p'), led);
+  assert.equal(led.rows.filter((r) => r.kind === 'wip').length, 1);
+  assert.equal(led.rows.filter((r) => r.kind === 'brief').length, 0);
+});
+
+test('a call a subagent makes itself (agent_id set) is not tracked: only the orchestrator session counts', () => {
+  const led = memory();
+  assert.deepEqual(dispatch({ ...call('Nested job'), agent_id: 'a1b2c3' }, led), []);
+  assert.equal(led.rows.length, 0);
+});
+
+test('the real hook saves the prompt under the ledger Briefs folder', () => {
+  const vault = mkdtempSync(join(tmpdir(), 'agent-hooks-brief-'));
+  try {
+    const d = runHook('agent-dispatch.ts', JSON.stringify(call('Build the widget', 'Prompt body for the agent.')), vault);
+    assert.equal(d.status, 0, d.stderr);
+    const dir = join(vault, 'Projects', 'hook-proj', 'Journal', 'Briefs');
+    const files = readdirSync(dir);
+    assert.equal(files.length, 1);
+    assert.equal(readFileSync(join(dir, files[0] as string), 'utf8'), 'Prompt body for the agent.\n');
+    const secret = runHook('agent-dispatch.ts', JSON.stringify(call('Another job', 'use key AKIAIOSFODNN7EXAMPLE now')), vault);
+    assert.equal(secret.status, 0);
+    assert.equal(readdirSync(dir).length, 1, 'a prompt that looks like a secret is not saved');
+  } finally { rmSync(vault, { recursive: true, force: true }); }
+});
+
+test('the real dispatch hook ignores a call that carries agent_id: nothing is written', () => {
+  const vault = mkdtempSync(join(tmpdir(), 'agent-hooks-nested-'));
+  try {
+    const r = runHook('agent-dispatch.ts', JSON.stringify({ ...call('Nested job'), agent_id: 'a1b2c3' }), vault);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(existsSync(join(vault, 'Projects', 'hook-proj', 'Journal', 'ledger.jsonl')), false);
+  } finally { rmSync(vault, { recursive: true, force: true }); }
 });
