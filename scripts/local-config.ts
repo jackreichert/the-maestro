@@ -353,6 +353,9 @@ export const WAKE_LAUNCH_COMMAND = argvList(pick('MAESTRO_WAKE_LAUNCH_COMMAND', 
 /** Event loop `inbox` type: argv printing one line per unread message. It must not mark them read. Empty means the type reports nothing. */
 export const INBOX_COMMAND = argvList(pick('MAESTRO_INBOX_COMMAND', 'inbox_command'));
 
+/** Jira freeze guard: argv that prints one label per line for the issue key appended as its last argument. Empty means labels cannot be read, so the guard fails closed. */
+export const JIRA_LABELS_COMMAND = argvList(pick('MAESTRO_JIRA_LABELS_COMMAND', 'jira_labels_command'));
+
 /** A positive integer setting; anything else (unset, zero, negative, text) falls back to the default. */
 const positiveInt = (raw: string, fallback: number): number => (/^\d+$/.test(raw.trim()) && Number(raw) > 0 ? Number(raw) : fallback);
 

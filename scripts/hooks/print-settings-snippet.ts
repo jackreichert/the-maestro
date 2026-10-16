@@ -13,7 +13,8 @@
  * PreToolUse with matcher `Bash` runs git-guard.ts (timeout 10 s), which takes no flags: it asks before risky git commands.
  * PreToolUse with matcher `Agent` runs agent-dispatch.ts and SubagentStop runs agent-return.ts (timeout 10 s each): a dispatch
  * opens or finds a leased in-flight row, and a stop marks it "returned, verify". Both fail open and write the ledger directly.
- * `--project` and `--vault` are passed through to every hook but git-guard.
+ * PreToolUse with matcher `mcp__.*(tlassian|ira).*` runs jira-freeze-guard.ts (timeout 15 s): it refuses a Jira write on a ticket carrying a `next_frozen_labels` label.
+ * `--project` and `--vault` are passed through to every hook but git-guard and jira-freeze-guard.
  * The one snippet also holds the event-inject entries (SessionStart with no matcher, UserPromptSubmit; see install-hooks.ts), so
  * everything to paste is in one place. `--autocompact-pct N` adds `"env": { "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "N" }`, and is
  * refused (exit 2, nothing printed on stdout) when N puts the trigger under the autocompact floor. Without it no `env` key is
@@ -40,6 +41,7 @@ export function snippet(extra: string[], autocompactPct?: number): object {
       PreToolUse: [
         { matcher: 'Bash', hooks: [{ type: 'command', command: ['node', shq(join(HOOKS, 'git-guard.ts'))].join(' '), timeout: 10 }] },
         { matcher: 'Agent', hooks: [{ type: 'command', command: cmd('agent-dispatch.ts'), timeout: 10 }] },
+        { matcher: 'mcp__.*(tlassian|ira).*', hooks: [{ type: 'command', command: ['node', shq(join(HOOKS, 'jira-freeze-guard.ts'))].join(' '), timeout: 15 }] },
       ],
       SessionEnd: [
         { matcher: 'clear|resume|logout|prompt_input_exit|other', hooks: [{ type: 'command', command: cmd('session-end-decisions.ts'), timeout: 30 }] },
