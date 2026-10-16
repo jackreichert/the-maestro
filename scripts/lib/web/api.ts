@@ -59,12 +59,12 @@ export function readBoard(cfg: WebConfig, now: Date): Board {
   const day = localDate(now, cfg.page.tz);
   const store = openStore({ vault: cfg.vault, project: cfg.project, dryRun: false, warn: cfg.warn ?? (() => {}) });
   const entries = store.readLedger();   // read once: the board and the triage metadata see the same rows
-  const ctx = boardContextFor({ ...store, readLedger: () => entries }, { has: () => false, today: () => utcDay, dryRun: false });
+  const ctx = boardContextFor({ ...store, readLedger: () => entries }, { has: () => false, today: () => utcDay, deferDay: () => day, dryRun: false });
   const g = groups(ctx);
   const view = footerDone(g, day, { tz: cfg.page.tz });
   const journal = (sub: 'status' | 'triage'): unknown => (sub === 'status'
-    ? statusJson(g, day, NO_SESSION, view.all, view.sinceRoll, liveLeases(g, entries, now), cfg.staleWipDays)
-    : { items: triageItems({ readLedger: ctx.readLedger, fold: ctx.fold, today: ctx.today, resolveRefFile: () => null }, utcDay, utcDay) });
+    ? statusJson(g, day, NO_SESSION, view.all, view.sinceRoll, liveLeases(g, entries, now), cfg.staleWipDays, utcDay)
+    : { items: triageItems({ readLedger: ctx.readLedger, fold: ctx.fold, today: ctx.today, deferDay: ctx.deferDay, resolveRefFile: () => null }, utcDay, utcDay) });
   return { inputs: gatherInputsCached(cfg.statusDir, cfg.page, { journal, now: () => now }), g };
 }
 

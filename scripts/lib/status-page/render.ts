@@ -19,6 +19,7 @@ import type { FooterRow } from '../journal/board.ts';
 import { askBits, asksNote } from '../journal/ask-fields.ts';
 import { streamLibraryLinks } from '../library/stream-links.ts';
 import { startLines } from '../start/start-here.ts';
+import { askAgeDays } from '../ledger-day.ts';
 import type { StartHere } from '../start/start-here.ts';
 
 export interface Item { id: string; date: string; ts?: string; stateTs?: string; text: string; model?: string; refs?: string[]; stream?: string; ticket?: string | null; gate?: string; deferredUntil?: string;
@@ -117,7 +118,6 @@ const oneLine = (s: string, max: number): string => {
 };
 /** The text with URLs dropped and whitespace squashed, never clipped. */
 const plain = (s: string): string => dropLinks(s).replace(/\s+/g, ' ').trim();
-const daysBetween = (a: string, b: string): number => Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
 
 /** The date, an ISO timestamp with offset and a human label of `d` in the zone `tz` (the system zone when empty). */
 export function zonedParts(d: Date, tz: string): { date: string; iso: string; human: string } {
@@ -385,10 +385,10 @@ function contextLines(blocks: AskBlock[], link: (text: string) => string): strin
 
 /**
  * Every ask, grouped under its stream's heading, one list item each: the ledger id, the full decision, its context, the
- * links, and the age when old. The `> answer:` stub is the line directly under the item, before any context bullets (inline.ts reads it back by
+ * links, and the age when old (`askAgeDays`: whole days in the page zone, the same figure the web card and age chart show). The `> answer:` stub is the line directly under the item, before any context bullets (inline.ts reads it back by
  * that shape), so the reply sits with the ask. Text is never clipped: the full ask stays readable.
  */
-function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<string, string>, streams: string[], today: string): string[] {
+function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<string, string>, streams: string[], now: Date): string[] {
   const out = [`## Needs attention now (${asks.length})`, ''];
   if (!asks.length) return [...out, 'Nothing awaiting.', ''];
   const askStream = (a: Item): string => (streams.includes(a.stream ?? '') ? a.stream! : OTHER);
@@ -400,7 +400,7 @@ function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<stri
       const refs = askRefs(cfg, a, prs, a.ticket || tickets.get(a.id));
       const env = noteEnv(cfg, a, a.ticket || tickets.get(a.id));
       const { needed, context } = splitAsk(uriToNotePaths(a.text, env));
-      const age = daysBetween(a.date, today);
+      const age = askAgeDays(a, now, cfg.tz);
       const links = [...(refs.note ? [refs.note] : []), ...refs.tracker, ...refs.prs].map(mdLink).join(' · ');
       const bold = linkNotePaths(needed, env, escBold);
       const blocks = askBlocks(plain(context));
@@ -512,7 +512,7 @@ export function renderPage(input: PageInput): { page: string; date: string } {
     ...prioritiesSection(cfg, priorities, asks, status.inflight, prs, streams),
     ...workingSection(cfg, status.inflight, tickets, streams, now),
     ...queuedSection(cfg, status.queued, tickets, streams, now),
-    ...asksSection(cfg, asks, prs, tickets, streams, t.date),
+    ...asksSection(cfg, asks, prs, tickets, streams, now),
     ...prSection(cfg, prs, streams),
     ...librarySection(cfg, streams),
     '## Other status and findings', '',
