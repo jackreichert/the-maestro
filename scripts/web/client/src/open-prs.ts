@@ -1,5 +1,6 @@
 import { BASE_CSS, h, refLink, shadow } from './dom.ts';
 import { GRID_CSS } from './grid.ts';
+import { INSTRUMENT_CSS, TACET_CSS, tacet } from './home-concept.ts';
 import { ago, askAge, clockTime } from './glance.ts';
 import { readyToMerge } from './pr-ready.ts';
 import type { OpenPrRow } from './types.ts';
@@ -115,7 +116,7 @@ const CSS = `${BASE_CSS}
   details.appr ul { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px var(--space-3); font-family: var(--font-mono); color: var(--text-secondary); }
   .age { text-align: right; font-size: var(--text-sm); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
   .empty { margin: 0; padding: var(--space-4) 0; color: var(--text-muted); font-size: var(--text-sm); }
-  .empty i { font-family: var(--font-display); font-style: italic; margin-left: 2px; }
+  ${INSTRUMENT_CSS}${TACET_CSS}
   @media (max-width: 960px) {
     .pr { grid-template-columns: minmax(0, 1fr) auto; }
     .pr .base, .pr .gates { grid-column: 1; }
@@ -124,11 +125,11 @@ const CSS = `${BASE_CSS}
   }
 `;
 
-const MOVES: { id: Move; word: string; title: string; note: string; empty: [string, string] }[] = [
-  { id: 'ready', word: 'ready to merge', title: 'Ready to merge', note: 'Approved, no open threads and no conflicts; a staging PR also needs its develop twin merged. A self-review PR needs only passing checks and no conflict. Pinned here until merged.', empty: ['Nothing is ready to merge.', 'tacet'] },
-  { id: 'yours', word: 'your move', title: 'Your move', note: 'Clean and out of draft. These wait on your review or your merge.', empty: ['Nothing waits on your review.', 'tacet'] },
-  { id: 'orchestra', word: 'orchestra fixing', title: 'The orchestra is fixing', note: 'Failing CI, conflicts, open threads or changes requested. Fixes still go out without a new review.', empty: ['Nothing needs fixing.', 'a tempo'] },
-  { id: 'drafts', word: 'drafts', title: 'Drafts', note: 'Still being written. They join your move when they leave draft.', empty: ['No drafts open.', 'rest'] },
+const MOVES: { id: Move; instrument: string; word: string; title: string; note: string; empty: [string, string] }[] = [
+  { id: 'ready', instrument: 'Cadence', word: 'ready to merge', title: 'Ready to merge', note: 'Approved, no open threads and no conflicts; a staging PR also needs its develop twin merged. A self-review PR needs only passing checks and no conflict. Pinned here until merged.', empty: ['Nothing is ready to merge.', 'tacet'] },
+  { id: 'yours', instrument: 'Solo', word: 'your move', title: 'Your move', note: 'Clean and out of draft. These wait on your review or your merge.', empty: ['Nothing waits on your review.', 'tacet'] },
+  { id: 'orchestra', instrument: 'Tutti', word: 'orchestra fixing', title: 'The orchestra is fixing', note: 'Failing CI, conflicts, open threads or changes requested. Fixes still go out without a new review.', empty: ['Nothing needs fixing.', 'a tempo'] },
+  { id: 'drafts', instrument: 'Sketches', word: 'drafts', title: 'Drafts', note: 'Still being written. They join your move when they leave draft.', empty: ['No drafts open.', 'rest'] },
 ];
 const LENSES: { id: Lens; label: string }[] = [
   { id: 'failing', label: 'Failing CI' },
@@ -293,7 +294,7 @@ export class OpenPrs extends HTMLElement {
   #content(m: OpenPrsModel): Node[] {
     const d = m.data;
     if (!d) return [h('p', { class: 'empty' }, this.#fresh)];
-    if (d.total === 0) return [h('p', { class: 'empty' }, 'No open PRs. ', h('i', { lang: 'it' }, 'tacet')), h('p', { class: 'empty' }, this.#fresh)];
+    if (d.total === 0) return [tacet('No open PRs.', 'tacet'), h('p', { class: 'empty' }, this.#fresh)];
     const all = this.#list(m);
     const units = toUnits(all);
     const shown = this.#visible(units);
@@ -362,9 +363,9 @@ export class OpenPrs extends HTMLElement {
     for (const u of ps) byRepo.set(u.lead.repo, [...(byRepo.get(u.lead.repo) ?? []), u]);
     const repos = [...byRepo.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
     const empty = this.#q || this.#lens ? ['No PR here matches.', 'rest'] as const : mv.empty;
-    const body = repos.length ? repos.map(([repo, list]) => this.#repo(repo, list)) : [h('p', { class: 'empty' }, `${empty[0]} `, h('i', { lang: 'it' }, empty[1]))];
+    const body = repos.length ? repos.map(([repo, list]) => this.#repo(repo, list)) : [tacet(empty[0], empty[1])];
     return h('section', { class: 'band', id: mv.id },
-      h('div', { class: 'band-head' }, h('h2', {}, mv.title, ' ', h('span', { class: 'n' }, String(ps.flatMap(members).length))), h('p', {}, mv.note)),
+      h('div', { class: 'band-head' }, h('span', { class: 'instrument', 'aria-hidden': 'true' }, mv.instrument), h('h2', {}, mv.title, ' ', h('span', { class: 'n' }, String(ps.flatMap(members).length))), h('p', {}, mv.note)),
       ...body);
   }
 

@@ -58,6 +58,7 @@ test('states are said in words: loading, unavailable, empty, a failed read and a
   none.cleanup();
   const empty = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([], { fetchedAt: null, stale: true, failure: 'rate limited' }), loaded: true }, drafts: drafts([]) });
   assert.match(empty.root.textContent ?? '', /No teammate PR is open/);
+  assert.ok(empty.root.querySelector('p.tacet svg'), 'the empty state is the score\'s rest and its word');
   assert.match(empty.root.textContent ?? '', /has not been read yet/);
   assert.match(empty.root.textContent ?? '', /last read failed \(rate limited\)/);
   assert.equal(empty.root.querySelector('p.status')?.getAttribute('role'), 'status');

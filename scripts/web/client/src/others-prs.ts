@@ -1,4 +1,5 @@
 import { BASE_CSS, UI_CSS, h, shadow } from './dom.ts';
+import { TACET_CSS, tacet } from './home-concept.ts';
 import { ago, agoHours } from './glance.ts';
 import { linkAttrs } from './link-policy.ts';
 import { waiting } from './drafts-model.ts';
@@ -13,7 +14,7 @@ import type { OthersPrsModel } from './others-prs-store.ts';
 /** What the row needs from the draft queue: the waiting review drafts, and a way to draw the existing queue for some of them. */
 export interface OthersDrafts { rows: DraftRow[] | null; queue(match: (d: DraftRow) => boolean, empty: string, quiet: boolean, authorOf: (d: DraftRow) => string | undefined): Node }
 
-const CSS = `${BASE_CSS}${UI_CSS}
+const CSS = `${BASE_CSS}${UI_CSS}${TACET_CSS}
   :host { display: block; }
   .status { margin: 0 0 var(--space-4); font-size: var(--text-sm); color: var(--text-secondary); }
   .status.bad { color: var(--critical); }
@@ -88,7 +89,7 @@ export class OthersPrs extends HTMLElement {
     const hasOrphans = [...byPr].some(([k, rows]) => !listed.has(k) && rows.some(waiting));
     this.#view.replaceChildren(
       this.#statusLine(`${d.total} open ${d.total === 1 ? 'PR' : 'PRs'} by teammates. ${when}${d.prData.failure ? ` The last read failed (${d.prData.failure}); this is the last good list.` : ''}`, !!d.prData.failure),
-      ...(d.prs.length ? this.#tabbed(d.prs, byPr) : [h('p', { class: 'empty' }, 'No teammate PR is open.')]),
+      ...(d.prs.length ? this.#tabbed(d.prs, byPr) : [tacet('No teammate PR is open.', 'tacet')]),
       ...(this.#drafts ? [...(hasOrphans ? [h('h3', { class: 'orphans' }, 'Drafts on PRs not listed above')] : []), this.#drafts.queue((x) => !listed.has(key(x.repo, x.pr)), '', false, authorOf)] : []));
     if (this.#focusTab) { this.#root.querySelector<HTMLElement>(`button.tab[data-tab="${this.#focusTab}"]`)?.focus(); this.#focusTab = null; }
     if (this.#focusPager) { this.#root.querySelector<HTMLElement>(`nav.pager [data-dir=${this.#focusPager}]`)?.focus(); this.#focusPager = null; }
@@ -112,7 +113,7 @@ export class OthersPrs extends HTMLElement {
     }));
     const def = SUBTABS.find((t) => t.id === this.#tab) ?? SUBTABS[0]!;
     const rows = groups.get(def.id) ?? [];
-    const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': `tab-${def.id}`, ...(rows.length ? {} : { tabindex: '0' }) }, ...(rows.length ? this.#list(def.id, rows, byPr) : [h('p', { class: 'empty' }, def.empty)]));
+    const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': `tab-${def.id}`, ...(rows.length ? {} : { tabindex: '0' }) }, ...(rows.length ? this.#list(def.id, rows, byPr) : [tacet(def.empty, 'tacet')]));
     return [tabs, panel];
   }
 
