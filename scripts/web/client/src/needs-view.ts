@@ -1,6 +1,6 @@
 /** The rows for the needs-you list that are not asks: a PR ready to merge, or a review waiting for an OK. Draws what needs-items works out. */
 import { h, refLink, streamTag } from './dom.ts';
-import { OTHERS_PRS, formatFragment } from './tabs.ts';
+import { OTHERS_PRS, draftFragment, formatFragment } from './tabs.ts';
 import type { NeedsItem } from './needs-items.ts';
 
 const DAY = (n: number): string => (n === 0 ? 'today' : `${n} d`);
@@ -17,7 +17,7 @@ export function needsRows(items: NeedsItem[], showStream: boolean): HTMLElement 
       i.author ? h('span', {}, `by ${i.author}`) : null,
       i.verdict ? h('span', {}, `proposed: ${i.verdict}`) : null,
       h('span', {}, i.summary),
-      i.kind === 'approve review' ? h('a', { href: formatFragment(OTHERS_PRS), 'aria-label': `Open the draft of the review of ${ref}; opens the Others' PRs tab` }, 'Open the draft') : null,
+      i.kind === 'approve review' ? h('a', { href: i.draftId ? draftFragment(i.draftId) : formatFragment(OTHERS_PRS), 'aria-label': `Open the draft of the review of ${ref}; opens its card, with Approve, on the Others' PRs tab` }, 'Open the draft to approve') : null,
     ].filter((n): n is HTMLElement => n !== null);
     return h('li', { 'data-kind': i.kind },
       h('span', { class: `chip ${i.kind === 'ready to merge' ? 'good' : 'warn'}` }, i.kind),

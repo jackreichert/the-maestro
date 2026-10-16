@@ -235,11 +235,14 @@ test('approving a review names every inline comment: editing one invalidates the
   assert.equal(g.calls.length, 0);
 });
 
-test('a review must carry its compliment slot: missing, empty or not opening the text is refused', () => {
+test('a review must carry its compliment slot: missing, empty or absent from the text is refused; context lines before it are fine', () => {
   const f = file();
   assert.throws(() => addDraft(f, review({ review: { compliment: '', comments: [] } })));
   assert.throws(() => addDraft(f, review({ text: 'Looks fine to me.' })), /compliment/);
   assert.throws(() => addDraft(f, review({ severity: 'suggestion' })));
+  const lead = addDraft(f, review({ text: `What it does: shows the sender.\n\n${COMPLIMENT}\n\nNothing here blocks.` }));
+  assert.ok(lead.created, 'a draft that opens with context before the compliment is kept, so it is never dropped by the fold');
+  assert.equal(listDrafts(f).length, 1);
   assert.throws(() => addDraft(f, review({ target: { kind: 'general' } })));
   assert.throws(() => addDraft(f, review({}, [{ path: '../x', line: 1, text: 'hi there', severity: 'suggestion' }])));
 });

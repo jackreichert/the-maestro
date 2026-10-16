@@ -15,7 +15,7 @@ import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoGloss, tempoWord } from './glance.ts';
-import { DASHBOARD, OPEN_PRS, OTHERS_PRS, SCRIPTS, formatFragment, streamTabId, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, parseStreamFilter, tabIds } from './tabs.ts';
+import { parseDraftFocus, DASHBOARD, OPEN_PRS, OTHERS_PRS, SCRIPTS, formatFragment, streamTabId, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, parseStreamFilter, tabIds } from './tabs.ts';
 import { OpenPrsStore } from './open-prs-store.ts';
 import { OthersPrsStore } from './others-prs-store.ts';
 import './others-prs.ts';
@@ -783,6 +783,7 @@ export class PodiumApp extends HTMLElement {
   /** The Others' PRs tab: every open teammate PR with its review-draft status, and the drafted review comments inline. Approve posts as you; Reject records why and posts nothing. */
   #othersPrs(): Node {
     const el = h('others-prs');
+    el.focusDraft = parseDraftFocus(location.hash);
     const draw = (): void => {
       el.model = this.#others.model;
       el.drafts = { rows: this.#drafts.model.data?.drafts.filter((d) => d.source === 'review') ?? null, queue: (match, empty, quiet, authorOf) => this.#queueView(match, empty, quiet, authorOf) };
