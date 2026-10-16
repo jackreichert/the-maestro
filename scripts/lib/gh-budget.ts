@@ -75,14 +75,26 @@ export const blockedUntil = (state: BudgetState, now: number): number | null => 
 /** True when the budget has not been read recently enough to trust. */
 export const needsProbe = (state: BudgetState, now: number): boolean => state.probedAt === undefined || now - state.probedAt >= PROBE_MS;
 
-/** The state after a good read of the GraphQL `rateLimit` field: blocked until its reset when under the floor, else unblocked. */
+/**
+ * The state after a good read of the GraphQL `rateLimit` field: blocked until its reset when under the floor. A healthy read does not
+ * lift a block that came from a refused call (the limit may be one `rateLimit` does not show, such as a secondary limit): `clearFailures`
+ * does, after a GraphQL call succeeds.
+ */
 export function applyProbe(state: BudgetState, read: { remaining: number; limit: number; resetAt: number }, now: number, floor: number = FLOOR): BudgetState {
   const low = read.remaining < floor;
+  const refused = (state.failures ?? 0) > 0;
   return {
-    ...state, ...read, probedAt: now, failures: 0,
-    blockedUntil: low ? read.resetAt : undefined,
-    reason: low ? `${read.remaining} of ${read.limit} GraphQL points left` : undefined,
+    ...state, ...read, probedAt: now,
+    blockedUntil: low ? read.resetAt : refused ? state.blockedUntil : undefined,
+    reason: low ? `${read.remaining} of ${read.limit} GraphQL points left` : refused ? state.reason : undefined,
   };
+}
+
+/** The state after a GraphQL call succeeded: the backoff from refused calls starts over. */
+export function clearFailures(state: BudgetState): BudgetState {
+  if (!state.failures && state.blockedUntil === undefined) return state;
+  const { failures: _f, blockedUntil: _b, reason: _r, ...rest } = state;
+  return rest;
 }
 
 /** The state after GitHub refused a call for rate reasons: blocked until the known reset, else a doubling backoff (2, 4, 8 ... minutes, capped). */

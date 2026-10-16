@@ -11,12 +11,12 @@
  *   - when a call comes back rate-limited, starts a backoff, so a limited account stops being hammered by every poller on every tick.
  * `MAESTRO_GH_GUARD=off` bypasses it (lib/tool-bin.ts then calls `gh` directly).
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EVENT_DIR, WATCH_TZ } from './local-config.ts';
-import { appendCall, applyFailure, applyProbe, blockedUntil, classifyGh, isRateLimitError, limitedText, needsProbe, readState, writeState } from './lib/gh-budget.ts';
+import { appendCall, applyFailure, applyProbe, blockedUntil, clearFailures, classifyGh, isRateLimitError, limitedText, needsProbe, readState, writeState } from './lib/gh-budget.ts';
 
 const PROBE_QUERY = 'query{rateLimit{limit remaining resetAt}}';
 
@@ -24,7 +24,7 @@ export interface GuardDeps {
   dir: string;
   now: () => number;
   /** Runs the real gh with the given arguments; stdout goes straight through, stderr comes back. */
-  gh: (args: string[], passStdout: boolean) => { status: number | null; stdout: string; stderr: string };
+  gh: (args: string[], passStdout: boolean) => Promise<{ status: number | null; stdout: string; stderr: string }>;
   caller: string;
   tz?: string;
   err: (text: string) => void;
@@ -41,9 +41,9 @@ export function callerName(env: NodeJS.ProcessEnv = process.env, ppid: number = 
 }
 
 /** One probe of the GraphQL budget; a rate-limited probe is itself the answer. Anything else (no network) leaves the state alone, apart from when it was tried. */
-function probe(deps: GuardDeps): void {
+async function probe(deps: GuardDeps): Promise<void> {
   const now = deps.now();
-  const r = deps.gh(['api', 'graphql', '-f', `query=${PROBE_QUERY}`], false);
+  const r = await deps.gh(['api', 'graphql', '-f', `query=${PROBE_QUERY}`], false);
   const state = readState(deps.dir);
   try {
     const data = (JSON.parse(r.stdout) as { data?: { rateLimit?: { limit: number; remaining: number; resetAt: string } } }).data?.rateLimit;
@@ -53,11 +53,11 @@ function probe(deps: GuardDeps): void {
 }
 
 /** Runs one gh call under the guard and returns its exit status. */
-export function runGuarded(args: string[], deps: GuardDeps): number {
+export async function runGuarded(args: string[], deps: GuardDeps): Promise<number> {
   const kind = classifyGh(args);
   const cmd = args.filter((a) => !a.startsWith('-')).slice(0, 2).join(' ');
   if (kind === 'graphql') {
-    if (needsProbe(readState(deps.dir), deps.now())) probe(deps);
+    if (needsProbe(readState(deps.dir), deps.now())) await probe(deps);
     const state = readState(deps.dir);
     if (blockedUntil(state, deps.now()) !== null) {
       deps.err(`GitHub ${limitedText(state, deps.now(), deps.tz)}; this call was not sent (the-maestro gh guard)\n`);
@@ -65,20 +65,31 @@ export function runGuarded(args: string[], deps: GuardDeps): number {
       return 1;
     }
   }
-  const r = deps.gh(args, true);
+  const r = await deps.gh(args, true);
   if (r.stderr) deps.err(r.stderr);
   appendCall(deps.dir, { t: deps.now(), kind, caller: deps.caller, cmd, status: r.status });
   if (kind === 'graphql' && r.status !== 0 && isRateLimitError(r.stderr)) writeState(deps.dir, applyFailure(readState(deps.dir), deps.now()));
+  else if (kind === 'graphql' && r.status === 0) { const state = readState(deps.dir); if (state.failures) writeState(deps.dir, clearFailures(state)); }
   return r.status ?? 1;
 }
 
-const realGh: GuardDeps['gh'] = (args, passStdout) => {
-  const r = spawnSync('gh', args, { encoding: 'utf8', stdio: ['inherit', passStdout ? 'inherit' : 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
-  if (r.error) return { status: 127, stdout: '', stderr: `${r.error.message}\n` };
-  return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-};
+/**
+ * The real gh, as a child that gets the caller's termination signals: a caller's timeout kills this guard, and without forwarding the
+ * gh it started would live on, orphaned.
+ */
+const realGh: GuardDeps['gh'] = (args, passStdout) => new Promise((resolve) => {
+  const child = spawn('gh', args, { stdio: ['inherit', passStdout ? 'inherit' : 'pipe', 'pipe'] });
+  const forward = (sig: NodeJS.Signals) => () => { child.kill(sig); };
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(sig, forward(sig));
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.on('data', (d) => { stdout += d; });
+  child.stderr?.on('data', (d) => { stderr += d; });
+  child.on('error', (e) => resolve({ status: 127, stdout: '', stderr: `${e.message}\n` }));
+  child.on('close', (code) => resolve({ status: code, stdout, stderr }));
+});
 
 const isMain = (): boolean => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };
 if (isMain()) {
-  process.exitCode = runGuarded(process.argv.slice(2), { dir: EVENT_DIR, now: Date.now, gh: realGh, caller: callerName(), tz: WATCH_TZ, err: (t) => process.stderr.write(t) });
+  process.exitCode = await runGuarded(process.argv.slice(2), { dir: EVENT_DIR, now: Date.now, gh: realGh, caller: callerName(), tz: WATCH_TZ, err: (t) => process.stderr.write(t) });
 }

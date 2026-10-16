@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { appendCall, applyFailure, applyProbe, blockedUntil, callsPerHour, classifyGh, FLOOR, isRateLimitError, limitedText, MAX_BACKOFF_MS, needsProbe, PROBE_MS, readCalls, readState, writeState } from './gh-budget.ts';
+import { appendCall, applyFailure, applyProbe, blockedUntil, callsPerHour, classifyGh, clearFailures, FLOOR, isRateLimitError, limitedText, MAX_BACKOFF_MS, needsProbe, PROBE_MS, readCalls, readState, writeState } from './gh-budget.ts';
 
 const dir = (): string => mkdtempSync(join(tmpdir(), 'gh-budget-'));
 const T0 = Date.parse('2026-10-16T01:00:00Z');
@@ -36,7 +36,7 @@ test('a probe under the floor blocks until the reset, and a later good probe lif
   assert.match(low.reason ?? '', /299 of 5000/);
   const ok = applyProbe(low, { remaining: 4000, limit: 5000, resetAt: RESET }, T0 + 1000);
   assert.equal(blockedUntil(ok, T0 + 1000), null);
-  assert.equal(ok.failures, 0);
+  assert.ok(!ok.failures);
 });
 
 test('failures back off 2, 4, 8 minutes, capped, and never past a known reset when under the floor', () => {
@@ -73,4 +73,14 @@ test('limitedText names the reset time in the given zone, and is empty when not 
   assert.equal(limitedText({}, T0), '');
   const text = limitedText({ blockedUntil: RESET, reason: '12 of 5000 GraphQL points left' }, T0, 'America/New_York');
   assert.equal(text, 'limited until 10:23 pm EDT (12 of 5000 GraphQL points left)');
+});
+
+test('a healthy probe does not lift a block from refused calls, so a secondary limit backs off 2, 4, 8 minutes; a success clears it', () => {
+  let s = applyFailure({}, T0);
+  s = applyProbe(s, { remaining: 4000, limit: 5000, resetAt: RESET }, T0 + 120_000);
+  assert.equal(s.blockedUntil, T0 + 2 * 60_000, 'still blocked by the failure');
+  s = applyFailure(s, T0 + 120_000);
+  assert.equal(s.blockedUntil, T0 + 120_000 + 4 * 60_000, 'the second failure doubles');
+  assert.deepEqual(clearFailures(s).failures, undefined);
+  assert.equal(blockedUntil(clearFailures(s), T0), null);
 });
