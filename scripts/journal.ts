@@ -2584,7 +2584,8 @@ function cmdHandoff() {
         console.log(`wrote ${join(dir, written.name)} (delta since ${marker})${takenNote(written.taken)}`);
         return;
     }
-    if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
+    // A --delta handoff takes the next free name through the exclusive create below, so it must not refuse on a file another window wrote a moment ago.
+    if (existsSync(path) && !has('force') && !series) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
     const sweep = runWorktreeSweep(true);
     const body = handoffText(stream, since, sweep?.kept, { learn: oneLineArg('learn'), next: oneLineArg('next'), sweep, verbose: has('verbose') });
     const contextFile = has('update-context') ? arg('context-file') || join(ticketsBase(), 'Projects', project, 'CONTEXT.md') : '';
