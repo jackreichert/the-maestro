@@ -1,14 +1,13 @@
 /**
- * Brass: today's token metrics against their 7-day median, each as a dynamic mark (pp to ff) with a hairpin, the metronome for the
- * daily limit, the model mix against its target, and the experiment registry.
+ * Brass: today's token metrics against their 7-day median, each as a dynamic mark (pp to ff) with a hairpin, the day's tempo and the daily
+ * limit as pendulums, the model mix as a ring with its goals, and the experiment registry.
  */
 import { s, h } from './dom.ts';
 import { linePath, linearScale } from './chart-math.ts';
 import { tickTock } from './home-ambience.ts';
-import { grow } from './home-bars.ts';
 import { conceptSection, tacet } from './home-concept.ts';
 import { dynamicFor, hairpin } from './home-glyphs.ts';
-import type { CostData, CostExperiment, CostMetric } from './types.ts';
+import type { ChartsData, CostData, CostExperiment, CostMetric } from './types.ts';
 
 export const COST_CSS = `
   .dyn-list { display: grid; margin: 0; padding: 0; list-style: none; }
@@ -51,13 +50,9 @@ export const COST_CSS = `
   .metro-read .big { margin: 0; font-family: var(--font-display); font-size: var(--text-2xl); line-height: 1; font-variant-numeric: tabular-nums; }
   .metro-read span { font-size: var(--text-sm); color: var(--text-secondary); }
 
-  .mix { margin-top: var(--space-5); display: grid; gap: var(--space-2); --mix-1: var(--text-primary); --mix-2: color-mix(in srgb, var(--text-primary) 50%, transparent); --mix-3: color-mix(in srgb, var(--text-primary) 22%, transparent); }
+  .mix { margin-top: var(--space-5); display: grid; gap: var(--space-2); --mix-1: var(--text-primary); --mix-2: color-mix(in srgb, var(--text-primary) 50%, transparent); --mix-3: color-mix(in srgb, var(--text-primary) 40%, transparent); }
   .mix h3 { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-medium); }
-  /* Series colours mean "stream" everywhere else on the page, so models get an ink ramp instead: darkest is the most expensive. The target mark is the accent, so it reads against all three. */
-  .mix-bar { position: relative; display: flex; height: 10px; gap: 2px; }
-  .mix-bar span { display: block; min-width: 3px; height: 100%; border-radius: 2px; }
-  .mix-bar .m-opus { background: var(--mix-1); } .mix-bar .m-sonnet { background: var(--mix-2); } .mix-bar .m-haiku { background: var(--mix-3); }
-  .mix-bar .mix-target { position: absolute; top: -4px; bottom: -4px; width: 2px; min-width: 2px; height: auto; background: var(--accent); border-radius: 1px; box-shadow: 0 0 0 1.5px var(--surface-page); }
+  /* Series colours mean "stream" everywhere else on the page, so models get an ink ramp instead: darkest is the most expensive. The goal ticks are the accent, so it reads against all three. */
   .mix-legend { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: 0; padding: 0; list-style: none; font-size: var(--text-sm); color: var(--text-secondary); }
   .mix-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 1px; }
   .mix-legend .m-opus { background: var(--mix-1); } .mix-legend .m-sonnet { background: var(--mix-2); } .mix-legend .m-haiku { background: var(--mix-3); }
@@ -69,8 +64,33 @@ export const COST_CSS = `
   .cost-reg .chip { padding: 1px var(--space-2); border-radius: var(--radius-sm); font-size: var(--text-xs); background: var(--surface-2); color: var(--text-secondary); }
   .cost-reg .chip.good { background: var(--success-soft); color: var(--success); }
   .cost-reg .vs { color: var(--text-muted); margin-left: auto; }
-  .cost-stale { margin: 0 0 var(--space-3); color: var(--warning); font-size: var(--text-sm); }
-  @media (forced-colors: active) { .spark .ln { stroke: CanvasText; } .spark .dot { fill: CanvasText; } .mix-bar span, .mix-legend i { forced-color-adjust: none; background: CanvasText; } .metro .pend rect { forced-color-adjust: none; fill: Highlight; } }
+  .cost-stale { margin: 0 0 var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); }
+  /* Stale: the numbers are kept, but quiet. The accent goes to muted ink and the ink ramp flattens, so nothing reads as a live gauge. */
+  .brass.stale { --accent: var(--text-muted); --critical: var(--text-secondary); --critical-soft: var(--surface-2); --success: var(--text-secondary); --success-soft: var(--surface-2); }
+  .brass.stale .dyn-mark { color: var(--text-secondary); }
+  .brass.stale .donut line.goal { stroke: var(--text-secondary); }
+  .gauge { display: grid; gap: var(--space-2); }
+  .gauge h3 { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+  .gauges { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); margin-top: var(--space-5); }
+  .tempo-wrap { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-5); align-items: center; }
+  .tempo-read { display: grid; gap: var(--space-1); }
+  .tempo-read .big { margin: 0; font-family: var(--font-display); font-size: var(--text-2xl); line-height: 1; font-variant-numeric: tabular-nums; }
+  .tempo-read span { font-size: var(--text-sm); color: var(--text-secondary); }
+  .tempo-read .dynmark { font-family: var(--font-display); font-style: italic; font-size: var(--text-xl); margin-right: var(--space-2); color: var(--text-primary); }
+  .metro-read .plain { font-size: var(--text-md); color: var(--text-primary); }
+  .donut-wrap { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--space-5); align-items: center; }
+  .donut { width: 120px; height: 120px; }
+  .donut circle.track { fill: none; stroke: var(--surface-2); stroke-width: 14; }
+  .donut circle.arc { fill: none; stroke-width: 14; }
+  .donut .a-opus { stroke: var(--mix-1); } .donut .a-sonnet { stroke: var(--mix-2); } .donut .a-haiku { stroke: var(--mix-3); }
+  .donut line.goal { stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
+  .donut text { fill: var(--text-primary); font-family: var(--font-display); text-anchor: middle; }
+  .donut .c1 { font-size: 15px; } .donut .c2 { font-size: 11px; fill: var(--text-secondary); }
+  .donut-says { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; font-size: var(--text-sm); color: var(--text-secondary); }
+  .donut-says b { color: var(--text-primary); font-weight: var(--weight-medium); }
+  .donut-date { margin: 0; font-size: var(--text-xs); color: var(--text-muted); }
+  @media (max-width: 560px) { .tempo-wrap, .metro-wrap { grid-template-columns: 72px minmax(0, 1fr); } .donut-wrap { grid-template-columns: 96px minmax(0, 1fr); } .donut { width: 96px; height: 96px; } }
+  @media (forced-colors: active) { .spark .ln { stroke: CanvasText; } .spark .dot { fill: CanvasText; } .mix-legend i { forced-color-adjust: none; background: CanvasText; } .metro .pend rect { forced-color-adjust: none; fill: Highlight; } }
 `;
 
 /** A value in the unit the metric uses: a whole percentage, a ratio to two places, dollars, or a compact count (1.2k, 3.4M). */
@@ -83,6 +103,7 @@ export function costValue(n: number | null, fmt: CostMetric['fmt']): string {
   return a >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : a >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n));
 }
 
+const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
 const signed = (p: number): string => `${p >= 0 ? '+' : ''}${Math.round(p * 100)}%`;
 
 /** Runs of consecutive days that have a value, as `[x, y]` points in a 100 by 24 box; a missing day breaks the line. */
@@ -117,7 +138,7 @@ function dynamic(m: CostMetric, days: string[]): HTMLElement {
   const limit = limitText(m);
   return h('li', { class: 'dyn' },
     h('div', { class: 'dyn-name' },
-      h('strong', {}, m.name, h('span', { class: 'v' }, costValue(m.today, m.fmt))),
+      h('strong', {}, m.name, ' ', h('span', { class: 'v' }, costValue(m.today, m.fmt))),
       h('span', { class: 'dyn-sub' }, h('span', {}, m.vs7 === null ? 'no 7-day median' : `median ${costValue(m.median7, m.fmt)} · ${signed(m.vs7)} vs 7-day median`), limit ? h('span', {}, limit) : null, status)),
     h('span', { class: 'spark-cell' }, spark(m, days)),
     h('span', { class: `dyn-mark${d ? '' : ' none'}`, title: d?.gloss }, h('span', { 'aria-hidden': 'true' }, d ? d.mark : '·'), h('span', { class: 'vh' }, d ? d.gloss : 'no dynamic: no 7-day median')),
@@ -127,11 +148,12 @@ function dynamic(m: CostMetric, days: string[]): HTMLElement {
 const REST = -42;
 const SPAN = 84;
 
-/** The metronome: the first metric held to a maximum, today as a share of that limit. The pendulum rests at the left until there is a limit to read. */
-function metronome(c: CostData): HTMLElement {
-  const m = c.metrics.find((x) => x.dir === 'max' && x.limit !== null && x.limit > 0 && x.today !== null);
-  const ratio = m && m.today !== null && m.limit !== null ? m.today / m.limit : null;
-  const angle = REST + Math.min(1, Math.max(0, ratio ?? 0)) * SPAN;
+/** Plain names for the metrics a reader sees spelled out; any other metric keeps its own name. */
+const PLAIN: Record<string, string> = { 'Read/turn': 'Tokens read per turn' };
+const plainName = (name: string): string => PLAIN[name] ?? name;
+
+/** A pendulum at `angle` degrees on a metronome body; hovering ticks it. Shared by the limit gauge and the day's tempo. */
+function pendulum(angle: number): SVGElement {
   const ticks = Array.from({ length: 9 }, (_, k) => {
     const a = ((REST + k * 10.5) * Math.PI) / 180;
     return s('line', { class: 'tick', x1: String(48 + Math.sin(a) * 58), y1: String(92 - Math.cos(a) * 58), x2: String(48 + Math.sin(a) * 64), y2: String(92 - Math.cos(a) * 64) });
@@ -141,49 +163,115 @@ function metronome(c: CostData): HTMLElement {
   pend.style.transform = `rotate(${angle}deg)`;
   const svg = s('svg', { class: 'metro', viewBox: '0 0 96 112', 'aria-hidden': 'true', focusable: 'false' }, ...ticks, s('path', { class: 'body', d: 'M34 8 H62 L86 106 H10 Z' }), pend, s('circle', { cx: '48', cy: '92', r: '3', fill: 'currentColor' }));
   svg.addEventListener('pointerenter', () => tickTock(pend, ticks, angle));
-  return h('div', { class: 'metro-wrap' }, svg,
-    h('div', { class: 'metro-read' },
-      ...(m && ratio !== null && m.limit !== null
-        ? [h('p', { class: 'big' }, `${Math.round(ratio * 100)}%`, ' of the limit'), h('span', {}, `${m.name}: ${costValue(m.today, m.fmt)} of at most ${costValue(m.limit, m.fmt)}. The pendulum swings right as the day fills.`)]
-        : [h('p', { class: 'big' }, 'No limit set'), h('span', {}, 'No metric has a daily maximum yet, so the pendulum rests at the left.')])));
+  return svg;
 }
 
-function mixBlock(mix: NonNullable<CostData['mix']>): HTMLElement {
-  const parts: [string, string, number | null][] = [['Opus', 'm-opus', mix.opus], ['Sonnet', 'm-sonnet', mix.sonnet], ['Haiku', 'm-haiku', mix.haiku]];
+/**
+ * The limit gauge: the first metric held to a maximum, said in words ("Tokens read per turn: 417k, limit 200k"). The pendulum shows today as a share of
+ * the limit, and rests at the left when the measurement is not fresh or there is no limit, so a stale number never reads as a live gauge.
+ */
+function metronome(c: CostData): HTMLElement {
+  const m = c.metrics.find((x) => x.dir === 'max' && x.limit !== null && x.limit > 0 && x.today !== null);
+  const ratio = m && m.today !== null && m.limit !== null ? m.today / m.limit : null;
+  const live = !c.stale && ratio !== null;
+  const angle = REST + clamp01(live ? ratio : 0) * SPAN;
+  const said = m && m.today !== null && m.limit !== null ? `${plainName(m.name)}: ${costValue(m.today, m.fmt)}, limit ${costValue(m.limit, m.fmt)}` : '';
+  return h('div', { class: 'metro-wrap' }, pendulum(angle),
+    h('div', { class: 'metro-read' },
+      ...(m && ratio !== null
+        ? [h('p', { class: 'plain' }, c.stale ? `${said} (measured ${c.date})` : said),
+          h('span', {}, c.stale ? `Last measured ${c.date}. No fresh measurement, so the pendulum rests.` : `${Math.round(ratio * 100)}% of the limit${ratio > 1 ? ', over it' : ''}. The pendulum swings right as the day fills.`)]
+        : [h('p', { class: 'plain' }, 'No limit set'), h('span', {}, 'No metric has a daily maximum yet, so the pendulum rests at the left.')])));
+}
+
+/** What the day's tempo counts: finished work items per day from the charts, today against the median of the seven days before. */
+export interface Tempo { today: number; median: number; date: string }
+
+/** The day's tempo from the charts, or null when there are fewer than three earlier days to take a median of. */
+export function tempoOf(charts: ChartsData | null): Tempo | null {
+  const rows = charts?.throughput ?? [];
+  const today = rows.at(-1);
+  const before = rows.slice(-8, -1).map((r) => r.total).sort((x, y) => x - y);
+  if (!today || before.length < 3) return null;
+  const mid = Math.floor(before.length / 2);
+  const median = before.length % 2 ? (before[mid] as number) : (((before[mid - 1] as number) + (before[mid] as number)) / 2);
+  return { today: today.total, median, date: today.date };
+}
+
+/**
+ * The day's tempo, the pendulum's positive use: work shipped today against the 7-day median. It swings right as the day fills (centre is a typical
+ * day, full right is twice that) and carries a dynamics mark from pp to ff. Merged PRs are not counted separately; this counts finished work items.
+ */
+function tempo(t: Tempo | null, liveDate: string | null): HTMLElement {
+  if (!t) return h('div', { class: 'tempo-wrap' }, pendulum(REST), h('div', { class: 'tempo-read' }, h('p', { class: 'big' }, 'No tempo yet'), h('span', {}, 'Fewer than three earlier days of shipped work, so there is no median to compare today with.')));
+  const ratio = t.median > 0 ? t.today / t.median : null;
+  const d = ratio === null ? null : dynamicFor(ratio);
+  const isToday = liveDate !== null && t.date === liveDate;
+  const angle = REST + clamp01(ratio === null || !isToday ? 0 : ratio / 2) * SPAN;
+  return h('div', { class: 'tempo-wrap' }, pendulum(angle),
+    h('div', { class: 'tempo-read' },
+      h('p', { class: 'big' }, d ? h('span', { class: 'dynmark', 'aria-hidden': 'true' }, d.mark) : null, isToday ? `${t.today} shipped today` : `${t.today} shipped on ${t.date}`),
+      h('span', {}, !isToday ? 'The charts are not up to today yet, so the pendulum rests.' : d ? `${d.gloss}. The 7-day median is ${costValue(t.median, 'n')} a day.` : `No work shipped on a typical day yet, so there is no mark. The 7-day median is ${costValue(t.median, 'n')} a day.`),
+      h('span', {}, 'Counts finished work items; merged PRs are not counted separately.')));
+}
+
+/** A small heading over one gauge. */
+const gauge = (title: string, body: HTMLElement): HTMLElement => h('div', { class: 'gauge' }, h('h3', {}, title), body);
+
+const TAU = Math.PI * 2;
+const RING = 44;
+
+/** The model mix as a ring: Opus, Sonnet, Haiku in an ink ramp from the top, with each goal as a tick on the ring and in words under it. */
+function mixBlock(mix: NonNullable<CostData['mix']>, date: string | null, stale: boolean): HTMLElement {
+  const parts: [string, string, number | null][] = [['Opus', 'opus', mix.opus], ['Sonnet', 'sonnet', mix.sonnet], ['Haiku', 'haiku', mix.haiku]];
   const pct = (n: number | null): string => (n === null ? 'n/a' : `${Math.round(n * 100)}%`);
-  const verdict = (share: number | null, target: number, max: boolean): string => (share === null ? 'no data' : !Number.isFinite(target) ? 'no target' : (max ? share <= target : share >= target) ? 'On target' : 'Target missed');
+  const verdict = (share: number | null, target: number, max: boolean): string => (share === null ? 'no data' : !Number.isFinite(target) ? 'no goal' : (max ? share <= target : share >= target) ? 'On target' : 'Target missed');
   const tg = (n: number): string => (Number.isFinite(n) ? pct(n) : 'unset');
-  const bar = h('div', { class: 'mix-bar', role: 'img', 'aria-label': `Model mix: Opus ${pct(mix.opus)}, Sonnet ${pct(mix.sonnet)}, Haiku ${pct(mix.haiku)}. Opus target at most ${tg(mix.opusMax)}.` },
-    ...parts.filter(([, , n]) => n !== null && n > 0).map(([, cls, n]) => grow(cls, n as number)));
-  if (Number.isFinite(mix.opusMax)) {
-    const mark = h('span', { class: 'mix-target', title: 'Opus target' });
-    mark.style.left = `calc(${Math.min(1, Math.max(0, mix.opusMax)) * 100}% - 1px)`;
-    bar.append(mark);
-  }
+  const C = TAU * RING;
+  let at = 0;
+  const arcs = parts.flatMap(([, cls, n]) => {
+    if (n === null || n <= 0) return [];
+    const len = Math.max(0, Math.min(n, 1 - at)) * C;
+    if (len <= 0) return [];
+    const arc = s('circle', { class: `arc a-${cls}`, cx: '60', cy: '60', r: String(RING), 'stroke-dasharray': `${len} ${C - len}`, 'stroke-dashoffset': String(-at * C), transform: 'rotate(-90 60 60)' });
+    at += n;
+    return [arc];
+  });
+  const tick = (frac: number): SVGElement => {
+    const a = frac * TAU;
+    return s('line', { class: 'goal', x1: String(60 + Math.sin(a) * (RING - 12)), y1: String(60 - Math.cos(a) * (RING - 12)), x2: String(60 + Math.sin(a) * (RING + 12)), y2: String(60 - Math.cos(a) * (RING + 12)) });
+  };
+  const goals = [...(Number.isFinite(mix.opusMax) ? [tick(clamp01(mix.opusMax))] : []), ...(Number.isFinite(mix.haikuMin) ? [tick(clamp01(1 - mix.haikuMin))] : [])];
+  const label = `Model mix: Opus ${pct(mix.opus)}, Sonnet ${pct(mix.sonnet)}, Haiku ${pct(mix.haiku)}. Goals: Opus at most ${tg(mix.opusMax)}, Haiku at least ${tg(mix.haikuMin)}.`;
+  const ring = s('svg', { class: 'donut', viewBox: '0 0 120 120', role: 'img', 'aria-label': label },
+    s('circle', { class: 'track', cx: '60', cy: '60', r: String(RING) }), ...arcs, ...goals,
+    s('text', { class: 'c1', x: '60', y: '60' }, `Opus ${pct(mix.opus)}`),
+    s('text', { class: 'c2', x: '60', y: '74' }, Number.isFinite(mix.opusMax) ? `goal \u2264${tg(mix.opusMax)}` : 'no goal'));
   return h('div', { class: 'mix' },
     h('h3', {}, 'Model mix'),
-    bar,
-    h('ul', { class: 'mix-legend', role: 'list', 'aria-hidden': 'true' }, ...parts.map(([name, cls, n]) => h('li', {}, h('i', { class: cls }), `${name} ${pct(n)}`))),
-    h('ul', { class: 'cost-mix-facts', role: 'list' },
-      h('li', {}, `Opus ${pct(mix.opus)}, target at most ${tg(mix.opusMax)}: `, h('b', {}, verdict(mix.opus, mix.opusMax, true))),
-      h('li', {}, `Sonnet ${pct(mix.sonnet)}`),
-      h('li', {}, `Haiku ${pct(mix.haiku)}, target at least ${tg(mix.haikuMin)}: `, h('b', {}, verdict(mix.haiku, mix.haikuMin, false)))));
+    h('div', { class: 'donut-wrap' }, ring,
+      h('div', {},
+        h('ul', { class: 'mix-legend', role: 'list', 'aria-hidden': 'true' }, ...parts.map(([name, cls, n]) => h('li', {}, h('i', { class: `m-${cls}` }), `${name} ${pct(n)}`))),
+        h('ul', { class: 'cost-mix-facts', role: 'list' },
+          h('li', {}, `Opus ${pct(mix.opus)}, goal at most ${tg(mix.opusMax)}: `, h('b', {}, verdict(mix.opus, mix.opusMax, true))),
+          h('li', {}, `Sonnet ${pct(mix.sonnet)}`),
+          h('li', {}, `Haiku ${pct(mix.haiku)}, goal at least ${tg(mix.haikuMin)}: `, h('b', {}, verdict(mix.haiku, mix.haikuMin, false)))),
+        date ? h('p', { class: 'donut-date' }, stale ? `Last measured ${date}; not today's mix.` : `Measured for ${date}.`) : null)));
 }
 
 const expLine = (e: CostExperiment, lead = false): HTMLElement => h('li', {}, lead ? h('span', { class: 'chip good' }, 'Today') : null, h('span', { class: 'id' }, e.id), h('span', { class: 'chip' }, e.status), h('span', {}, e.practice), e.result && e.result !== '-' ? h('span', { class: 'vs' }, e.result) : null);
 
 /** The Cost section. Null when the server sent none (an old server): a page without the widget is complete. */
-export function costSection(c: CostData | null): HTMLElement | null {
+export function costSection(c: CostData | null, tempoData: Tempo | null = null): HTMLElement | null {
   if (!c) return null;
   if (c.state === 'empty') return conceptSection('brass half', { instrument: 'Brass', title: 'Cost', n: null, hint: 'Tokens per day against the 7-day median' }, tacet(c.reason ?? 'No token history yet.', 'tacet'));
   const aside = c.regressions.length ? `${c.date}: ${c.regressions.length} regressed (${c.regressions.join(', ')})` : `${c.date}: nothing regressed`;
-  const head = c.stale ? `No data since ${c.date}; regression check not run for today` : aside;
+  const head = c.stale ? `Last measured ${c.date}; no fresh measurement` : aside;
   const exps = [...(c.today ? [c.today] : []), ...c.running.filter((r) => r.id !== c.today?.id), ...c.recent];
-  return conceptSection('brass half', { instrument: 'Brass', title: 'Cost', n: null, hint: head },
-    c.stale ? h('p', { class: 'cost-stale', role: 'status' }, `The newest day in the token table is ${c.date}. Run token-metrics.ts --write to bring it up to date.`) : null,
+  return conceptSection(`brass half${c.stale ? ' stale' : ''}`, { instrument: 'Brass', title: 'Cost', n: null, hint: head },
+    c.stale ? h('p', { class: 'cost-stale', role: 'status' }, `Last measured ${c.date}. There is no fresh measurement, so the numbers below are from that day, not today. Run token-metrics.ts --write to bring them up to date.`) : null,
     h('ul', { class: 'dyn-list', role: 'list', 'aria-label': 'Cost metrics, today against the 7-day median' }, ...c.metrics.map((m) => dynamic(m, c.days))),
-    metronome(c),
-    c.mix ? mixBlock(c.mix) : tacet('The model mix is not available for this day.', 'tacet'),
+    h('div', { class: 'gauges' }, gauge("Day's tempo", tempo(tempoData, c.stale ? null : c.date)), gauge('Daily limit', metronome(c)), c.mix ? mixBlock(c.mix, c.date, c.stale) : tacet('The model mix is not available for this day.', 'tacet')),
     h('h3', { class: 'exp-h' }, 'Experiments'),
     h('ul', { class: 'cost-reg', role: 'list', 'aria-label': 'Cost experiments' }, ...(exps.length ? exps.map((e) => expLine(e, e.id === c.today?.id)) : []), ...(c.today ? [] : [h('li', {}, 'No experiment proposed today.')])));
 }

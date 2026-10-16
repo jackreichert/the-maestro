@@ -66,3 +66,9 @@ One pager (`src/pager.ts`, math in `src/page-math.ts`, styles in `src/pager-css.
 Top to bottom: the stream heading and cue line, the definition of done (centred, 760px at most), the links in columns, then the board (Where it stands, Cues, Fermata, In flight, Coda), and last the 14-day score. The board comes before the score because it is what needs acting on; the score is context. Section names are Home's (instrument word over the title), so a reader who knows Home knows this page, and the plain meaning ("needs you", "blocked") is read to a screen reader.
 
 The definition of done is never written by the page. It is read from an open epic's "What done looks like" or the project's CONTEXT.md and shown as written; when neither exists the page says which file to add it to.
+
+## Cost (Brass)
+
+A number that is not from today is never drawn like a live gauge. A stale measurement says "Last measured <date>", mutes the section (the accent and status colours flatten to ink), and leaves the limit pendulum at rest. Gauges are said in words first: "Tokens read per turn: 417k, limit 200k". The model mix is a ring in the ink ramp (Opus darkest) with each goal as a tick on the ring and in words ("Opus 57%, goal at most 40%"), labelled with the day it was measured.
+
+The pendulum has one positive use besides the limit: the day's tempo. Today's finished work items against the median of the seven days before, swinging right as the day fills (the centre is a typical day, full right is twice that) with a dynamics mark from pp to ff. It counts finished work items from the charts; merged PRs are not counted separately.
