@@ -1,5 +1,5 @@
 /**
- * The ledger's two notions of "a day", in one place so they cannot drift apart again (MAESTRO-184).
+ * The ledger's day bases, in one place so they cannot drift apart again (MAESTRO-184).
  *
  * - `ledgerDay`: the UTC day every row is stamped with (`date`). Anything that measures an age from a stamp (queue age, the stale
  *   in-flight count, the age of an ask) must count to this day too: counting to a local day is one short from UTC midnight until

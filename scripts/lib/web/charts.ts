@@ -123,8 +123,6 @@ const AGE_BUCKETS: { label: string; below: number }[] = [
   { label: 'under 1 d', below: 1 }, { label: '1-3 d', below: 3 }, { label: '3-7 d', below: 7 }, { label: 'over 7 d', below: Infinity },
 ];
 
-export { askAgeDays };
-
 /** Open asks by whole days waited (`askAgeDays`): under 1 d, 1-3 d, 3-7 d, over 7 d. An ask with no readable time counts as brand new. */
 export function awaitingAge(awaiting: LedgerItem[], now: Date, tz: string): AgeBucket[] {
   const buckets: AgeBucket[] = AGE_BUCKETS.map((b) => ({ label: b.label, count: 0, ids: [] }));

@@ -11,7 +11,7 @@ import { askTemplateOf, parseLink, splitOption } from '../journal/ask-template.t
 import { askMarkdown } from '../status-page/ask-format.ts';
 import { linkAskRefs } from '../status-page/links.ts';
 import { localDate } from '../status-page/priorities.ts';
-import { askAgeDays } from './charts.ts';
+import { askAgeDays } from '../ledger-day.ts';
 import { isOwnerMerged, isSelfReview } from '../self-review.ts';
 import type { PrioritiesState } from '../status-page/priorities.ts';
 import type { GatheredInputs } from '../status-page/generate.ts';

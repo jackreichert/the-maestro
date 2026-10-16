@@ -331,7 +331,7 @@ const resolvedWindow = resolveWindow({ window: arg('window') ?? undefined, sessi
 const windowId = resolvedWindow.id;
 const store = openStore({ vault, project, dryRun, window: windowId });
 const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = store;
-const today = (): string => new Date().toISOString().slice(0, 10);
+const today = (): string => ledgerDay();
 const now = (): string => new Date().toISOString();
 /** The calendar day a `defer --until` date is read in and a deferral lapses on: the user's zone, not the UTC stamp day (lib/ledger-day.ts). */
 const deferDay = (): string => userDay(WATCH_TZ);
@@ -1280,12 +1280,6 @@ const configuredStatusPageUri = (): string => statusPageUri({
 /** The review queue from the stored PR snapshot (no network on a status read); null when none has been taken. */
 const boardReviewQueue = () => boardQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, REVIEW_QUEUE_ORGS);
 
-/**
- * The day queue ages and the stale count are counted to. Rows are stamped with the UTC day (`today()`), so ages must be measured to the UTC day
- * too: the local day (`d`) is a day behind from UTC midnight until local midnight and under-counted every age by one. `MAESTRO_NOW` pins the clock for tests.
- */
-const queueClockDay = (): string => ledgerDay();
-
 /** The queue-hygiene footer line: oldest queued age and rows that already have a built branch. Branch names come from the row's repo under the container root (the-maestro's own checkout for a row with no repo); each repo is listed once. */
 function boardQueueHygiene(g: Groups, today: string): string {
     const lists = new Map<string, string[]>();
@@ -1358,11 +1352,11 @@ function cmdStatus() {
     const done = view.all;
 
     if (asJson) {
-        printJson(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g), STALE_WIP_DAYS, queueClockDay()));
+        printJson(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g), STALE_WIP_DAYS, ledgerDay()));
         return;
     }
 
-    const live = { today: queueClockDay(), leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched };
+    const live = { today: ledgerDay(), leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched };
     const queueFooter = has('footer') ? footerReviewQueue() ?? undefined : boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
     if (has('footer')) {
@@ -1372,7 +1366,7 @@ function cmdStatus() {
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
         if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window) })); return; }
-        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, queueClockDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, ledgerDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
