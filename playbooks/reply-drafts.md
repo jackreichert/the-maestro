@@ -13,4 +13,6 @@ The rule, enforced in code: a reply to a thread with a person in it never posts 
 
 ## Do not
 
+Answer a Copilot thread on a develop PR that is about code only on staging: ignore it, it is drift from the base branch.
+
 Post a reply to a person yourself with `gh`. The queue and the Podium are the only way a human's thread is answered. Fixing the code a bot asked about comes first; the reply only reports it.

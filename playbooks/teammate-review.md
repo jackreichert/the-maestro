@@ -43,6 +43,8 @@ Script: `node scripts/teammate-review.ts` (`prepare`, `firstpass`, `install`, `s
 
 **Later rounds.** The smells pass runs on the first round of a PR only. On any review after our first one, keep only follow-ups on our earlier items and blocking findings in the new commits, and drop every new suggestion. `submit` enforces the smell half (a `source: "smell"` finding is dropped once another review of the PR is on record); keeping only follow-ups and blockers is on you.
 
+A comment on a release PR about code already on main does not block: file a follow-up ticket instead.
+
 ## Not enforced in code
 
 The wait-gate exceptions, the bot-thread triage and the COMMENT event for open important bot threads are described here only. Supporting a COMMENT review event means a third `ReviewEvent` through the queue, the Others' PRs tab and the post path, which is a separate change.

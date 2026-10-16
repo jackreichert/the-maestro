@@ -10,6 +10,8 @@ Register: `node scripts/event-loop.ts add --id inbox --type inbox --target inbox
 |---|---|---|
 | `N new message(s) from user` | yes | That N messages arrived. Nothing else. |
 
+Every text gets a reply or a one-emoji reaction text. A registered inbox watch with no running event loop is not listening: warn that nothing is polling.
+
 ## Privacy
 
 Message text is personal data. The type keeps only a hash of each line and the digest holds only the count. **Never** run the inbox command yourself to quote a message, and never put message text in the report, a notification, the ledger or a log. The orchestrator reads the messages itself.

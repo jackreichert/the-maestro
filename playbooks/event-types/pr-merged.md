@@ -24,6 +24,8 @@ On every `MERGED` line, do all of these in the same turn (the rule is in [refere
 5. **Stack ancestry.** If the merged PR was part of a stack, check that each fix pushed to the PRs above it reached the base: `git merge-base --is-ancestor <fix sha> origin/<base>` for each recorded head. A fix not in the base is a follow-up, not a merged one.
 6. **Review-miss harvest.** If the merged PR is the user's own, run `node scripts/review-harvest.ts harvest <owner>/<repo>#<n>` (read-only against GitHub; it skips a PR the user did not author and a second run adds nothing). Triage and the weekly note are the cheap runner's job: [playbooks/review-miss-harvest.md](../review-miss-harvest.md). Do not triage here.
 
+Move the Jira ticket when the PR moves: in review on open, done on merge (step 2 above).
+
 ## Do not
 
 Merge, approve or comment on the PR, and do not delete branches here. Report the line, run the checklist and stop.
