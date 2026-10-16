@@ -24,6 +24,8 @@ export interface Finding {
 export interface Triage {
   id: string; klass: 'mithril' | 'planning' | 'dropped'; fate: FateHint; real: boolean; why?: string;
   coverage?: 'covered' | 'partial' | 'not-covered'; skill?: string; cite?: string; category?: string; candidate?: string;
+  /** A reviewer's rewrite of the gist with no names or display values, shown in the note in place of the stored one. */
+  gist?: string;
 }
 
 const STOP = new Set('this that with from have will would should could does which when then than into also only more some what where there their they them been being were here such each other about after before because while your you the and for are not but can its it\'s'.split(' '));

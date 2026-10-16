@@ -29,7 +29,7 @@ Decide per finding, then run `triage`. Work from the gist and the hints; open th
 3. **For `mithril` only:** `--coverage covered|partial|not-covered`, judged from the `coverage` lines. Covered means a rule already names it, so the miss is a recall problem, not a text problem: leave out `--candidate`. `--category` is a short noun phrase; reuse an earlier one when it fits.
 4. **For `partial` and `not-covered`:** `--skill <name>` and a one-sentence `--candidate` that sharpens an existing rule rather than adding one. `--cite` is a short id and section from mithril's `Resources/` (see the citation index in its `Resources/README.md`); if you cannot find one there, pass `--cite unsourced`. Never invent a source. An unsourced candidate is shown as blocked until Jack approves a library addition.
 
-`--real yes|no` is required. Gists carry code-level words only. If a gist shows a person, a customer or a display value, say so in your report and do not paste it anywhere else.
+`--real yes|no` is required. Stored gists can still carry a customer, a person or a display value that the scan cannot see. Whenever one does, pass `--gist "<your rewrite, code-level words only, under 160 characters>"`: the note shows it in place of the stored text. The same goes for any gist that is a bot's report (a plan summary, a scan table) rather than a finding: drop those.
 
 ```bash
 node scripts/review-harvest.ts triage <id> --class mithril --real yes --fate fixed --coverage partial --skill code-quality --cite CC2-8 --category "Empty input read as safe" --candidate "<sharpened rule text>"
@@ -49,5 +49,5 @@ At most 8 lines: how many PRs harvested, new findings, triaged by class (mithril
 
 - Never edit a mithril skill, `Resources/`, or the planning checklist. Candidates are proposals in the note; Jack approves them.
 - Never comment on, resolve, or reply to a PR thread. Never run `gh` yourself: the script reads GitHub.
-- Never put a person's name, a customer, a display field, or a credential into `--why`, `--candidate` or `--category`.
+- Never put a person's name, a customer, a display field, or a credential into `--why`, `--candidate`, `--category` or `--gist`.
 - Any recursive `grep` or `rg` carries `--exclude='.env*' --exclude='ssm-*.json'`, and you never open those files.

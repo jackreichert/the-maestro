@@ -5,7 +5,7 @@
  *   node scripts/review-harvest.ts harvest <owner/repo#N>... | --since YYYY-MM-DD [--jack <login>] [--store <dir>] [--skills <dir>] [--json]
  *   node scripts/review-harvest.ts pending [--store <dir>] [--skills <dir>] [--json]
  *   node scripts/review-harvest.ts triage <id> --class mithril|planning|dropped --real yes|no [--fate F] [--why W] [--coverage covered|partial|not-covered]
- *                                           [--skill S] [--cite C|unsourced] [--category K] [--candidate TEXT] [--store <dir>]
+ *                                           [--skill S] [--cite C|unsourced] [--category K] [--candidate TEXT] [--gist TEXT] [--store <dir>]
  *   node scripts/review-harvest.ts batch [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out <dir>] [--write] [--store <dir>]
  *
  * `harvest` is read-only against GitHub (`gh api graphql`: review threads, review bodies, issue comments, changed files). Only PRs authored
@@ -124,6 +124,8 @@ function readSkills(dir: string): Record<string, string[]> {
   return Object.fromEntries(readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => [f.replace(/\.md$/, ''), readFileSync(join(dir, f), 'utf8').split('\n')]));
 }
 
+/** The text shown in the note: the runner's rewrite when there is one, else the stored gist. */
+const shown = (f: Finding, t: Triage | undefined): string => t?.gist ?? f.gist;
 const where = (f: Finding): string => `${f.prs.join(', ')}${f.threads > 1 ? ` (${f.threads})` : ''}`;
 const cell = (s: string): string => s.replace(/\|/g, '\\|');
 
@@ -149,14 +151,14 @@ export function renderBatch(findings: Finding[], triage: Map<string, Triage>, ra
     L.push(`### ${String.fromCharCode(65 + i)}. ${c}`, ``, `| # | PR (threads) | File | Gist | Fate | Cov |`, `|---|---|---|---|---|---|`);
     real.filter((f) => (triage.get(f.id)!.category || 'Uncategorised') === c).forEach((f, j) => {
       const t = triage.get(f.id)!;
-      L.push(`| ${String.fromCharCode(65 + i)}${j + 1} | ${where(f)} | ${cell(f.path.split('/').pop() || '-')} | ${cell(f.gist)} | ${t.fate} | ${({ covered: 'C', partial: 'P', 'not-covered': 'N' } as Record<string, string>)[t.coverage ?? ''] ?? '-'} |`);
+      L.push(`| ${String.fromCharCode(65 + i)}${j + 1} | ${where(f)} | ${cell(f.path.split('/').pop() || '-')} | ${cell(shown(f, t))} | ${t.fate} | ${({ covered: 'C', partial: 'P', 'not-covered': 'N' } as Record<string, string>)[t.coverage ?? ''] ?? '-'} |`);
     });
     L.push(``);
   });
   L.push(`## Planning misses (route to the planning checklist, Prior art step)`, ``, `| # | PR (threads) | Gist | Prior art that existed |`, `|---|---|---|---|`);
-  planning.forEach((f, i) => L.push(`| Q${i + 1} | ${where(f)} | ${cell(f.gist)} | ${cell(triage.get(f.id)!.candidate ?? triage.get(f.id)!.why ?? '')} |`));
+  planning.forEach((f, i) => L.push(`| PL${i + 1} | ${where(f)} | ${cell(shown(f, triage.get(f.id)))} | ${cell(triage.get(f.id)!.candidate ?? triage.get(f.id)!.why ?? '')} |`));
   L.push(``, `## Dropped (not mithril misses)`, ``, `| # | PR (threads) | Gist | Why |`, `|---|---|---|---|`);
-  dropped.forEach((f, i) => L.push(`| X${i + 1} | ${where(f)} | ${cell(f.gist)} | ${cell(dropReason(triage.get(f.id)!) ?? '')} |`));
+  dropped.forEach((f, i) => L.push(`| X${i + 1} | ${where(f)} | ${cell(shown(f, triage.get(f.id)))} | ${cell(dropReason(triage.get(f.id)!) ?? '')} |`));
   const groups = new Map<string, { skill: string; text: string; cite: string; fs: Finding[] }>();
   for (const f of real) {
     const t = triage.get(f.id)!;
@@ -211,7 +213,7 @@ function main(argv: string[]): number {
     if (!CLASSES.includes(klass) || !['yes', 'no'].includes(a.arg('real') ?? '') || !FATES.includes(fate) || (cov && !COVERAGE.includes(cov))) return fail('bad --class, --real, --fate or --coverage');
     if (klass === 'dropped' && !a.arg('why')) return fail('a dropped finding needs --why');
     if (klass === 'mithril' && a.arg('candidate') && !a.arg('skill')) return fail('a candidate needs --skill');
-    const rec: Triage = { id, klass: klass as Triage['klass'], fate: fate as Triage['fate'], real: a.arg('real') === 'yes', why: a.arg('why') ?? undefined, coverage: cov as Triage['coverage'] ?? undefined, skill: a.arg('skill') ?? undefined, cite: a.arg('cite') ?? undefined, category: a.arg('category') ?? undefined, candidate: a.arg('candidate') ?? undefined };
+    const rec: Triage = { id, klass: klass as Triage['klass'], fate: fate as Triage['fate'], real: a.arg('real') === 'yes', why: a.arg('why') ?? undefined, coverage: cov as Triage['coverage'] ?? undefined, skill: a.arg('skill') ?? undefined, cite: a.arg('cite') ?? undefined, category: a.arg('category') ?? undefined, candidate: a.arg('candidate') ?? undefined, gist: a.arg('gist') ?? undefined };
     mkdirSync(dir, { recursive: true });
     appendFileSync(join(dir, 'triage.jsonl'), `${JSON.stringify(rec)}\n`);
     console.log(`triaged ${id} as ${klass}`);

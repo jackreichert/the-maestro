@@ -86,14 +86,15 @@ test('triage then batch --write puts planning misses in their own section and ne
   const id = (re: RegExp) => ids.find((f) => re.test(f.gist))!.id;
   const t = (...a: string[]) => assert.equal(run({}, ['triage', ...a, '--store', store]).status, 0);
   t(id(/Empty allowlist/), '--class', 'mithril', '--real', 'yes', '--fate', 'fixed', '--coverage', 'partial', '--skill', 'code-quality', '--cite', 'CC2-8', '--category', 'Fail-open on empty input', '--candidate', 'Keep absent and empty distinct');
-  t(id(/core helper/), '--class', 'planning', '--real', 'yes', '--candidate', 'core has a shared helper');
+  t(id(/core helper/), '--class', 'planning', '--real', 'yes', '--candidate', 'core has a shared helper', '--gist', 'Reviewer points at a shared helper');
   t(id(/ESLint/), '--class', 'dropped', '--real', 'no', '--why', 'CI catches it');
   const today = new Date().toISOString().slice(0, 10);
   const w = run({}, ['batch', '--out', out, '--store', store, '--write', '--until', today]);
   assert.equal(w.status, 0, w.stderr);
   const note = readFileSync(join(out, readdirSync(out)[0]!), 'utf8');
   assert.match(note, /## Planning misses \(route to the planning checklist/);
-  assert.match(note, /\| Q1 \|.*core helper/);
+  assert.match(note, /\| PL1 \|.*Reviewer points at a shared helper/);
+  assert.doesNotMatch(note, /The core helper already exists/);
   assert.match(note, /- \*\*Mithril misses:\*\* 1 real/);
   assert.match(note, /- \*\*Dropped:\*\* 1/);
   assert.match(note, /\| 1 \| `code-quality` \| Keep absent and empty distinct \| CC2-8 \| 1 findings, 1 changes \| watching \|/);
