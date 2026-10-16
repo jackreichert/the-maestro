@@ -8,6 +8,8 @@ import type { DraftsModel } from './drafts-store.ts';
 export interface DraftActions {
   startEdit(id: string): void; startReject(id: string): void; cancel(id: string): void; setBuffer(id: string, text: string): void; setComment(id: string, index: number, text: string): void;
   saveEdit(id: string): void; approve(id: string): void; reject(id: string): void;
+  /** Posts an approving review as a plain comment (no verdict): the way through when open Copilot threads forbid the approval. */
+  approveAsComment?(id: string): void;
 }
 
 const CSS = `${BASE_CSS}${UI_CSS}
@@ -198,8 +200,10 @@ export class DraftQueue extends HTMLElement {
       const tail = this.#tail(d);
       body = [this.#summary(d), ...(tail ? [h('p', { class: 'body' }, tail)] : []), this.#inline(d),
         h('div', { class: 'actions' },
-          ...(unresolved(d) ? [] : [btn('primary', 'Approve', `Approve and post comment on ${what}`, () => a?.approve(d.id)), ...(d.state === 'approved' ? [] : [btn('secondary', 'Edit', `Edit comment on ${what}`, () => a?.startEdit(d.id))])]),
-          btn('secondary', 'Reject', `Reject comment on ${what}`, () => a?.startReject(d.id)))];
+          ...(unresolved(d) ? [] : [btn('primary', 'Approve', `Approve and post comment on ${what}`, () => a?.approve(d.id)), ...(d.state === 'approved' ? [] : [btn('secondary', 'Edit', `Edit comment on ${what}`, () => a?.startEdit(d.id))]),
+            ...(d.review?.event === 'APPROVE' && d.state !== 'approved' && a?.approveAsComment ? [btn('secondary', 'Post as comment', `Post review of ${what} as a plain comment, without approving`, () => a.approveAsComment?.(d.id))] : [])]),
+          btn('secondary', 'Reject', `Reject comment on ${what}`, () => a?.startReject(d.id)),
+          ...(linkAttrs(d.prUrl) ? [h('a', { ...linkAttrs(d.prUrl), 'aria-label': `Open ${groupKey(d)} on GitHub` }, 'Open on GitHub')] : []))];
     }
     return h('li', { class: 'draft', 'data-id': d.id }, this.#head(d), d.context ? h('p', { class: 'quote' }, d.context) : null, ...body, live);
   }

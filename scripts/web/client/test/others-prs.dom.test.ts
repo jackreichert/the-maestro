@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import { installDom, mount } from './dom-harness.ts';
 import type { OthersPrRow, OthersPrsData } from '../src/types.ts';
 import type { DraftRow } from '../src/drafts-model.ts';
-import type { OthersDrafts } from '../src/others-prs.ts';
+import type { OthersActions, OthersDrafts } from '../src/others-prs.ts';
 
 installDom();
-type El = HTMLElement & { model: { data: OthersPrsData | null; loaded: boolean }; drafts: OthersDrafts };
+type El = HTMLElement & { model: { data: OthersPrsData | null; loaded: boolean }; drafts: OthersDrafts; actions: OthersActions };
 const pr = (n: number, over: Partial<OthersPrRow> = {}): OthersPrRow => ({ repo: 'acme/app', number: n, title: `Title ${n}`, url: `https://github.com/acme/app/pull/${n}`, author: 'pat-fake', base: 'develop', updatedAt: '2026-10-15T11:00:00Z', ageDays: 3, youAsked: false, review: 'review-required', unresolved: 0, copilotThreads: 0, ...over });
 const data = (prs: OthersPrRow[], over: Partial<OthersPrsData['prData']> = {}): OthersPrsData => ({ generatedAt: '2026-10-15T12:00:00Z', prData: { fetchedAt: '2026-10-15T11:55:00Z', stale: false, ...over }, total: prs.length, prs });
 const draft = (n: number, over: Partial<DraftRow> = {}): DraftRow => ({ rev: '0123456789ab', id: `dr-0000000${n}`, source: 'review', repo: 'acme/app', pr: n, prUrl: `https://github.com/acme/app/pull/${n}`, severity: 'suggestion', text: 'x', state: 'pending', createdAt: '2026-10-15T10:00:00Z', ...over });
@@ -284,5 +284,88 @@ test('the waiting-drafts note names the sub-tab classify really puts the PR in, 
   (note?.querySelector('button') as HTMLButtonElement).click();
   assert.equal(root.querySelector('button.tab[aria-selected="true"]')?.textContent?.replace(/ \(\d+\)$/, ''), tabName);
   assert.match(root.querySelector('li.pr')?.textContent ?? '', /Draft ready/);
+  cleanup();
+});
+
+const HEAD = 'a'.repeat(40);
+const settle = (): Promise<void> => new Promise((ok) => { setTimeout(ok, 0); });
+const click = (root: ParentNode, sel: string): void => { (root.querySelector(sel) as HTMLElement).click(); };
+
+test('Ignore on a row asks for that PR at its head; a refusal is shown on the row and the PR stays', async () => {
+  const calls: string[] = [];
+  const actions: OthersActions = { run: async (op, p) => { calls.push(`${op} ${p.repo}#${p.number} ${p.headSha}`); return 'The PR has new commits since this page was drawn. Reload and try again.'; } };
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { headSha: HEAD })]), loaded: true }, drafts: drafts([]), actions });
+  click(root, 'li.pr button[aria-label="Ignore acme/app#1"]');
+  await settle();
+  assert.deepEqual(calls, [`ignore acme/app#1 ${HEAD}`]);
+  assert.match(root.querySelector('li.pr .status.bad')?.textContent ?? '', /new commits since this page was drawn/);
+  assert.equal(numbers(root).join(), '1');
+  cleanup();
+});
+
+test('Ignore is off, with the reason said, when the list has not recorded the PR\'s commit', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1)]), loaded: true }, drafts: drafts([]) });
+  assert.equal((root.querySelector('button[aria-label="Ignore acme/app#1"]') as HTMLButtonElement).disabled, true);
+  assert.match(root.querySelector('li.pr')?.textContent ?? '', /Cannot be ignored until the list records its latest commit/);
+  cleanup();
+});
+
+test('an ignored PR leaves the sub-tab lists and counts and shows under "Ignored (n)", where Un-ignore asks for it', async () => {
+  const calls: string[] = [];
+  const actions: OthersActions = { run: async (op, p) => { calls.push(`${op} ${p.number}`); return null; } };
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { headSha: HEAD, ignored: 'ignored' }), pr(2, { headSha: HEAD })]), loaded: true }, drafts: drafts([]), actions });
+  assert.deepEqual(numbers(root).filter((n) => n === 2), [2]);
+  assert.match(root.querySelector('button.tab[data-tab="ready"]')?.textContent ?? '', /Ready for approval \(1\)/);
+  assert.equal(root.querySelector('ul[aria-label="Open teammate PRs"] li[data-pr="acme/app#1"]'), null, 'not in the sub-tab list');
+  assert.equal(root.querySelector('details.ignored summary')?.textContent, 'Ignored (1)');
+  click(root, 'details.ignored button[aria-label="Un-ignore acme/app#1"]');
+  await settle();
+  assert.deepEqual(calls, ['unignore 1']);
+  assert.equal(root.querySelector('p[data-said]')?.textContent, 'acme/app#1 is back in the list.');
+  cleanup();
+});
+
+test('with nothing ignored there is no Ignored toggle', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { headSha: HEAD })]), loaded: true }, drafts: drafts([]) });
+  assert.equal(root.querySelector('details.ignored'), null);
+  cleanup();
+});
+
+test('a PR with new commits since it was ignored is back in its list, with a chip that says so', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { headSha: HEAD, ignored: 'new-commits' })]), loaded: true }, drafts: drafts([]) });
+  assert.equal(numbers(root).join(), '1');
+  assert.match(root.querySelector('li.pr')?.textContent ?? '', /New commits since you ignored/);
+  assert.equal(root.querySelector('details.ignored'), null);
+  cleanup();
+});
+
+test('a draft on an ignored PR is not hidden: it shows under "Drafts on PRs not listed above"', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { headSha: HEAD, ignored: 'ignored' })]), loaded: true }, drafts: drafts([draft(1)]) });
+  assert.match(root.querySelector('h3.orphans')?.textContent ?? '', /not listed above/);
+  assert.match(root.querySelector('.queue')?.textContent ?? '', /acme\/app#1/);
+  cleanup();
+});
+
+test('a hands-off row says why and offers Review anyway, which asks for that PR; once asked it says the draft comes after the next run', async () => {
+  const calls: string[] = [];
+  const actions: OthersActions = { run: async (op, p) => { calls.push(`${op} ${p.number}`); return null; } };
+  const why = 'acme/app is in hands_off_repos: its owner (lee-fake) decides these.';
+  const { el, root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { headSha: HEAD, handsOff: true, handsOffWhy: why })]), loaded: true }, drafts: drafts([]), actions });
+  assert.equal(root.querySelector('[data-note="hands-off"]')?.textContent, why);
+  click(root, 'button[aria-label="Review acme/app#1 anyway"]');
+  await settle();
+  assert.deepEqual(calls, ['review-anyway 1']);
+  el.model = { data: data([pr(1, { headSha: HEAD, handsOff: true, handsOffWhy: why, reviewRequested: true })]), loaded: true };
+  assert.equal(root.querySelector('button[aria-label="Review acme/app#1 anyway"]'), null);
+  assert.match(root.querySelector('[data-note="review-requested"]')?.textContent ?? '', /draft appears after the next review run/);
+  cleanup();
+});
+
+test('once a hands-off PR has a waiting draft, Review anyway goes and the draft card carries the actions', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data([pr(1, { headSha: HEAD, handsOff: true })]), loaded: true }, drafts: drafts([draft(1)]) });
+  pick(root, 'in-review');
+  assert.equal(root.querySelector('button[aria-label="Review acme/app#1 anyway"]'), null);
+  assert.equal(root.querySelector('[data-note="hands-off"]'), null);
+  assert.ok(root.querySelector('.queue'));
   cleanup();
 });

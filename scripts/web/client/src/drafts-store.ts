@@ -46,7 +46,8 @@ export class DraftsStore {
     const comments = this.#ui(id).comments;
     await this.#decide(id, 'edit', { id, text: this.#ui(id).buffer }, comments);
   }
-  async approve(id: string): Promise<void> { await this.#decide(id, 'approve', { id, rev: this.#draft(id)?.rev ?? '' }); }
+  /** `as: 'comment'` posts a review draft as a plain comment (the server's `approve` takes it); the default posts it as drafted. */
+  async approve(id: string, as?: 'comment'): Promise<void> { await this.#decide(id, 'approve', { id, rev: this.#draft(id)?.rev ?? '', ...(as ? { as } : {}) }); }
   async reject(id: string): Promise<void> { await this.#decide(id, 'reject', { id, reason: this.#ui(id).buffer }); }
 
   /** One decision at a time per card: a second press while one is in flight does nothing, so a double click is one request. */

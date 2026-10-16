@@ -84,3 +84,10 @@ test('a review card edits its inline comments through the store and sends them w
   await store.saveEdit('dr-0000000a');
   assert.deepEqual(seen, [['One.', '']]);
 });
+
+test('approve as a comment sends `as: comment` with the same revision; a plain approve sends no `as`', async () => {
+  const { store, sent } = rig();
+  await store.load();
+  await store.approve('dr-0000000a', 'comment');
+  assert.deepEqual(sent.map(({ payload }) => payload), [{ id: 'dr-0000000a', rev: '0123456789ab', as: 'comment' }]);
+});
