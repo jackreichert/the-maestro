@@ -269,6 +269,17 @@ test('the draft reader sees a queued teammate review and a post of it, and ignor
   assert.equal(nudge.latestReviewDraftAt(file), Date.parse('2026-10-14T14:00:00Z'));
 });
 
+test('a review draft on a PR the person ignored at that commit starts no nudge; a new head or an un-ignore brings it back', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'repost-nudge-'));
+  const file = draftsPath(dir, 'p');
+  const head = 'c'.repeat(40);
+  addDraft(file, { key: 'k', source: 'review', severity: 'review', repo: 'org/api', pr: 5, text: 'A careful compliment that names the thing.', target: { kind: 'review', commitId: head }, review: { compliment: 'A careful compliment that names the thing.', comments: [] } } as NewDraft, { now: () => new Date('2026-10-14T14:00:00Z') });
+  const at = Date.parse('2026-10-14T14:00:00Z');
+  assert.equal(nudge.latestReviewDraftAt(file, new Map([['org/api#5', head]])), 0, 'ignored at the draft\'s commit');
+  assert.equal(nudge.latestReviewDraftAt(file, new Map([['org/api#5', 'd'.repeat(40)]])), at, 'ignored at an older commit: the ignore no longer holds');
+  assert.equal(nudge.latestReviewDraftAt(file, new Map()), at);
+});
+
 test('toPr counts a re-request of a person by the user, not Copilot, a team or someone else\'s request', () => {
   const at = (h: number) => `2026-10-14T0${h}:00:00Z`;
   const node = (requests: { createdAt: string; actor: { login: string }; requestedReviewer: { __typename: string; login?: string } }[]) =>

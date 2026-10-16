@@ -5,6 +5,7 @@
  */
 import { isSelfReview } from '../self-review.ts';
 import { isFormerTeammate } from './former.ts';
+import { isIgnored } from './others-actions.ts';
 
 /** Which repos are hands off (`hands_off_repos`, `owner/name` globs) and whose own PRs there stay in scope (`hands_off_owner`, a login). */
 export const NO_GUARD: Guard = { globs: [], login: '' };
@@ -22,7 +23,9 @@ export interface WaitNode {
   timelineItems?: { nodes: { createdAt?: string }[] };
 }
 export interface Waiting { key: string; repo: string; number: number; url: string; head: string; headRef: string; base: string; waitedMin: number }
-export interface WaitOptions { self: string; minutes: number; now: number; selfRepos: readonly string[]; guard?: Guard; /** Logins of people who have left (`former_teammates`): never selected. */ former?: readonly string[] }
+export interface WaitOptions { self: string; minutes: number; now: number; selfRepos: readonly string[]; guard?: Guard; /** Logins of people who have left (`former_teammates`): never selected. */ former?: readonly string[];
+  /** PRs the person ignored (key -> head): left out while the head is the one ignored. */ ignored?: ReadonlyMap<string, string>;
+  /** "Review anyway" requests (key -> head): the hands-off guard and the wait minutes do not apply at that head. */ requested?: ReadonlyMap<string, string> }
 
 const isBot = (a: { login?: string; __typename?: string } | null | undefined): boolean => a?.__typename === 'Bot' || /\[bot\]$/i.test(a?.login ?? '');
 
@@ -39,15 +42,18 @@ export function selectWaiting(nodes: readonly WaitNode[], o: WaitOptions): Waiti
     const author = n.author?.login;
     if (n.isDraft || !author || author.toLowerCase() === self || isBot(n.author) || isFormerTeammate(author, o.former)) continue;
     if (isSelfReview(n.repository.nameWithOwner, o.selfRepos)) continue;
-    if (isGuard(n.repository.nameWithOwner, author, o.guard ?? NO_GUARD) && !(n.reviewRequests?.nodes ?? []).some((r) => (r?.requestedReviewer?.login ?? '').toLowerCase() === self)) continue;
+    const key = `${n.repository.nameWithOwner}#${n.number}`;
+    if (isIgnored(o.ignored ?? new Map(), key, n.headRefOid)) continue;
+    const asked = o.requested?.get(key) === n.headRefOid;
+    if (!asked && isGuard(n.repository.nameWithOwner, author, o.guard ?? NO_GUARD) && !(n.reviewRequests?.nodes ?? []).some((r) => (r?.requestedReviewer?.login ?? '').toLowerCase() === self)) continue;
     if (n.reviewDecision === 'APPROVED' || n.reviewDecision === 'CHANGES_REQUESTED') continue;
     const reviews = (n.reviews?.nodes ?? []).filter((r) => r.state !== 'PENDING');
     if (reviews.some((r) => (r.author?.login ?? '').toLowerCase() === self || !isBot(r.author))) continue;
     const since = readySince(n);
     if (!Number.isFinite(since)) continue;
     const waitedMin = Math.floor((o.now - since) / 60_000);
-    if (waitedMin < o.minutes) continue;
-    out.push({ key: `${n.repository.nameWithOwner}#${n.number}`, repo: n.repository.nameWithOwner, number: n.number, url: n.url, head: n.headRefOid, headRef: n.headRefName ?? '', base: n.baseRefName ?? '', waitedMin });
+    if (waitedMin < o.minutes && !asked) continue;
+    out.push({ key, repo: n.repository.nameWithOwner, number: n.number, url: n.url, head: n.headRefOid, headRef: n.headRefName ?? '', base: n.baseRefName ?? '', waitedMin });
   }
   return out;
 }

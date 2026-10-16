@@ -29,7 +29,8 @@
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { COPILOT_ORGS, FORMER_TEAMMATES, GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, PR_SEARCH, SELF_REVIEW_REPOS, TEAMMATE_REVIEW_MINUTES, TEAMMATE_REVIEW_OWNERS } from '../local-config.ts';
+import { CONFIGURED_PROJECT, CONTAINER_PROJECT, COPILOT_ORGS, FORMER_TEAMMATES, GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, LEDGER_ROOT, PR_SEARCH, SELF_REVIEW_REPOS, TEAMMATE_REVIEW_MINUTES, TEAMMATE_REVIEW_OWNERS, VAULT_ROOT } from '../local-config.ts';
+import { actionsPath, readActions } from '../lib/teammate/others-actions.ts';
 import { advanceHelper, selectWaiting, teammateQuery, teammateSearch } from '../lib/teammate/wait.ts';
 import type { HelperEntry, WaitNode } from '../lib/teammate/wait.ts';
 import { isSelfReview } from '../lib/self-review.ts';
@@ -40,6 +41,9 @@ import { markPrsDirty } from '../lib/status-page/dirty.ts';
 import { advance, begin, requestReview, trackKey } from '../lib/copilot-follow.ts';
 import type { Tracks } from '../lib/copilot-follow.ts';
 import type { CheckContext, Watch, WatchEvent } from '../lib/types.ts';
+
+/** The Others' PRs actions file (ignores, review requests), beside the draft queue. */
+const actionsFile = (): string => actionsPath(LEDGER_ROOT || VAULT_ROOT, CONFIGURED_PROJECT || CONTAINER_PROJECT);
 
 /** pr-watch never reads the clock, so a check needs everything the loop passes except `now`. */
 type Ctx = Omit<CheckContext, 'now'> & { now?: number };
@@ -423,7 +427,7 @@ function followTeammates(ctx: Ctx, self: string, prev: Snapshot | null, silent: 
   try {
     const nodes = searchAllPages<WaitNode>(teammateQuery(search), ctx.run);
     const now = ctx.now ?? Date.now();
-    const waiting = selectWaiting(nodes, { self, minutes, now, selfRepos: ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, former: FORMER_TEAMMATES });
+    const waiting = selectWaiting(nodes, { self, minutes, now, selfRepos: ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, former: FORMER_TEAMMATES, ...(({ ignored, requests }) => ({ ignored, requested: requests }))(readActions(actionsFile())) });
     return advanceHelper(prev?.helper, waiting, silent, now, minutes);
   } catch (e) {
     console.error(`teammate helper search failed: ${firstLine(e instanceof Error ? e.message : e)}`);
