@@ -1618,3 +1618,7 @@ Commands are split on `&&`, `||`, `;`, `|`, `&`, newlines, subshells, `$(...)` a
 - Not a project manager and not a ticket database. Problems that need fixing belong in xenophon or your issue tracker. The ledger is a record of activity.
 - Not safe to run two dispatcher sessions that both `start` and `done` the same ledger without looking. The log is append-only and last write wins on the generated markdown.
 - Not a license to write `main`, `staging`, `develop`, or a branch you did not author. Those stay protected, and pull requests open as drafts.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
