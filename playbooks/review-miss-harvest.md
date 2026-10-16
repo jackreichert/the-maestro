@@ -15,7 +15,7 @@ After a merge, name the merged PR. On the weekly pass, use the week's start so a
 
 ## 2. List
 
-`pending --json` gives each untriaged finding: `id`, `kind` (copilot, aikido, human), `path`, `gist`, `prs` (twin copies listed once), `threads`, `fate` (a hint from the thread state and Jack's reply), `hints`, and `coverage` (up to two skill lines that share words with the finding).
+`pending --json` gives each untriaged finding: `id`, `kind` (copilot, aikido, human), `path`, `gist`, `prs` (twin copies listed once), `threads`, `fate` (a hint from the thread state and the user's reply), `hints`, and `coverage` (up to two skill lines that share words with the finding).
 
 ## 3. Triage
 
@@ -27,7 +27,7 @@ Decide per finding, then run `triage`. Work from the gist and the hints; open th
    - `mithril` otherwise: a real defect a code reviewer should have caught in the diff.
 2. **Fate** (`--fate`): fixed, deferred, declined, resolved, or open. Start from the hint and change it only on evidence.
 3. **For `mithril` only:** `--coverage covered|partial|not-covered`, judged from the `coverage` lines. Covered means a rule already names it, so the miss is a recall problem, not a text problem: leave out `--candidate`. `--category` is a short noun phrase; reuse an earlier one when it fits.
-4. **For `partial` and `not-covered`:** `--skill <name>` and a one-sentence `--candidate` that sharpens an existing rule rather than adding one. `--cite` is a short id and section from mithril's `Resources/` (see the citation index in its `Resources/README.md`); if you cannot find one there, pass `--cite unsourced`. Never invent a source. An unsourced candidate is shown as blocked until Jack approves a library addition.
+4. **For `partial` and `not-covered`:** `--skill <name>` and a one-sentence `--candidate` that sharpens an existing rule rather than adding one. `--cite` is a short id and section from mithril's `Resources/` (see the citation index in its `Resources/README.md`); if you cannot find one there, pass `--cite unsourced`. Never invent a source. An unsourced candidate is shown as blocked until the user approves a library addition.
 
 `--real yes|no` is required. Stored gists can still carry a customer, a person or a display value that the scan cannot see. Whenever one does, pass `--gist "<your rewrite, code-level words only, under 160 characters>"`: the note shows it in place of the stored text. The `File` column shows file names as stored, so read it too: a name can carry a customer or EMR. The same goes for any gist that is a bot's report (a plan summary, a scan table) rather than a finding: drop those.
 
@@ -47,7 +47,7 @@ At most 8 lines: how many PRs harvested, new findings, triaged by class (mithril
 
 ## Hard rules
 
-- Never edit a mithril skill, `Resources/`, or the planning checklist. Candidates are proposals in the note; Jack approves them.
+- Never edit a mithril skill, `Resources/`, or the planning checklist. Candidates are proposals in the note; the user approves them.
 - Never comment on, resolve, or reply to a PR thread. Never run `gh` yourself: the script reads GitHub.
 - Never put a person's name, a customer, a display field, or a credential into `--why`, `--candidate`, `--category` or `--gist`.
 - Any recursive `grep` or `rg` carries `--exclude='.env*' --exclude='ssm-*.json'`, and you never open those files.

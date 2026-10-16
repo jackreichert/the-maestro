@@ -65,7 +65,7 @@ test('real-miss filters: CI-catchable, pre-existing and outside-the-diff are hin
   assert.deepEqual(hintsFor({ text: 'Null check missing.', outsideDiff: false }), []);
 });
 
-test('fate is read from Jack replies, else from the thread state', () => {
+test('fate is read from the user replies, else from the thread state', () => {
   assert.equal(fateFrom(true, ['Good catch, fixed in abc123']), 'fixed');
   assert.equal(fateFrom(false, ['This is a false positive, reset on every call']), 'declined');
   assert.equal(fateFrom(false, ['Will do in a follow-up ticket']), 'deferred');
@@ -76,9 +76,9 @@ test('fate is read from Jack replies, else from the thread state', () => {
 const pr = (over: Partial<PrNode> = {}): PrNode => ({
   headRefName: 'feat/gate', files: { nodes: [{ path: 'src/gate.mjs' }] },
   reviewThreads: { nodes: [
-    { isResolved: true, path: 'src/gate.mjs', comments: { nodes: [{ id: 't1', body: 'Empty allowlist is read as unrestricted.', author: { login: 'copilot-pull-request-reviewer' } }, { id: 't1r', body: 'fixed', author: { login: 'jack' } }] } },
+    { isResolved: true, path: 'src/gate.mjs', comments: { nodes: [{ id: 't1', body: 'Empty allowlist is read as unrestricted.', author: { login: 'copilot-pull-request-reviewer' } }, { id: 't1r', body: 'fixed', author: { login: 'author' } }] } },
     { isResolved: false, path: 'src/old.mjs', comments: { nodes: [{ id: 't2', body: 'Missing null check here.', author: { login: 'samwise' } }] } },
-    { isResolved: true, path: 'src/gate.mjs', comments: { nodes: [{ id: 't3', body: 'my own note on the diff', author: { login: 'jack' } }] } },
+    { isResolved: true, path: 'src/gate.mjs', comments: { nodes: [{ id: 't3', body: 'my own note on the diff', author: { login: 'author' } }] } },
   ] },
   reviews: { nodes: [
     { id: 'r1', body: 'Pull request overview: this PR changes the gate and adds tests for it.', author: { login: 'copilot-pull-request-reviewer' } },
@@ -89,8 +89,8 @@ const pr = (over: Partial<PrNode> = {}): PrNode => ({
   ...over,
 });
 
-test('itemsFrom keeps humans and Aikido, skips Jack, Copilot overview bodies and one-word reviews, and flags paths outside the diff', () => {
-  const got = itemsFrom(pr(), 'rivendell/elrond-api#10', 'jack');
+test('itemsFrom keeps humans and Aikido, skips the user, Copilot overview bodies and one-word reviews, and flags paths outside the diff', () => {
+  const got = itemsFrom(pr(), 'rivendell/elrond-api#10', 'author');
   assert.deepEqual(got.map((i) => i.srcId), ['t1', 't2', 'r2', 'k1']);
   assert.equal(got[0]!.fate, 'fixed');
   assert.equal(got[1]!.outsideDiff, true);
@@ -100,7 +100,7 @@ test('itemsFrom keeps humans and Aikido, skips Jack, Copilot overview bodies and
 });
 
 test('a truncated file list makes no outside-the-diff claim', () => {
-  const got = itemsFrom(pr({ files: { pageInfo: { hasNextPage: true }, nodes: [{ path: 'src/gate.mjs' }] } }), 'rivendell/elrond-api#10', 'jack');
+  const got = itemsFrom(pr({ files: { pageInfo: { hasNextPage: true }, nodes: [{ path: 'src/gate.mjs' }] } }), 'rivendell/elrond-api#10', 'author');
   assert.equal(got.find((i) => i.srcId === 't2')!.outsideDiff, false);
 });
 

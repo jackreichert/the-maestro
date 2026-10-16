@@ -40,19 +40,19 @@ function run(env: Record<string, string>, args: string[]) {
 
 const TWIN = 'Empty allowlist is read as unrestricted, so a blank list grants every entity.';
 
-test('harvest reads Jack PRs only, collapses the twin, and a second run adds nothing', () => {
+test('harvest reads the user PRs only, collapses the twin, and a second run adds nothing', () => {
   const store = mkdtempSync(join(tmpdir(), 'rh-store-'));
   const env = fakeGh({
-    '10': prNode('jack', 'feat/gate', [thread('a1', 'src/gate.mjs', TWIN), thread('a2', 'src/gate.mjs', 'The core helper already exists, reuse it.', 'samwise', false)]),
-    '11': prNode('jack', 'feat/gate', [thread('b1', 'src/gate.mjs', TWIN)]),
+    '10': prNode('author', 'feat/gate', [thread('a1', 'src/gate.mjs', TWIN), thread('a2', 'src/gate.mjs', 'The core helper already exists, reuse it.', 'samwise', false)]),
+    '11': prNode('author', 'feat/gate', [thread('b1', 'src/gate.mjs', TWIN)]),
     '12': prNode('frodo', 'feat/shire', [thread('c1', 'src/gate.mjs', 'Unrelated.')]),
   }, ['rivendell/elrond-api#10', 'rivendell/elrond-api#11']);
-  const first = run(env, ['harvest', 'rivendell/elrond-api#10', 'rivendell/elrond-api#11', 'rivendell/elrond-api#12', '--jack', 'jack', '--store', store, '--json']);
+  const first = run(env, ['harvest', 'rivendell/elrond-api#10', 'rivendell/elrond-api#11', 'rivendell/elrond-api#12', '--author', 'author', '--store', store, '--json']);
   assert.equal(first.status, 0, first.stderr);
   const out = JSON.parse(first.stdout);
   assert.equal(out.total, 2);
   assert.deepEqual(out.skipped, ['rivendell/elrond-api#12']);
-  const second = JSON.parse(run(env, ['harvest', 'rivendell/elrond-api#10', 'rivendell/elrond-api#11', '--jack', 'jack', '--store', store, '--json']).stdout);
+  const second = JSON.parse(run(env, ['harvest', 'rivendell/elrond-api#10', 'rivendell/elrond-api#11', '--author', 'author', '--store', store, '--json']).stdout);
   assert.equal(second.added, 0);
   assert.equal(second.total, 2);
   const pending = JSON.parse(run(env, ['pending', '--store', store, '--skills', join(store, 'none'), '--json']).stdout) as { threads: number; hints: string[]; prs: string[] }[];
@@ -62,26 +62,26 @@ test('harvest reads Jack PRs only, collapses the twin, and a second run adds not
 
 test('--since finds merged PRs by search; an unreadable PR is reported and exits 2', () => {
   const store = mkdtempSync(join(tmpdir(), 'rh-store-'));
-  const env = fakeGh({ '10': prNode('jack', 'feat/gate', [thread('a1', 'src/gate.mjs', TWIN)]) }, ['rivendell/elrond-api#10', 'rivendell/elrond-api#99']);
-  const r = run(env, ['harvest', '--since', '2026-10-10', '--jack', 'jack', '--store', store]);
+  const env = fakeGh({ '10': prNode('author', 'feat/gate', [thread('a1', 'src/gate.mjs', TWIN)]) }, ['rivendell/elrond-api#10', 'rivendell/elrond-api#99']);
+  const r = run(env, ['harvest', '--since', '2026-10-10', '--author', 'author', '--store', store]);
   assert.equal(r.status, 2);
   assert.match(r.stdout, /1 new findings/);
   assert.match(r.stdout, /elrond-api#99: /);
 });
 
-test('bad usage exits 2: no jack, a bad ref, a bad date, an unknown triage id', () => {
+test('bad usage exits 2: no author, a bad ref, a bad date, an unknown triage id', () => {
   const store = mkdtempSync(join(tmpdir(), 'rh-store-'));
   assert.equal(run({}, ['harvest', 'rivendell/elrond-api#1', '--store', store]).status, 2);
-  assert.equal(run({}, ['harvest', 'not-a-ref', '--jack', 'jack', '--store', store]).status, 2);
-  assert.equal(run({}, ['harvest', '--since', 'yesterday', '--jack', 'jack', '--store', store]).status, 2);
+  assert.equal(run({}, ['harvest', 'not-a-ref', '--author', 'author', '--store', store]).status, 2);
+  assert.equal(run({}, ['harvest', '--since', 'yesterday', '--author', 'author', '--store', store]).status, 2);
   assert.equal(run({}, ['triage', 'nope', '--class', 'mithril', '--real', 'yes', '--store', store]).status, 2);
 });
 
 test('triage then batch --write puts planning misses in their own section and never overwrites', () => {
   const store = mkdtempSync(join(tmpdir(), 'rh-store-'));
   const out = mkdtempSync(join(tmpdir(), 'rh-out-'));
-  const env = fakeGh({ '10': prNode('jack', 'feat/gate', [thread('a1', 'src/gate.mjs', TWIN), thread('a2', 'src/util.mjs', 'The core helper already exists, reuse it.', 'samwise', false), thread('a3', 'src/old.mjs', 'ESLint would flag this unused import.')]) }, []);
-  run(env, ['harvest', 'rivendell/elrond-api#10', '--jack', 'jack', '--store', store]);
+  const env = fakeGh({ '10': prNode('author', 'feat/gate', [thread('a1', 'src/gate.mjs', TWIN), thread('a2', 'src/util.mjs', 'The core helper already exists, reuse it.', 'samwise', false), thread('a3', 'src/old.mjs', 'ESLint would flag this unused import.')]) }, []);
+  run(env, ['harvest', 'rivendell/elrond-api#10', '--author', 'author', '--store', store]);
   const ids = (JSON.parse(run(env, ['pending', '--store', store, '--skills', join(store, 'none'), '--json']).stdout) as { id: string; gist: string }[]);
   const id = (re: RegExp) => ids.find((f) => re.test(f.gist))!.id;
   const t = (...a: string[]) => assert.equal(run({}, ['triage', ...a, '--store', store]).status, 0);
@@ -105,8 +105,8 @@ test('triage then batch --write puts planning misses in their own section and ne
 test('batch --write refuses while a finding is untriaged', () => {
   const store = mkdtempSync(join(tmpdir(), 'rh-store-'));
   const out = mkdtempSync(join(tmpdir(), 'rh-out-'));
-  const env = fakeGh({ '10': prNode('jack', 'feat/gate', [thread('a1', 'src/gate.mjs', TWIN)]) }, []);
-  run(env, ['harvest', 'rivendell/elrond-api#10', '--jack', 'jack', '--store', store]);
+  const env = fakeGh({ '10': prNode('author', 'feat/gate', [thread('a1', 'src/gate.mjs', TWIN)]) }, []);
+  run(env, ['harvest', 'rivendell/elrond-api#10', '--author', 'author', '--store', store]);
   const r = run({}, ['batch', '--out', out, '--store', store, '--write']);
   assert.equal(r.status, 2);
   assert.match(r.stderr, /1 findings are not triaged/);
@@ -115,8 +115,8 @@ test('batch --write refuses while a finding is untriaged', () => {
 
 test('a PR with a full page of threads is reported, exits 2, and is not marked harvested', () => {
   const store = mkdtempSync(join(tmpdir(), 'rh-store-'));
-  const big = { ...prNode('jack', 'feat/gate', [thread('a1', 'src/gate.mjs', TWIN)]), reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [thread('a1', 'src/gate.mjs', TWIN)] } };
-  const r = run(fakeGh({ '10': big }, []), ['harvest', 'rivendell/elrond-api#10', '--jack', 'jack', '--store', store]);
+  const big = { ...prNode('author', 'feat/gate', [thread('a1', 'src/gate.mjs', TWIN)]), reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [thread('a1', 'src/gate.mjs', TWIN)] } };
+  const r = run(fakeGh({ '10': big }, []), ['harvest', 'rivendell/elrond-api#10', '--author', 'author', '--store', store]);
   assert.equal(r.status, 2);
   assert.match(r.stdout, /MORE THAN ONE PAGE.*reviewThreads/);
   assert.deepEqual(JSON.parse(readFileSync(join(store, 'store.json'), 'utf8')).harvested, {});

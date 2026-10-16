@@ -2,16 +2,16 @@
 /**
  * REVIEW-MISS HARVEST: what reviewers found that the author's own review missed, kept as evidence for mithril and for the planning checklist.
  *
- *   node scripts/review-harvest.ts harvest <owner/repo#N>... | --since YYYY-MM-DD [--jack <login>] [--store <dir>] [--skills <dir>] [--json]
+ *   node scripts/review-harvest.ts harvest <owner/repo#N>... | --since YYYY-MM-DD [--author <login>] [--store <dir>] [--skills <dir>] [--json]
  *   node scripts/review-harvest.ts pending [--store <dir>] [--skills <dir>] [--json]
  *   node scripts/review-harvest.ts triage <id> --class mithril|planning|dropped --real yes|no [--fate F] [--why W] [--coverage covered|partial|not-covered]
  *                                           [--skill S] [--cite C|unsourced] [--category K] [--candidate TEXT] [--gist TEXT] [--store <dir>]
  *   node scripts/review-harvest.ts batch [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out <dir>] [--write] [--store <dir>]
  *
  * `harvest` is read-only against GitHub (`gh api graphql`: review threads, review bodies, issue comments, changed files). Only PRs authored
- * by `--jack` (default `gh_login`) are read; comments by that login are skipped, and his replies are read only to hint each thread's fate and
+ * by `--author` (default `gh_login`) are read; comments by that login are skipped, and his replies are read only to hint each thread's fate and
  * are never stored. Findings are code-level gists: fences, links and addresses removed, and a PHI or secret shape withholds the text. Twin PRs and
- * repeat passes collapse into one finding (lib/review-harvest.ts). Re-harvesting a PR changes nothing. `--since` finds Jack's merged PRs by search.
+ * repeat passes collapse into one finding (lib/review-harvest.ts). Re-harvesting a PR changes nothing. `--since` finds the user's merged PRs by search.
  * `pending` lists findings with no triage yet, with the skill lines that share the most words (a coverage hint). `triage` records one verdict, the
  * playbook's judgement step. `batch` renders the weekly note; it writes only with `--write` (and not while any finding in the window is untriaged), and it never edits a mithril skill.
  * Exit 0 ok, 2 on usage, an unreadable PR, or a PR with more than 100 threads, reviews or comments (read in part, reported, not marked harvested).
@@ -88,13 +88,13 @@ function fetchPr(ref: string): PrNode {
 export const truncatedParts = (pr: PrNode): string[] =>
   (['reviewThreads', 'reviews', 'comments'] as const).filter((k) => (pr[k] as { pageInfo?: { hasNextPage?: boolean } } | undefined)?.pageInfo?.hasNextPage);
 
-function mergedSince(jack: string, since: string): string[] {
+function mergedSince(author: string, since: string): string[] {
   if (!DATE.test(since)) return fail('--since needs YYYY-MM-DD');
-  const q = `query($after:String){search(query:"is:pr is:merged author:${jack} merged:>=${since}",type:ISSUE,first:50,after:$after){pageInfo{hasNextPage endCursor} nodes{... on PullRequest{number repository{nameWithOwner}}}}}`;
+  const q = `query($after:String){search(query:"is:pr is:merged author:${author} merged:>=${since}",type:ISSUE,first:50,after:$after){pageInfo{hasNextPage endCursor} nodes{... on PullRequest{number repository{nameWithOwner}}}}}`;
   return searchAllPages<{ number: number; repository: { nameWithOwner: string } }>(q).map((n) => `${n.repository.nameWithOwner}#${n.number}`);
 }
 
-function harvest(refs: string[], jack: string, dir: string): { added: number; skipped: string[]; failed: string[]; truncated: string[]; total: number } {
+function harvest(refs: string[], author: string, dir: string): { added: number; skipped: string[]; failed: string[]; truncated: string[]; total: number } {
   const skipped: string[] = [];
   const failed: string[] = [];
   const truncated: string[] = [];
@@ -103,13 +103,13 @@ function harvest(refs: string[], jack: string, dir: string): { added: number; sk
   for (const ref of refs) {
     try {
       const pr = fetchPr(ref);
-      if ((pr.author?.login ?? '').toLowerCase() !== jack.toLowerCase()) { skipped.push(ref); continue; }
+      if ((pr.author?.login ?? '').toLowerCase() !== author.toLowerCase()) { skipped.push(ref); continue; }
       const cut = truncatedParts(pr);
       if (cut.length) truncated.push(`${ref} (${cut.join('/')})`);
       // Reload right before the write: another run may have saved while gh was slow, and merging is idempotent by source id.
       const store = loadStore(dir);
       const before = store.findings.length;
-      store.findings = mergeItems(store.findings, itemsFrom(pr, ref, jack), today());
+      store.findings = mergeItems(store.findings, itemsFrom(pr, ref, author), today());
       if (!cut.length) store.harvested[ref] = today();
       saveStore(dir, store);
       added += store.findings.length - before;
@@ -137,7 +137,7 @@ export function renderBatch(findings: Finding[], triage: Map<string, Triage>, ra
   const planning = done.filter((f) => triage.get(f.id)!.klass === 'planning' && !dropped.includes(f));
   const real = done.filter((f) => !dropped.includes(f) && !planning.includes(f));
   const cov = (c: string) => real.filter((f) => triage.get(f.id)!.coverage === c).length;
-  const L = [`---`, `stream: Mithril`, `date: ${range.until}`, `status: awaiting Jack's approval`, `---`, ``,
+  const L = [`---`, `stream: Mithril`, `date: ${range.until}`, `status: awaiting approval`, `---`, ``,
     `# Review misses, batch ${n} (${range.since} to ${range.until})`, ``, `Loop: [[copilot-feedback-loop]]. Previous batch: the newest earlier copilot-findings-batch note in this folder.`, ``, `## Summary`, ``,
     `- **Harvested:** ${findings.length} distinct findings from ${new Set(findings.flatMap((f) => f.prs)).size} PRs (${findings.reduce((s, f) => s + f.threads, 0)} threads; twins and repeat passes collapsed).`,
     `- **Mithril misses:** ${real.length} real. Coverage: ${cov('covered')} covered, ${cov('partial')} partial, ${cov('not-covered')} not covered.`,
@@ -169,7 +169,7 @@ export function renderBatch(findings: Finding[], triage: Map<string, Triage>, ra
     g.fs.push(f);
     groups.set(key, g);
   }
-  L.push(``, `## Candidate skill updates (proposals; nothing ships without Jack's approval)`, ``, `| # | Skill / rule | Change (exact wording) | Citation | Evidence | Status |`, `|---|---|---|---|---|---|`);
+  L.push(``, `## Candidate skill updates (proposals; nothing ships without approval)`, ``, `| # | Skill / rule | Change (exact wording) | Citation | Evidence | Status |`, `|---|---|---|---|---|---|`);
   [...groups.values()].forEach(({ skill, text, cite, fs }, i) => {
     const status = cite === 'unsourced' ? 'blocked: unsourced' : candidateStatus(fs);
     L.push(`| ${i + 1} | \`${skill}\` | ${cell(text)} | ${cite} | ${fs.length} findings, ${new Set(fs.flatMap((f) => f.changes)).size} changes | ${status} |`);
@@ -187,13 +187,13 @@ function main(argv: string[]): number {
   const dir = storeDir(a.arg('store'));
   const json = argv.includes('--json');
   if (cmd === 'harvest') {
-    const jack = a.arg('jack', GH_LOGIN);
-    if (!jack || !LOGIN.test(jack)) return fail('pass --jack <login> (or set gh_login)');
+    const author = a.arg('author', GH_LOGIN);
+    if (!author || !LOGIN.test(author)) return fail('pass --author <login> (or set gh_login)');
     const since = a.arg('since');
-    const refs = a.positional.length ? a.positional : since ? mergedSince(jack, since) : [];
+    const refs = a.positional.length ? a.positional : since ? mergedSince(author, since) : [];
     if (!refs.length || refs.some((r) => !REF.test(r))) return fail('harvest needs owner/repo#N refs or --since YYYY-MM-DD with merged PRs');
-    const r = harvest(refs, jack, dir);
-    if (json) printJson(r); else console.log(`harvested ${refs.length - r.skipped.length - r.failed.length} PRs: ${r.added} new findings (${r.total} total); skipped ${r.skipped.length} not by ${jack}; ${r.failed.length} unreadable${r.truncated.length ? `; MORE THAN ONE PAGE, not fully read: ${r.truncated.join(', ')}` : ''}${r.failed.map((f) => `\n  ${f}`).join('')}`);
+    const r = harvest(refs, author, dir);
+    if (json) printJson(r); else console.log(`harvested ${refs.length - r.skipped.length - r.failed.length} PRs: ${r.added} new findings (${r.total} total); skipped ${r.skipped.length} not by ${author}; ${r.failed.length} unreadable${r.truncated.length ? `; MORE THAN ONE PAGE, not fully read: ${r.truncated.join(', ')}` : ''}${r.failed.map((f) => `\n  ${f}`).join('')}`);
     return r.failed.length || r.truncated.length ? 2 : 0;
   }
   if (cmd === 'pending') {

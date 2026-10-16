@@ -88,7 +88,7 @@ export function hintsFor(item: Pick<Item, 'text' | 'outsideDiff'>): string[] {
   return out;
 }
 
-/** Fate from what Jack's reply says. A hint only: the thread state and one reply cannot tell a declined thing from a fixed one for sure. */
+/** Fate from what the user's reply says. A hint only: the thread state and one reply cannot tell a declined thing from a fixed one for sure. */
 export function fateFrom(resolved: boolean, jackReplies: string[]): FateHint {
   const said = jackReplies.join(' ').toLowerCase();
   if (/\b(false positive|not an issue|by design|intended|won'?t|declin|out of scope|pre-?existing|not a bug)\b/.test(said)) return 'declined';
@@ -107,13 +107,13 @@ export interface PrNode {
 }
 
 /**
- * Items from one PR node. Inline threads come from the first comment's author; later comments by `jack` only set the fate and are never stored.
- * Review bodies and issue comments count for humans and Aikido only: a Copilot overview body repeats its inline threads. Jack's own comments are skipped.
+ * Items from one PR node. Inline threads come from the first comment's author; later comments by `author` only set the fate and are never stored.
+ * Review bodies and issue comments count for humans and Aikido only: a Copilot overview body repeats its inline threads. the user's own comments are skipped.
  */
-export function itemsFrom(pr: PrNode, ref: string, jack: string): Item[] {
+export function itemsFrom(pr: PrNode, ref: string, author: string): Item[] {
   const files = pr.files?.pageInfo?.hasNextPage ? null : new Set((pr.files?.nodes ?? []).map((f) => f.path));
   const change = `${ref.split('#')[0]}:${pr.headRefName ?? ref}`;
-  const mine = (n: Node | undefined): boolean => (n?.author?.login ?? '').toLowerCase() === jack.toLowerCase();
+  const mine = (n: Node | undefined): boolean => (n?.author?.login ?? '').toLowerCase() === author.toLowerCase();
   const out: Item[] = [];
   for (const t of pr.reviewThreads?.nodes ?? []) {
     const [first, ...rest] = t.comments?.nodes ?? [];
