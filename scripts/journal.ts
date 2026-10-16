@@ -241,6 +241,7 @@ import { pageConfig } from './status-page.ts';
 import type { Priority, PrioritiesState } from './lib/status-page/priorities.ts';
 import { prioritiesDir, readProjectFile } from './lib/status-page/project-priorities.ts';
 import { syncProjectPriorities } from './lib/status-page/project-priorities-sync.ts';
+import { ledgerDay, userDay } from './lib/ledger-day.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
@@ -335,11 +336,13 @@ const store = openStore({ vault, project, dryRun, window: windowId });
 const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = store;
 const today = (): string => new Date().toISOString().slice(0, 10);
 const now = (): string => new Date().toISOString();
+/** The calendar day a `defer --until` date is read in and a deferral lapses on: the user's zone, not the UTC stamp day (lib/ledger-day.ts). */
+const deferDay = (): string => userDay(WATCH_TZ);
 /** The message of a caught value; `catch` binds `unknown`. */
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 // Wrappers: the extracted triage, verify and prime modules read the run through these contexts.
-const triageCtx = () => ({ readLedger, fold, today, resolveRefFile, window: windowId, staleWipDays: STALE_WIP_DAYS });
+const triageCtx = () => ({ readLedger, fold, today, deferDay, resolveRefFile, window: windowId, staleWipDays: STALE_WIP_DAYS });
 const verifyCtx = () => ({ ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS, autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault });
 const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false), conditions: conditionLinesSafe, rules: () => ruleLines(readLedger(), windowId) });
 const triageReport = (d: string, since?: string) => triageReportIn(triageCtx(), d, since);
@@ -392,7 +395,7 @@ function streamOrNone(raw: string | null): string | undefined {
 }
 
 // The board modules read the run through this: the ledger, the registry and the clock.
-const boardCtx = boardContextFor(store, { has, today, dryRun });
+const boardCtx = boardContextFor(store, { has, today, deferDay, dryRun });
 const foldLedger = boardCtx.fold;
 // A `ref` row is append-only. Readers that fold the ledger still see those files on the decision.
 boardCtx.fold = (entries) => withAttachedRefs(foldLedger(entries), entries);
@@ -1292,13 +1295,10 @@ const configuredStatusPageUri = (): string => statusPageUri({
 const boardReviewQueue = () => boardQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, REVIEW_QUEUE_ORGS);
 
 /**
- * The day queue ages are counted to. Rows are stamped with the UTC day (`today()`), so the age must be measured to the UTC day too: the local
- * day (`d`) is a day behind from UTC midnight until local midnight and under-counted every age by one. MAESTRO_NOW (an ISO time) pins the clock for tests.
+ * The day queue ages and the stale count are counted to. Rows are stamped with the UTC day (`today()`), so ages must be measured to the UTC day
+ * too: the local day (`d`) is a day behind from UTC midnight until local midnight and under-counted every age by one. `MAESTRO_NOW` pins the clock for tests.
  */
-function queueClockDay(): string {
-    const pinned = process.env.MAESTRO_NOW ? new Date(process.env.MAESTRO_NOW) : null;
-    return pinned && !Number.isNaN(pinned.getTime()) ? pinned.toISOString().slice(0, 10) : today();
-}
+const queueClockDay = (): string => ledgerDay();
 
 /** The queue-hygiene footer line: oldest queued age and rows that already have a built branch. Branch names come from the row's repo under the container root (the-maestro's own checkout for a row with no repo); each repo is listed once. */
 function boardQueueHygiene(g: Groups, today: string): string {
@@ -1372,11 +1372,11 @@ function cmdStatus() {
     const done = view.all;
 
     if (asJson) {
-        printJson(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g), STALE_WIP_DAYS));
+        printJson(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g), STALE_WIP_DAYS, queueClockDay()));
         return;
     }
 
-    const live = { today: d, leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched };
+    const live = { today: queueClockDay(), leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched };
     const queueFooter = has('footer') ? footerReviewQueue() ?? undefined : boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
     if (has('footer')) {
@@ -2644,7 +2644,8 @@ function cmdDefer() {
     const until = arg('until');
     if (!id || !until) die('Usage: journal.ts defer <id> --until YYYY-MM-DD');
     if (!isDate(until)) die('--until must be YYYY-MM-DD.');
-    if (until <= today()) die(`--until ${until} is not in the future (today is ${today()}).`);
+    const day = deferDay();
+    if (until <= day) die(`--until ${until} is not in the future (today is ${day} in ${WATCH_TZ || 'the system zone'}).`);
     const entries = readLedger();
     const target = fold(entries).items.find((i) => i.id === id);
     if (!target) die(`No item with id "${id}".`);

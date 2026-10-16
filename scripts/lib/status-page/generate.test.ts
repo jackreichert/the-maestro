@@ -542,3 +542,11 @@ test('a cache whose developTwin is damaged is treated as absent', () => {
   writePrCache(d, { fetchedAt: NOW, prs: [{ ...raw(1, 'acme-widgets'), developTwin: { number: 'x' } } as never] });
   assert.equal(readPrCache(d), null);
 });
+
+test('an ask written in the evening, Eastern, is aged in page days like the web card: 4 days old on the fourth morning, not 3 from its UTC date', () => {
+  const d = dir();
+  const evening = { id: 'ee55', date: '2026-10-01', ts: '2026-10-01T00:30:00Z', text: 'evening question', stream: 'Alpha' };
+  const journal = (sub: 'status' | 'triage') => (sub === 'status' ? { ...board.status, awaiting: [evening] } : board.triage);
+  const r = generate(opts(d), deps([], { journal, now: () => new Date('2026-10-05T01:00:00Z') }));
+  assert.match(r.page, /`ee55` \*\*evening question\*\*[^\n]*_4 days old_/);
+});

@@ -25,9 +25,9 @@ export interface StatusJson {
  * since-roll slice. Pass `sinceRoll` when a roll happened that day so the footer can say how many finished after it.
  * A caller that already has the lists passes them to avoid folding twice.
  */
-export function statusJson(g: Groups, d: string, session: SessionStatus, done?: LedgerItem[], sinceRoll?: LedgerItem[], leases?: LeaseSummary, staleDays?: number): StatusJson {
+export function statusJson(g: Groups, d: string, session: SessionStatus, done?: LedgerItem[], sinceRoll?: LedgerItem[], leases?: LeaseSummary, staleDays?: number, staleToday: string = d): StatusJson {
     const view = done === undefined ? footerDone(g, d) : { all: done, sinceRoll };
-    const live = leases ? { today: d, leased: new Set(leases.held.map((h) => h.item)), staleDays, touched: g.touched } : undefined;
+    const live = leases ? { today: staleToday, leased: new Set(leases.held.map((h) => h.item)), staleDays, touched: g.touched } : undefined;
     const stale = live ? staleInflight(g.inflight, live) : undefined;
     return {
         date: d,

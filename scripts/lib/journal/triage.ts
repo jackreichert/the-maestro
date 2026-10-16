@@ -10,7 +10,7 @@ import { defaultPendingSince, pendingTransitions } from './prime.ts';
 import type { PendingContext, PendingRow } from './prime.ts';
 
 /** What triage reads from the run: the ledger, its fold, the clock, and how a --ref resolves to a file. */
-export interface TriageContext extends PendingContext { today: () => string; resolveRefFile: (ref: string) => string | null; /** The window running triage: other windows' window-scoped rules and notes are not offered, so `--apply` cannot close them. */ window?: string;
+export interface TriageContext extends PendingContext { today: () => string; /** The day a deferral lapses on; `today` when absent. */ deferDay?: () => string; resolveRefFile: (ref: string) => string | null; /** The window running triage: other windows' window-scoped rules and notes are not offered, so `--apply` cannot close them. */ window?: string;
     /** Days in flight after which a row is stale (`stale_wip_days`); the shared default when absent. */ staleWipDays?: number }
 /** One boxed item. */
 export interface TriageItem {
@@ -29,12 +29,12 @@ export interface TriageReport {
  * Every item triage looks at, boxed: open items of any age, plus decisions, notes and learned rows dated since..d that nothing
  * has closed. Each carries `ref` (the first --ref that is an existing file, else null) and `stale`.
  */
-export function triageItems(ctx: Pick<TriageContext, 'readLedger' | 'fold' | 'today' | 'resolveRefFile' | 'window' | 'staleWipDays'>, d: string, since: string): TriageItem[] {
+export function triageItems(ctx: Pick<TriageContext, 'readLedger' | 'fold' | 'today' | 'deferDay' | 'resolveRefFile' | 'window' | 'staleWipDays'>, d: string, since: string): TriageItem[] {
     const { readLedger, fold, today, resolveRefFile } = ctx;
     const entries = readLedger();
     const folded = fold(entries);
     const approvals = approvalMap(entries);
-    const deferred = activeDeferrals(entries, today());
+    const deferred = activeDeferrals(entries, (ctx.deferDay ?? today)());
     const inScope = (i: LedgerItem): boolean => isOpen(i) || (!i.closedBy && ['decision', 'note', 'learned'].includes(i.kind ?? '') && (i.date ?? '') >= since && (i.date ?? '') <= d);
     return folded.items.filter((i) => !folded.hidden.has(i.id ?? '') && visibleTo(i, ctx.window) && inScope(i)).map((i) => {
         const box = classify(i, approvals.get(i.id ?? ''));

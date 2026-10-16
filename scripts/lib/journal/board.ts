@@ -17,6 +17,8 @@ import { lastTouchOf, touchDates } from '../last-touch.ts';
 export interface BoardContext extends Pick<Store, 'readLedger' | 'rollPoint' | 'loadRegistry' | 'ensureDir' | 'dir'> {
     fold: (entries: LedgerRow[]) => ReturnType<typeof foldRows>;
     today: () => string;
+    /** The day a deferral lapses on: the user's calendar day. `today` when absent (lib/ledger-day.ts). */
+    deferDay?: () => string;
     has: Args['has'];
     mapStream: (stream: string | undefined) => string | undefined;
     dryRun: boolean;
@@ -80,12 +82,13 @@ export const noStream = <T extends Streamed>(arr: T[]): T[] => arr.filter((i) =>
 
 export function groups(ctx: BoardContext, includeArchived = false): Groups {
     const { readLedger, fold, today, rollPoint } = ctx;
+    const deferDay = ctx.deferDay ?? today;
     // Folded items are the rows that have an id.
     const idOf = (i: LedgerItem): string => i.id ?? '';
     const entries = readLedger();
     const folded = fold(entries);
     const items = (includeArchived ? folded.items : folded.items.filter((i) => !folded.hidden.has(idOf(i)))).filter((i) => visibleTo(i, ctx.window));
-    const deferred = activeDeferrals(entries, today());
+    const deferred = activeDeferrals(entries, deferDay());
     const open = items.filter((i) => isOpen(i) && !deferred.has(idOf(i)));
     return {
         items,

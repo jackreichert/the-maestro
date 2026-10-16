@@ -4,7 +4,7 @@ import type { BoardContext } from './board.ts';
 import type { Store } from './store.ts';
 
 /** The run settings the board context needs beyond the store: the flags, the clock and whether writes are suppressed. */
-export interface BoardRun { has: Args['has']; today: () => string; dryRun: boolean }
+export interface BoardRun { has: Args['has']; today: () => string; /** The day a deferral lapses on (`defer --until` is a calendar date in the user's zone); `today` when absent. */ deferDay?: () => string; dryRun: boolean }
 
 /**
  * The one definition of the board context. `fold` and `mapStream` read the registry through the store on every call,
@@ -21,6 +21,7 @@ export function boardContextFor(store: Store, run: BoardRun): BoardContext {
         fold: (entries) => foldWith(entries, loadRegistry()),
         mapStream: (s) => mapStreamWith(loadRegistry(), s),
         today: run.today,
+        ...(run.deferDay ? { deferDay: run.deferDay } : {}),
         has: run.has,
         dryRun: run.dryRun,
         window: store.window,
