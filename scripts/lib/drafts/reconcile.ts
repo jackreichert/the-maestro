@@ -12,7 +12,7 @@ import { toolCommand } from '../tool-bin.ts';
 
 /** A read-only `gh` runner. Deliberately not imported from post.ts: only the approve route may import that module, and this one never writes to GitHub. */
 export type GhRead = (args: string[]) => { status: number | null; stdout: string; stderr: string };
-const spawnRead: GhRead = (args) => {
+export const spawnRead: GhRead = (args) => {
   const [cmd, argv] = toolCommand('gh', args);
   const r = spawnSync(cmd, argv, { encoding: 'utf8', timeout: 30_000 });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };

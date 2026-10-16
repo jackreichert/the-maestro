@@ -171,3 +171,42 @@ test('an approved PR is left out: by its decision, or by an approving review fro
   assert.deepEqual(out.map((p) => p.number).sort(), [1, 4]);
   assert.match(othersSearch(['acme']) ?? '', / -review:approved /);
 });
+
+const rv = (login: string, state: string, submittedAt: string, bodyText = '', typename = 'User'): unknown => ({ author: { login, __typename: typename }, state, submittedAt, bodyText });
+
+test('a PR another person already reviewed (a verdict, or a comment with a body) leaves the tab; a bodiless comment, a bot and the author do not', () => {
+  const out = reduceOthers([
+    node({ number: 1 }),
+    node({ number: 2, reviews: { nodes: [rv('kim-fake', 'CHANGES_REQUESTED', '2026-10-03T00:00:00Z')] } }),
+    node({ number: 3, reviews: { nodes: [rv('kim-fake', 'COMMENTED', '2026-10-03T00:00:00Z', 'Please split this.')] } }),
+    node({ number: 4, reviews: { nodes: [rv('kim-fake', 'COMMENTED', '2026-10-03T00:00:00Z', '')] } }),
+    node({ number: 5, reviews: { nodes: [rv('copilot-pull-request-reviewer', 'COMMENTED', '2026-10-03T00:00:00Z', 'Looks fine', 'Bot')] } }),
+    node({ number: 6, reviews: { nodes: [rv('pat-fake', 'COMMENTED', '2026-10-03T00:00:00Z', 'Replying.')] } }),
+  ] as never, SCOPE);
+  assert.deepEqual(out.map((p) => p.number).sort(), [1, 4, 5, 6]);
+});
+
+test('you were asked and have not reviewed: it stays when someone else commented, and goes once you have reviewed', () => {
+  const kim = rv('kim-fake', 'COMMENTED', '2026-10-03T00:00:00Z', 'My take.');
+  const asked = { reviewRequests: { nodes: [{ requestedReviewer: { login: 'ME-fake' } }] } };
+  const out = reduceOthers([
+    node({ number: 1, ...asked, reviews: { nodes: [kim] } }),
+    node({ number: 2, ...asked, reviews: { nodes: [kim, rv('me-fake', 'COMMENTED', '2026-10-04T00:00:00Z', 'Mine.')] } }),
+  ] as never, SCOPE);
+  assert.deepEqual(out.map((p) => p.number), [1]);
+});
+
+test('an approval at the head leaves the tab, and a push after it with the reviewer asked again brings the card back', () => {
+  const approved = rv('kim-fake', 'APPROVED', '2026-10-03T00:00:00Z');
+  const head = (committedDate: string): Record<string, unknown> => ({ commits: { nodes: [{ commit: { committedDate } }] } });
+  const out = reduceOthers([
+    node({ number: 1, reviews: { nodes: [approved] }, ...head('2026-10-02T00:00:00Z') }),
+    node({ number: 2, reviews: { nodes: [approved] }, ...head('2026-10-04T00:00:00Z'), reviewRequests: { nodes: [{ requestedReviewer: { login: 'kim-fake' } }] } }),
+  ] as never, SCOPE);
+  assert.deepEqual(out.map((p) => p.number), [2]);
+});
+
+test('the search reads each review\'s body and kind of author, which the classifier needs', async () => {
+  const { othersQuery } = await import('./others.ts');
+  assert.match(othersQuery('x'), /reviews\(last: 30\) \{ nodes \{ author \{ login __typename \} state submittedAt bodyText \} \}/);
+});

@@ -120,6 +120,7 @@ export class OthersPrs extends HTMLElement {
     this.#view.replaceChildren(
       this.#statusLine(`${d.total} open ${d.total === 1 ? 'PR' : 'PRs'} by teammates. ${when}${d.prData.failure ? ` The last read failed (${d.prData.failure}); this is the last good list.` : ''}`, !!d.prData.failure),
       ...this.#waitingNote(d.prs, byPr),
+      ...this.#orphanNote(byPr, listed),
       ...(d.prs.length ? this.#tabbed(d.prs, byPr) : [tacet('No teammate PR is open.', 'tacet')]),
       ...this.#ignoredList(d.prs),
       ...(this.#drafts ? [...(hasOrphans ? [h('h3', { class: 'orphans' }, 'Drafts on PRs not listed above')] : []), this.#drafts.queue((x) => !listed.has(key(x.repo, x.pr)), '', false, authorOf)] : []));
@@ -187,6 +188,15 @@ export class OthersPrs extends HTMLElement {
     const b = h('button', { type: 'button', class: 'secondary' }, `Show ${n === 1 ? 'it' : 'them'} (${label})`);
     b.addEventListener('click', () => this.#select(tab, true));
     return [h('p', { class: 'status', 'data-note': 'waiting-drafts' }, `${n} drafted ${n === 1 ? 'review waits' : 'reviews wait'} for your Approve in the ${label} tab. `, b)];
+  }
+
+  /** Review drafts on PRs the tab does not list (merged, approved, ignored, past the drop window) sit under "Drafts on PRs not listed above" at the foot of a long page; say so at the top. */
+  #orphanNote(byPr: Map<string, DraftRow[]>, listed: ReadonlySet<string>): Node[] {
+    const n = [...byPr].filter(([k]) => !listed.has(k)).reduce((sum, [, rows]) => sum + rows.filter(waiting).length, 0);
+    if (n === 0) return [];
+    const b = h('button', { type: 'button', class: 'secondary' }, 'Show them');
+    b.addEventListener('click', () => { this.#root.querySelector('h3.orphans')?.scrollIntoView?.({ block: 'start' }); });
+    return [h('p', { class: 'status', 'data-note': 'orphan-drafts' }, `${n} drafted ${n === 1 ? 'review waits' : 'reviews wait'} on PRs the tab does not list. `, b)];
   }
 
   /** Runs one write for one PR: the button is off while it is in flight, a refusal is shown on the row, a success is announced. */
