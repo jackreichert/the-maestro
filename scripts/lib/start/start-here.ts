@@ -21,7 +21,7 @@ const NEEDS_TOP = 5;
 /** What a stream's tab holds, as counts; the notes themselves live on the tab. `unreadable` is set when the notes could not be read, so the stream is reported rather than omitted. */
 export interface HomeCounts { context: boolean; decisions: boolean; plans: number; research: number; reviews: number; runbooks: number; epics: number; prs: number; unreadable?: string }
 export interface NeedRow { id: string; stream: string; text: string; ageDays: number | null; stakes: string }
-export interface FlightRow { id: string; stream: string; text: string; model?: string; since?: string; ticket?: string }
+export interface FlightRow { id: string; stream: string; text: string; model?: string; since?: string; ticket?: string; /** The durable brief file linked to the row, so a new session can re-dispatch it. */ brief?: string }
 export interface DoneRow { stream: string; count: number; items: { id: string; text: string }[] }
 export interface AnsweredRow { id: string; stream: string; asked: string; answer: string; date: string }
 
@@ -83,7 +83,7 @@ export function homeCounts(home: StreamHome): HomeCounts {
 }
 
 const ageDays = (ts: string | undefined, now: Date): number | null => (ts && Number.isFinite(Date.parse(ts)) ? Math.max(0, Math.floor((now.getTime() - Date.parse(ts)) / 86_400_000)) : null);
-const flight = (i: LedgerItem): FlightRow => ({ id: i.id ?? '', stream: streamOf(i), text: i.text ?? '', ...(i.model ? { model: i.model } : {}), ...(typeof i.stateTs === 'string' || i.ts ? { since: (i.stateTs as string | undefined) ?? i.ts } : {}), ...(i.ticket ? { ticket: i.ticket } : {}) });
+const flight = (i: LedgerItem): FlightRow => ({ id: i.id ?? '', stream: streamOf(i), text: i.text ?? '', ...(i.model ? { model: i.model } : {}), ...(typeof i.stateTs === 'string' || i.ts ? { since: (i.stateTs as string | undefined) ?? i.ts } : {}), ...(i.ticket ? { ticket: i.ticket } : {}), ...(i.brief ? { brief: i.brief } : {}) });
 
 /** The board as the Start view's data. Asks rank: by the position of their stream in today's priorities (streams not named last), then older before newer. */
 export function buildStart(g: Groups, o: StartOptions): StartHere {
@@ -154,7 +154,7 @@ function sections(s: StartHere, now: Date, stream?: string): Section[] {
     { title: `Needs Jack (${total}${!stream && counts ? `: ${counts}` : ''})`, rows: needs.map((n) => `- \`${n.id}\`${tag(n.stream)} ${one(n.text, 130)}${n.ageDays === null ? '' : ` · ${n.ageDays}d`} · ${n.stakes || 'no decision fields'}`), more: 'journal.ts status', cap: stream ? 10 : NEEDS_TOP },
     { title: 'Up next', rows: stream ? [] : (s.upNext ?? []).map((u, i) => `${i + 1}. \`${u.id}\`${u.key ? ` (${u.key})` : ''} [${u.project}] ${one(u.title, 90)} · ${u.score} · ${one(u.why, 80)}`), more: 'journal.ts next', cap: UP_NEXT_TOP },
     { title: 'Commitments and conditions', rows: [...s.conditions, ...s.standing].map((l) => `- ${one(l, 200)}`), more: 'journal.ts standing list', cap: 6 },
-    { title: `In flight (${flight.length}${queued.length ? `, queued ${queued.map(([k, n]) => `${k} ${n}`).join(', ')}` : ''})`, rows: flight.map((f) => `- \`${f.id}\`${tag(f.stream)} ${one(f.text, 100)}${f.model ? ` · ${f.model}` : ''}${ago(f.since, now)}`), more: 'journal.ts status', cap: 10 },
+    { title: `In flight (${flight.length}${queued.length ? `, queued ${queued.map(([k, n]) => `${k} ${n}`).join(', ')}` : ''})`, rows: flight.map((f) => `- \`${f.id}\`${tag(f.stream)} ${one(f.text, 100)}${f.model ? ` · ${f.model}` : ''}${ago(f.since, now)}${f.brief ? ` · brief: ${f.brief}` : ''}`), more: 'journal.ts status', cap: 10 },
     { title: 'Blocked', rows: mine(s.blocked).map((b) => `- \`${b.id}\`${tag(b.stream)} ${one(b.text, 100)}${b.gate ? ` · gate: ${one(b.gate, 60)}` : ''}`), more: 'journal.ts triage', cap: 4 },
     { title: `Yesterday (${s.yesterday})`, rows: mine(s.done).map((d) => `- ${d.stream}: ${d.count} done, ${d.items.slice(0, 3).map((x) => one(x.text, 60)).join('; ')}${d.items.length > 3 ? '; …' : ''}`), more: 'journal.ts standup', cap: 6 },
     { title: 'Answered in the last 2 days', rows: mine(s.answered).map((a) => `- \`${a.id}\`${tag(a.stream)} ${one(a.asked, 70)} → ${one(a.answer || '(no answer text)', 90)}`), more: 'journal.ts triage', cap: 6 },

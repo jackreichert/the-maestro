@@ -237,7 +237,7 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
     const streams = new Map<string, string | undefined>();
     const archivedBy = new Map<string, string[]>();
     const moves = new Map<string, { queued: boolean; ts: string | undefined }>();
-    const where = new Map<string, Pick<LedgerRow, 'worktree' | 'branch' | 'nextStep'>>();
+    const where = new Map<string, Pick<LedgerRow, 'worktree' | 'branch' | 'nextStep' | 'brief'>>();
     const answers = new Map<string, string>();
     const discussing = new Map<string, string>();
     const attached = new Map<string, string[]>();
@@ -252,6 +252,7 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
         if (target) {
             const merged = { ...where.get(target) };
             for (const k of ['worktree', 'branch', 'nextStep'] as const) if (typeof e[k] === 'string' && e[k]) merged[k] = e[k];
+            if (e.kind === 'brief' && typeof e.brief === 'string' && e.brief) merged.brief = e.brief;
             where.set(target, merged);
         }
         if (e.kind === 'queue' && e.queues) moves.set(e.queues, { queued: true, ts: e.ts });

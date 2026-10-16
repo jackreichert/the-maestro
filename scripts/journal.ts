@@ -269,6 +269,7 @@ import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 import { correctedCommand, inferStreamForRepo, isPlaceholder, modelOfAgentType } from './lib/journal/start-hints.ts';
+import { briefLinkRow, briefOf, briefTextProblem, briefsDir, linkableBrief, readBriefStdin, saveBrief } from './lib/journal/brief-link.ts';
 import { dryRunJson, printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -1003,9 +1004,12 @@ function cmdQueue(): void {
 function cmdStart(): void {
     const entries = readLedger();
     const target = itemNamedByArg(fold(entries).items);
+    // A refused brief must exit before anything is written, like a refused --branch below.
+    const brief = briefFromFlags();
     if (!target || target.kind !== 'wip') {
         if (!has('force')) { const why = umbrellaRefusal({ text: positional.join(' ') || arg('text') }, fold(entries).items); if (why) die(why); }
-        cmdLog('wip', { lease: true, inferStream: true });
+        const opened = cmdLog('wip', { lease: true, inferStream: true });
+        linkBrief(opened.id, brief, opened);
         return;
     }
     if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
@@ -1016,6 +1020,7 @@ function cmdStart(): void {
     takeLease(target.id as string);
     if (!isQueued(target)) {
         if (Object.keys(where).length) writeNext(target, where, entries);
+        linkBrief(target.id as string, brief, target);
         console.log(`wip  ${target.id}  ${target.text}  (already in flight)`);
         return;
     }
@@ -1024,7 +1029,43 @@ function cmdStart(): void {
     appendMany(rows);
     if (Object.keys(where).length) writeNext(target, where, [...entries, ...rows]);
     else if (!dryRun) render(true);
+    linkBrief(target.id as string, brief, target);
     console.log(`wip  ${target.id}  ${target.text}  (promoted from queued)`);
+}
+
+/** What `start --brief <path>` or `--brief-file -` asks for: an existing file to link, or text to save first. Refuses (exit 1, nothing written) on a missing file, an empty or oversize brief, or one that holds a secret. */
+function briefFromFlags(): { file?: string; text?: string } | undefined {
+    const path = arg('brief');
+    const fromStdin = arg('brief-file');
+    if (path && fromStdin) die('Give --brief <path> or --brief-file -, not both.');
+    if (has('brief') && !path) die('--brief needs the path of a brief file.');
+    if (has('brief-file') && fromStdin !== '-') die('--brief-file takes - (the brief on standard input); to link a file that exists use --brief <path>.');
+    try {
+        if (path) return { file: linkableBrief(path, process.cwd()) };
+        if (fromStdin) {
+            if (process.stdin.isTTY) throw new Error('--brief-file - reads the brief from standard input, and none is piped in');
+            const text = readBriefStdin();
+            const problem = briefTextProblem(text);
+            if (problem) throw new Error(problem);
+            return { text };
+        }
+    } catch (e) { die(`start: ${errorMessage(e)}. Nothing was written.`); }
+    return undefined;
+}
+
+/** Writes the `brief` row that links the brief to item `id` (saving standard-input text under the ledger's Briefs folder first). Idempotent: the same file already linked is reported, not written again. */
+function linkBrief(id: string | undefined, brief: { file?: string; text?: string } | undefined, item: { text?: string; repo?: string; stream?: string }): void {
+    if (!brief || !id) return;
+    if (dryRun) { console.log(`[dry-run] brief linked to ${id}`); return; }
+    let file: string;
+    // A linked file is copied in, so the link points at a stored, checked brief that cannot change or vanish afterwards.
+    const dir = briefsDir(vault, project);
+    try { file = brief.file?.startsWith(`${dir}/`) ? brief.file : saveBrief(dir, brief.file ? readFileSync(brief.file, 'utf8') : brief.text ?? '', { day: today(), title: item.text ?? id, id }); } catch (e) { die(`start: ${errorMessage(e)}. The item ${id} was started without it.`); }
+    const entries = readLedger();
+    if (briefOf(entries, id) === file) { console.log(`brief  ${id}  ${file}  (already linked)`); return; }
+    append({ id: newId(entries), ts: now(), date: today(), ...briefLinkRow(id, file, { repo: item.repo || undefined, stream: item.stream || undefined }), ...usageFromArgs() });
+    if (!dryRun) render(true);
+    console.log(`brief  ${id}  ${file}`);
 }
 
 /** The worktree, branch and next step the flags carry (`--worktree`, `--branch`, `--next`); a worktree alone names its checked-out branch. Empty when none is given. */
