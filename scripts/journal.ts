@@ -219,7 +219,8 @@ import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, appr
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAskTemplate, envAsksToRaise } from './lib/journal/env-asks.ts';
-import { sessionStatus } from './token-metrics.ts';
+import { sessionFileById, sessionStatus } from './token-metrics.ts';
+import type { SessionStatus } from './lib/session-text.ts';
 import { RULE_SCOPES, isRuleScope, parseRuleScope, ruleFooter, ruleLines } from './lib/journal/scope.ts';
 import type { RuleScope } from './lib/journal/scope.ts';
 import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
@@ -1389,11 +1390,22 @@ function boardSelfReview(): { text: string; footer: string } | null {
 function footerSessionId(): string | undefined {
     // `--session` names a transcript or it is an error: an empty or missing value (an unset $SID, or a following flag) is "no session", never the newest.
     if (has('session')) return arg('session') ?? '';
-    if (!has('stdin') || process.stdin.isTTY) return undefined;
+    const piped = has('stdin') && !process.stdin.isTTY ? stdinSessionId() : undefined;
+    return piped ?? ownSessionId();
+}
+
+/** The `session_id` of the JSON a status-line command gives on stdin; undefined when stdin is unreadable or has none. */
+function stdinSessionId(): string | undefined {
     try {
         const id = (JSON.parse(readFileSync(0, 'utf8')) as { session_id?: unknown }).session_id;
         return typeof id === 'string' && id ? id : undefined;
     } catch { return undefined; }
+}
+
+/** This window's own session: the id Claude Code exports into every Bash call, when it names a transcript in the projects folder. Without it the footer would measure whichever transcript was written last, which can be another window's. */
+function ownSessionId(): string | undefined {
+    const id = process.env.CLAUDE_CODE_SESSION_ID;
+    return id && sessionFileById(CLAUDE_PROJECTS_DIR, id) ? id : undefined;
 }
 
 /** Live leases on the board's open items, counted for this window. */
@@ -1427,6 +1439,7 @@ function cmdStatus() {
     const g = groups(has('include-archived'));
     // No --date: the day is WATCH_TZ, and closes match by timestamp in that zone. A passed --date still matches the stored date field.
     const explicit = arg('date');
+    if (explicit !== null && !isDate(explicit)) die('--date must be YYYY-MM-DD.');
     const tz = explicit === null ? WATCH_TZ : undefined;
     const d = explicit ?? localDate(new Date(), WATCH_TZ);
     const view = footerDone(g, d, tz ? { tz } : undefined);
@@ -1437,16 +1450,18 @@ function cmdStatus() {
         return;
     }
 
-    const live = { today: ledgerDay(), leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched };
+    const live = { today: ledgerDay(), leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched, doneLabel: explicit === null ? undefined : `done on ${d}` };
     const queueFooter = has('footer') ? footerReviewQueue() ?? undefined : boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
     if (has('footer')) {
         const sessionId = footerSessionId();
-        const session = sessionStatus(CLAUDE_PROJECTS_DIR, undefined, undefined, undefined, undefined, undefined, sessionId);
+        const measured = sessionStatus(CLAUDE_PROJECTS_DIR, undefined, undefined, undefined, undefined, undefined, sessionId);
+        // With no session to pin (no --session, no status-line stdin, no CLAUDE_CODE_SESSION_ID naming a transcript) the numbers are the newest transcript's: say so.
+        const session: SessionStatus = measured.available && sessionId === undefined ? { ...measured, newest: true } : measured;
         // The window is named only when the session is pinned (--session, or a status line's stdin): the newest transcript may belong to
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
-        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window) })); return; }
+        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window), doneLabel: live.doneLabel })); return; }
         [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, ledgerDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...[githubFooter(EVENT_DIR, Date.now(), WATCH_TZ)].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }

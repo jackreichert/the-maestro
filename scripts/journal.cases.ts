@@ -491,11 +491,11 @@ test('status --footer ends with the Session line for the newest session, and say
         encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000', MAESTRO_CLAUDE_SETTINGS: '/nonexistent', ...extra },
     }).stdout.trim().split('\n').pop();
     const pct = (n: string, extra = {}) => line({ CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: n, ...extra });
-    assert.equal(pct('20'), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~200k (50%) · 100k read/turn');
-    assert.equal(pct('15'), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', '66% is past the 60% default');
-    assert.equal(pct('10'), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~100k (100%) · 100k read/turn · roll now');
-    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '95', MAESTRO_ROLL_AT_PCT: '90' }), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', 'warn >= roll is rejected, so the 60/90 defaults apply');
-    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '88', MAESTRO_ROLL_AT_PCT: '95' }), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn', 'configured percents are honoured by the footer');
+    assert.equal(pct('20'), '**Session:** bbbbbbbb (newest transcript) · 4 turns · ctx 100k of ~200k (50%) · 100k read/turn');
+    assert.equal(pct('15'), '**Session:** bbbbbbbb (newest transcript) · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', '66% is past the 60% default');
+    assert.equal(pct('10'), '**Session:** bbbbbbbb (newest transcript) · 4 turns · ctx 100k of ~100k (100%) · 100k read/turn · roll now');
+    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '95', MAESTRO_ROLL_AT_PCT: '90' }), '**Session:** bbbbbbbb (newest transcript) · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', 'warn >= roll is rejected, so the 60/90 defaults apply');
+    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '88', MAESTRO_ROLL_AT_PCT: '95' }), '**Session:** bbbbbbbb (newest transcript) · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn', 'configured percents are honoured by the footer');
 });
 
 test('status --footer --line is one line; --session pins a transcript and --stdin reads its id, while the default stays multi-line', () => {
@@ -507,11 +507,11 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     const status = (args: string[], input?: string) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', input, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000', MAESTRO_CLAUDE_SETTINGS: '/nonexistent' },
     }).stdout.trim().split('\n').map((l) => l.replace(/Loop: [^|]*\| /, ''));
-    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: bbbbbbbb · 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
+    assert.deepEqual(status(['--line']), ['Ledger: 0 done today · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: bbbbbbbb (newest transcript) · 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
     // The item above was started (and so leased) by `testwin`, a different window from the session pinned below, so the pinned footers count that lease as another window's.
-    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: aaaaaaaa · 2 turns · 100k/200k (50%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: aaaaaaaa · 2 turns · 100k/200k (50%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: bbbbbbbb · 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'bad stdin falls back to the newest, still without a window');
+    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done today · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: aaaaaaaa · 2 turns · 100k/200k (50%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done today · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: aaaaaaaa · 2 turns · 100k/200k (50%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done today · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: bbbbbbbb (newest transcript) · 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'bad stdin falls back to the newest, still without a window');
     assert.match(status(['--line', '--session', 'nope'])[0], /Session: unavailable \(no session "nope" in /);
     assert.match(status(['--line', '--session', ''])[0], /Session: unavailable \(no session "" in /, 'an empty id is no session, not the newest');
     assert.match(status(['--line', '--session', '--stdin'])[0], /Session: unavailable \(no session "" in /, 'a flag-like value is no session');
@@ -524,7 +524,7 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     assert.equal(multi.find((l) => l.startsWith('**Window:**')), '**Window:** aaaaaaaa-min', 'the footer names the window of the session it measures');
     const unpinned = status([]);
     assert.equal(unpinned.find((l) => l.startsWith('**Window:**')), undefined, 'without a pinned session the newest transcript is not shown under MAESTRO_WINDOW\'s name');
-    assert.equal(unpinned.find((l) => l.startsWith('**Session:**')), '**Session:** bbbbbbbb · 1 turns · ctx 150k of ~200k (75%) · 150k read/turn · roll soon', 'the numbers still show');
+    assert.equal(unpinned.find((l) => l.startsWith('**Session:**')), '**Session:** bbbbbbbb (newest transcript) · 1 turns · ctx 150k of ~200k (75%) · 150k read/turn · roll soon', 'the numbers still show');
     assert.equal(multi.find((l) => l.startsWith('**Session:**')), '**Session:** aaaaaaaa · 2 turns · ctx 100k of ~200k (50%) · 100k read/turn', '--session applies to the multi-line footer too');
 });
 
@@ -2941,7 +2941,7 @@ test('status --footer refreshes a stale review-queue snapshot from a live read, 
         encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, ...env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events') },
     }).stdout;
     const live = warmedGhStub({ pages: [[1, 2, 3, 4, 5, 6].map((n) => prNode(n, { isDraft: false }))] });
-    assert.match(footer(live), /^\*\*Review queue:\*\* 6 of 4 waiting on reviewers \(2 over\)$/m, 'the live count, not the 11h-old 4');
+    assert.match(footer(live), /^\*\*Review queue:\*\* 6 waiting on reviewers, cap 4 \(2 over\)$/m, 'the live count, not the 11h-old 4');
     rmSync(join(journalDir, 'prs-current.json'), { force: true }); // the live read above was saved; drop it so the failing read is the one under test
     const broken = warmedGhStub({ pages: [[]], failOnPage: 0 });
     assert.match(footer(broken), /^\*\*Review queue:\*\* unknown \(snapshot 11h old; live refresh failed\)$/m);

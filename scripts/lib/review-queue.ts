@@ -101,7 +101,7 @@ export function readQueue(src: QueueSources, cap: number, now: Date = new Date()
   const stored = src.readStored();
   if (!stored) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and there is no usable snapshot` };
   const ageMs = stored.takenAt ? now.getTime() - Date.parse(stored.takenAt) : Number.NaN;
-  if (!(ageMs <= MAX_FALLBACK_AGE_MS)) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and the stored snapshot is ${stored.takenAt ? `from ${stored.takenAt}, over ${MAX_FALLBACK_AGE_MS / 36e5} hours old` : 'of unknown age'}` };
+  if (!(ageMs >= 0 && ageMs <= MAX_FALLBACK_AGE_MS)) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and the stored snapshot is ${stored.takenAt ? `from ${stored.takenAt}, over ${MAX_FALLBACK_AGE_MS / 36e5} hours old` : 'of unknown age'}` };
   return { ok: true, queue: reviewQueue(stored.prs, cap, selfReview, owners), prs: stored.prs, source: 'snapshot', takenAt: stored.takenAt, liveError };
 }
 
@@ -121,6 +121,7 @@ export const STALE_SNAPSHOT_MS = 10 * 60_000;
 /** ` (snapshot 40m old)`, `5h`, `3d`: how old a snapshot is, for the board line; empty when it is under ten minutes old or its time is unknown (the board reads it without a network call, so a PR merged since then still shows as open until the next refresh). */
 export function staleSuffix(takenAt: string | undefined, now: Date): string {
   const ms = takenAt ? now.getTime() - Date.parse(takenAt) : Number.NaN;
+  if (ms < 0) return ' (snapshot of unknown age: dated in the future)';
   if (!Number.isFinite(ms) || ms < STALE_SNAPSHOT_MS) return '';
   if (ms < 36e5) return ` (snapshot ${Math.floor(ms / 60_000)}m old)`;
   const hours = Math.floor(ms / 36e5);
@@ -128,11 +129,11 @@ export function staleSuffix(takenAt: string | undefined, now: Date): string {
 }
 
 /**
- * `3 of 4 waiting on reviewers`, `4 of 4 waiting on reviewers (full)`, `11 of 4 waiting on reviewers (7 over) · 4 waiting on you`: the one wording for the
+ * `3 of 4 waiting on reviewers`, `4 of 4 waiting on reviewers (full)`, `11 waiting on reviewers, cap 4 (7 over) · 4 waiting on you`: the one wording for the
  * count, shared by the push gate, the board, the snapshot footer and the live footer. The `waiting on you` part is left out when it is zero.
  */
 export const queueCount = (q: ReviewQueue): string =>
-  `${q.count} of ${q.cap} waiting on reviewers${q.count > q.cap ? ` (${q.count - q.cap} over)` : q.full ? ' (full)' : ''}${q.waitingOnYou ? ` · ${q.waitingOnYou} waiting on you` : ''}`;
+  `${q.count > q.cap ? `${q.count} waiting on reviewers, cap ${q.cap} (${q.count - q.cap} over)` : `${q.count} of ${q.cap} waiting on reviewers${q.full ? ' (full)' : ''}`}${q.waitingOnYou ? ` · ${q.waitingOnYou} waiting on you` : ''}`;
 
 /**
  * The board's review queue from the stored snapshot, no network: `review queue: 3 of 4` (plus `(full)` and a stale-snapshot note), or
@@ -156,7 +157,8 @@ export const FOOTER_REFRESH_MS = 30 * 60_000;
 export function footerQueue(stored: { prs: readonly QueuePr[]; takenAt?: string } | null, cap: number, now: Date, selfReview: readonly string[], refresh: () => { prs: readonly QueuePr[] }, owners: readonly string[] = []): string | null {
   if (!stored) return null;
   const ageMs = stored.takenAt ? now.getTime() - Date.parse(stored.takenAt) : Number.NaN;
-  if (ageMs < FOOTER_REFRESH_MS) return boardQueue(stored, cap, now, selfReview, owners)?.footer ?? null;
+  // A snapshot dated in the future (clock skew) is not fresh: its age is unknown, so it takes the live read.
+  if (ageMs >= 0 && ageMs < FOOTER_REFRESH_MS) return boardQueue(stored, cap, now, selfReview, owners)?.footer ?? null;
   try {
     const q = reviewQueue(refresh().prs, cap, selfReview, owners);
     return `**Review queue:** ${queueCount(q)}`;
