@@ -144,3 +144,24 @@ test('no median means no mark and the pendulum at rest, said in words', () => {
   assert.match(text(s.querySelector('.tempo-read')), /No tempo yet/);
   assert.equal(s.querySelector<SVGElement>('.tempo-wrap .metro .pend')!.dataset['angle'], '-42');
 });
+
+test('a tempo for another day is labelled with its date and rests the pendulum, never "today"', () => {
+  const s = costSection(data(), { today: 40, median: 20, date: '2026-10-11' })!;
+  place(s);
+  assert.match(text(s.querySelector('.tempo-read')), /40 shipped on 2026-10-11/);
+  assert.doesNotMatch(text(s.querySelector('.tempo-read')), /shipped today/);
+  assert.equal(s.querySelector<SVGElement>('.tempo-wrap .metro .pend')!.dataset['angle'], '-42');
+  const stale = costSection(data({ stale: true, date: '2026-09-30' }), { today: 40, median: 20, date: '2026-09-30' })!;
+  assert.doesNotMatch(text(stale.querySelector('.tempo-read')), /shipped today/, 'a stale reading is never "today"');
+});
+
+test('ring shares that add up to more than a whole never draw a negative arc', () => {
+  const el = draw(data({ mix: { opus: 0.6, sonnet: 0.5, haiku: 0.3, opusMax: 0.4, haikuMin: 0.15 } }))!;
+  const lens = [...el.querySelectorAll('.donut .arc')].map((a) => a.getAttribute('stroke-dasharray') ?? '');
+  assert.equal(lens.length, 2, 'the arc that starts past the full circle is dropped');
+  for (const l of lens) assert.ok(l.split(' ').every((n) => Number(n) >= 0), l);
+});
+
+test('a stale limit line carries its date in the primary text', () => {
+  assert.match(text(draw(data({ stale: true, date: '2026-09-30' }))!.querySelector('.metro-read .plain')), /measured 2026-09-30/);
+});
