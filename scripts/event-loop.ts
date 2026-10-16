@@ -94,6 +94,8 @@ export interface TickDeps {
   triage?: Triage;
   /** The outside world for the quiet-wake rules (merge-sweep, gh, the ledger note); without it only the continuity rule applies. */
   quiet?: QuietDeps;
+  /** Called after each watch is checked: a tick runs its watches one after another, so this is how a long tick keeps its heartbeat fresh. Never throws into the tick. */
+  progress?: () => void;
 }
 
 /** What one tick did: the digest events, retired watches, ids skipped in quiet hours and ids not yet due. */
@@ -172,7 +174,7 @@ function renewed(dir: string, watch: Watch, type: EventType | undefined, now: nu
  * during quiet hours only `notify_overnight` watches are checked or notified.
  */
 export function tick(deps: TickDeps): TickResult {
-  const { dir, types, ctx = {} as LoopContext, config = cadenceConfig(), now = Date.now(), notifyCommand = [], notifyRun, triage, quiet: quietDeps } = deps;
+  const { dir, types, ctx = {} as LoopContext, config = cadenceConfig(), now = Date.now(), notifyCommand = [], notifyRun, triage, quiet: quietDeps, progress } = deps;
   const state = loadState(dir);
   // Quiet means the clock says so, whatever quietMode does to the pace (`slow` never returns stop).
   const quiet = 'stop' in nextInterval({ now, recentEvents: state.events, config: { ...config, quietMode: 'stop' } });
@@ -205,6 +207,7 @@ export function tick(deps: TickDeps): TickResult {
       state.watches[watch.id] = { ...meta };
       if (meta.errors === FAILURES_BEFORE_EVENT) out.events.push({ ...make({ summary: `check keeps failing: ${errorMessage(err).split('\n')[0]}` }), mayNotify });
     }
+    try { progress?.(); } catch { /* the heartbeat is advisory */ }
   }
   state.events = trimEvents([...state.events, ...out.events.map(() => now)], now);
   // Next due time from the final event history, so a burst this tick keeps the watch at its pace instead of backing off.
@@ -250,14 +253,14 @@ function finish(dir: string): boolean {
 
 const sleep = (s: number): Promise<void> => new Promise((r) => setTimeout(r, s * 1000));
 
-/** The loop's heartbeat writer. A `--once` run writes none: it is a one-off, and its pid would read as a dead loop once it exits. Never throws; a failed write must not stop the loop. */
-function heartbeatWriter(dir: string, enabled: boolean): (over?: { sleepingUntil?: number | null; lastError?: string }) => void {
+/** The loop's heartbeat writer. `progress` rewrites the beat without counting a tick, so a long tick can prove it is alive between watches. A `--once` run writes none: it is a one-off, and its pid would read as a dead loop once it exits. Never throws; a failed write must not stop the loop. */
+function heartbeatWriter(dir: string, enabled: boolean): (over?: { sleepingUntil?: number | null; lastError?: string; progress?: boolean }) => void {
   let tick = 0;
   let lastError = '';
-  return ({ sleepingUntil = null, lastError: err } = {}) => {
+  return ({ sleepingUntil = null, lastError: err, progress = false } = {}) => {
     if (!enabled) return;
     if (err !== undefined) lastError = err;
-    if (sleepingUntil === null) tick += 1;
+    if (sleepingUntil === null && !progress) tick += 1;
     try {
       writeHeartbeat(dir, { pid: process.pid, at: new Date().toISOString(), tick, watchesLive: listWatches(dir).length, sleepingUntil: sleepingUntil === null ? null : new Date(sleepingUntil).toISOString(), mode: 'run', lastError });
     } catch { /* the heartbeat is advisory */ }
@@ -301,7 +304,7 @@ async function run({ dir, types, once, serve = false, pinned, sleep: nap = sleep
     for (;;) {
       if (!serve && !listWatches(dir).length) { console.log('no watches registered'); return EXIT.ok; }
       try {
-        tick({ dir, types, ctx, config: cadenceConfig(pinned), notifyCommand: NOTIFY_COMMAND, quiet, triage });
+        tick({ dir, types, ctx, config: cadenceConfig(pinned), notifyCommand: NOTIFY_COMMAND, quiet, triage, progress: () => beat({ progress: true }) });
         sweepTriage(dir);
         if (serve) drainDigestToInbox(dir);
       } catch (err) { beat({ lastError: errorMessage(err).split('\n')[0] }); throw err; }

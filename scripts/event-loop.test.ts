@@ -52,6 +52,24 @@ test('a first check records state and emits nothing; a change emits one event', 
   assert.equal(readDigest(dir).length, 1);
 });
 
+test('a tick reports progress after each watch it checks, a failing check included, so a long tick keeps its heartbeat fresh', () => {
+  const dir = tempDir();
+  for (const id of ['w1', 'w2', 'w3']) addWatch(dir, { id, type: id === 'w2' ? 'boom' : 'counter', target: 'a' }, NOON);
+  const types: TypeRegistry = { counter: counter({ a: 1 }), boom: { check: () => { throw new Error('gh timed out'); }, diff: () => [] } };
+  let calls = 0;
+  tick(base(dir, types, { progress: () => { calls += 1; } }));
+  assert.equal(calls, 3);
+});
+
+test('a progress callback that throws does not stop the tick', () => {
+  const dir = tempDir();
+  addWatch(dir, { id: 'w1', type: 'counter', target: 'a' }, NOON);
+  addWatch(dir, { id: 'w2', type: 'counter', target: 'a' }, NOON);
+  const types: TypeRegistry = { counter: counter({ a: 1 }) };
+  tick(base(dir, types, { progress: () => { throw new Error('disk full'); } }));
+  assert.equal(Object.keys(loadState(dir).watches).length, 2);
+});
+
 test('an unchanged state stays silent however many ticks pass', () => {
   const dir = tempDir();
   addWatch(dir, { id: 'w1', type: 'counter', target: 'a' }, NOON);

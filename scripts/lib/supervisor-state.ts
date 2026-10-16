@@ -7,6 +7,7 @@
  * was never set up, which is silent: an install that does not use one is not nagged. The pid check is `kill -0`, so a pid reused
  * by an unrelated process after a reboot reads as running until the supervisor starts again and overwrites the record.
  */
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -50,6 +51,20 @@ export function readRecord(eventDir: string): SupervisorRecord | null {
     const { pid, startedAt } = raw as Partial<SupervisorRecord>;
     return typeof pid === 'number' && Number.isInteger(pid) && pid > 0 && typeof startedAt === 'string' ? { pid, startedAt } : null;
   } catch { return null; }
+}
+
+/** The command line of `pid`, or '' when it cannot be read. */
+const defaultCommandOf = (pid: number): string => { try { return spawnSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim(); } catch { return ''; } };
+
+/**
+ * The record's pid when ANOTHER supervisor is alive for this event dir, else null. A second supervisor would overwrite the record and run a rival
+ * loop that can only lose the lock and back off, so it must not start. A pid reused by an unrelated process (after a reboot) does not count: the
+ * command line has to name loop-supervisor.
+ */
+export function otherLiveSupervisor(eventDir: string, self: number = process.pid, { alive = defaultAlive, commandOf = defaultCommandOf }: { alive?: (pid: number) => boolean; commandOf?: (pid: number) => string } = {}): number | null {
+  const record = readRecord(eventDir);
+  if (!record || record.pid === self || !alive(record.pid)) return null;
+  return /loop-supervisor/.test(commandOf(record.pid)) ? record.pid : null;
 }
 
 /** True when this process was launched by the supervisor the record names: its parent pid is the recorded pid. */

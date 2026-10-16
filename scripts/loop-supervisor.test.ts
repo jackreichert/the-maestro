@@ -8,7 +8,7 @@ import { stubEnv, writeStub, type Stub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DELAYS, quietSleepSeconds, queueSavedDigest, secondsUntilClock, supervise } from './loop-supervisor.ts';
+import { DELAYS, forwardStop, quietSleepSeconds, queueSavedDigest, secondsUntilClock, supervise } from './loop-supervisor.ts';
 import type { LoopResult } from './loop-supervisor.ts';
 import { NO_OWNER_LOG } from './lib/digest-queue.ts';
 import { digestBody, digestDir, saveDigest, unseenDigests } from './lib/digest-store.ts';
@@ -310,6 +310,25 @@ test('the real supervisor kills a loop that is alive but silent, then relaunches
   assert.equal(readdirSync(digestDir(ledger, 'proj')).filter((f) => f.endsWith('.md')).length, 1);
 });
 
+test('a second supervisor for the same event dir refuses to start and leaves the first one\'s record alone', async () => {
+  const ledger = tempDir();
+  const bin = writeStub(join(tempDir(), 'exit0.sh'), '#!/bin/sh\nexit 0\n');
+  const env = envFor(ledger, { ...stubEnv('MAESTRO_LOOP_BIN', bin) });
+  const first = startSupervisor(env);
+  try {
+    const record = join(ledger, 'Events', 'supervisor.json');
+    assert.equal(await waitFor(() => existsSync(record)), true, 'the first supervisor never started');
+    const second = startSupervisor(env, ['ignore', 'ignore', 'pipe']);
+    let err = '';
+    second.p.stderr?.on('data', (d) => { err += d; });
+    assert.equal(await second.closed, 2);
+    assert.match(err, new RegExp(`another loop supervisor \\(pid ${first.p.pid}\\)`));
+    assert.equal(JSON.parse(readFileSync(record, 'utf8')).pid, first.p.pid);
+    first.p.kill('SIGTERM');
+    await first.closed;
+  } finally { killTree(first.p); }
+});
+
 test('the real supervisor rotates its log when it is over the limit, keeping the old text in .1', async () => {
   const ledger = tempDir();
   const bin = writeStub(join(tempDir(), 'exit0.sh'), '#!/bin/sh\nexit 0\n');
@@ -487,4 +506,23 @@ test('a supervisor whose owner is killed outright stops itself and its loop inst
     for (const pid of [supervisorPid, loopPid]) if (pid && alive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
     owner.kill('SIGKILL');
   }
+});
+
+test('forwardStop finishes at once for a loop that has already exited, and otherwise after it exits', () => {
+  const fake = (exitCode: number | null) => {
+    const calls: string[] = [];
+    let onExit: () => void = () => {};
+    return { calls, fire: () => onExit(), child: { exitCode, signalCode: null, once: (_e: string, f: () => void) => { onExit = f; return undefined as never; }, kill: (sig?: NodeJS.Signals | number) => { calls.push(`kill ${String(sig)}`); return true; } } };
+  };
+  const gone = fake(0);
+  let done = 0;
+  forwardStop(gone.child, 'SIGTERM', () => { done += 1; });
+  assert.equal(done, 1, 'an exited loop must not be waited on');
+  assert.deepEqual(gone.calls, []);
+  const alive = fake(null);
+  forwardStop(alive.child, 'SIGTERM', () => { done += 1; });
+  assert.equal(done, 1);
+  assert.deepEqual(alive.calls, ['kill SIGTERM']);
+  alive.fire();
+  assert.equal(done, 2);
 });

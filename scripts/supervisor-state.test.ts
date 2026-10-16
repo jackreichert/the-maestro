@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { clearRecord, readRecord, recordPath, supervisorStatus, writeRecord } from './lib/supervisor-state.ts';
+import { clearRecord, otherLiveSupervisor, readRecord, recordPath, supervisorStatus, writeRecord } from './lib/supervisor-state.ts';
 import { cleanEnv } from './lib/test-env.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'supervisor-state-test-'));
@@ -96,4 +96,16 @@ test('a second supervisor that cannot start (no ledger root) leaves the record a
   const r = spawnSync(process.execPath, [SUPERVISOR], { env: { ...cleanEnv(), MAESTRO_EVENT_DIR: events, LEDGER_ROOT: '' }, encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.equal(readRecord(events)?.pid, 31337);
+});
+
+test('otherLiveSupervisor names a live supervisor that is not us, and ignores us, a dead pid, a reused pid and no record', () => {
+  const dir = tempDir();
+  const isSupervisor = () => 'node /x/scripts/loop-supervisor.ts';
+  assert.equal(otherLiveSupervisor(dir, 10, { alive: () => true, commandOf: isSupervisor }), null, 'no record');
+  writeRecord(dir, 42);
+  assert.equal(otherLiveSupervisor(dir, 10, { alive: () => true, commandOf: isSupervisor }), 42);
+  assert.equal(otherLiveSupervisor(dir, 42, { alive: () => true, commandOf: isSupervisor }), null, 'the record is our own');
+  assert.equal(otherLiveSupervisor(dir, 10, { alive: () => false, commandOf: isSupervisor }), null, 'the recorded pid is dead');
+  assert.equal(otherLiveSupervisor(dir, 10, { alive: () => true, commandOf: () => '/usr/bin/vim notes.md' }), null, 'a pid reused by something else');
+  assert.equal(otherLiveSupervisor(dir, 10, { alive: () => true, commandOf: () => '' }), null, 'a command line that cannot be read');
 });

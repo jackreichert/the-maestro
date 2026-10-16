@@ -41,7 +41,7 @@ import { createWatchdog, HANG_GRACE_MS } from './lib/loop-watchdog.ts';
 import type { HeartbeatMode } from './lib/heartbeat.ts';
 import { openStore } from './lib/journal/store.ts';
 import { sleepUntil } from './lib/wall-sleep.ts';
-import { clearRecord, supervisorLogPath, writeRecord } from './lib/supervisor-state.ts';
+import { clearRecord, otherLiveSupervisor, supervisorLogPath, writeRecord } from './lib/supervisor-state.ts';
 import { LOG_MAX_BYTES, rotateLog } from './lib/log-rotate.ts';
 import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, NOTIFY_COMMAND, SELF_REVIEW_REPOS, WAKE_LAUNCH_COMMAND, WATCH_TZ } from './local-config.ts';
 import { DEFAULT_ALERT_QUIET_HOURS, noteRestart, runAlerts } from './lib/alert-policy.ts';
@@ -191,11 +191,21 @@ function launch(alertTick: () => void): Promise<LoopResult> {
   });
 }
 
+/**
+ * Forwards `sig` to the loop and calls `done` once it has exited. A child that has already exited (its `exit` event fired, its `close` not yet handled) will never
+ * emit `exit` again, so waiting for one would leave the supervisor ignoring SIGTERM for good: `done` runs at once in that case.
+ */
+export function forwardStop(child: Pick<ChildProcess, 'exitCode' | 'signalCode' | 'once' | 'kill'>, sig: NodeJS.Signals, done: () => void): void {
+  if (child.exitCode !== null || child.signalCode !== null) { done(); return; }
+  child.once('exit', done);
+  child.kill(sig);
+}
+
 /** Stops on SIGTERM or SIGINT: forwards the signal to a running loop so it releases its lock, then drops the liveness record and exits 0. */
 function stopOnSignals(eventDir: string): void {
   const stop = (sig: NodeJS.Signals): void => {
     const done = (): void => { clearRecord(eventDir, process.pid); process.exit(0); };
-    if (running) { running.once('exit', done); running.kill(sig); } else done();
+    if (running) forwardStop(running, sig, done); else done();
   };
   process.once('SIGTERM', () => stop('SIGTERM'));
   process.once('SIGINT', () => stop('SIGINT'));
@@ -296,6 +306,8 @@ function moveDigestsToInbox(dir: string): void {
 
 async function main(): Promise<number> {
   if (!LEDGER_ROOT) { console.error(stamped('no ledger root; set LEDGER_ROOT (digests are saved only under it)')); return 2; }
+  const other = otherLiveSupervisor(EVENT_DIR);
+  if (other !== null) { console.error(stamped(`another loop supervisor (pid ${other}) already runs for ${EVENT_DIR}; refusing to start a second one`)); return 2; }
   const dir = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
   const max = Number(process.env.MAESTRO_SUPERVISOR_MAX_RUNS);
   console.error(stamped(`supervising; digests go to ${dir}`));
