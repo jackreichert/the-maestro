@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/scripts-api.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createScriptActions, loadScripts, sanitizeScript } from '../src/scripts-api.ts';
+import { createScriptActions, loadScriptSource, loadScripts, sanitizeScript, sanitizeSource } from '../src/scripts-api.ts';
 
 const ROW = { id: 'sc-0123abcd', kind: 'one-time', title: 'Close ticket', what: 'w', why: 'y', after: 'a', blocks: 'abcd', command: 'echo hi', createdAt: '2026-10-15T15:00:00.000Z', ask: 'ab12', status: 'blocked', askOpen: true, runs: 0 };
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -39,4 +39,21 @@ test('marking a script posts only its id with the token, and reports what the se
 test('no token or no network is a message, never a throw', async () => {
   assert.match((await createScriptActions(fake([json(500, {})]).fetch).markRan(ROW.id) as { message: string }).message, /permission/);
   assert.match((await createScriptActions(fake([json(200, { token: 'tok' }), new Error('down')]).fetch).markRan(ROW.id) as { message: string }).message, /Could not reach/);
+});
+
+const SRC = { path: '/s/a.sh', role: 'script', lines: 4, mutates: 1, gates: 1, warn: false, modified: '2026-10-18T10:00:00.000Z', text: 'a\nb\n', marks: { 2: 'mutates', 3: 'gate' } };
+
+test('a source file keeps only marks with a known kind, and a file missing a field is dropped', () => {
+  assert.deepEqual(sanitizeSource(SRC), { ...SRC, marks: { 2: 'mutates', 3: 'gate' } });
+  assert.deepEqual(sanitizeSource({ ...SRC, marks: { 2: 'mutates', x: 'gate', 5: 'evil' } })?.marks, { 2: 'mutates' });
+  assert.equal(sanitizeSource({ ...SRC, hidden: 'missing', text: undefined })?.hidden, 'missing');
+  for (const bad of [null, [], { ...SRC, role: 'other' }, { ...SRC, lines: -1 }, { ...SRC, mutates: '1' }, { ...SRC, warn: 'no' }, { ...SRC, path: 3 }]) assert.equal(sanitizeSource(bad), null);
+});
+
+test('loadScriptSource asks for one script by id and returns null when the server has none', async () => {
+  const f = fake([json(200, { files: [SRC, { nonsense: 1 }] })]);
+  assert.equal((await loadScriptSource('sc-0123abcd', f.fetch))?.length, 1);
+  assert.equal(f.calls[0]?.url, '/api/scripts/sc-0123abcd/source');
+  assert.equal(await loadScriptSource('sc-0123abcd', fake([json(404, {})]).fetch), null);
+  assert.equal(await loadScriptSource('sc-0123abcd', fake([new Error('down')]).fetch), null);
 });
