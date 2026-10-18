@@ -29,7 +29,7 @@ import { createLocalReviewCache, spawnProducer } from './local-review-cache.ts';
 import { TOKEN_PATH, WRITE_PATHS as PRIORITY_PATHS, handleWrite } from './priorities-write.ts';
 import { ANSWER_PATH, handleAnswer } from './answer-write.ts';
 import { BLOCKED_PATH, handleBlocked } from './blocked-write.ts';
-import { SCRIPTS_RAN_PATH, buildScripts, handleScriptRan } from './scripts-write.ts';
+import { SCRIPTS_RAN_PATH, buildScriptSource, buildScripts, handleScriptRan } from './scripts-write.ts';
 import { DONE_BODY_LIMITS, DONE_SAVE_PATH, handleDoneSave, readDone, sourceFromQuery } from './done-write.ts';
 import { OTHERS_BODY_LIMITS, OTHERS_WRITE_PATHS, handleOthers } from './others-write.ts';
 import { actionsPath } from '../teammate/others-actions.ts';
@@ -131,6 +131,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
     { method: 'GET', pattern: /^\/api\/others-prs$/, handler: () => buildOthersPrs(othersOptions(o), now()) },
     { method: 'GET', pattern: /^\/api\/drafts$/, handler: () => buildDrafts(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/scripts$/, handler: () => buildScripts(o.web, now()) },
+    { method: 'GET', pattern: /^\/api\/scripts\/([^/]+)\/source$/, handler: (_u, m) => { const id = decodeName(m[1] ?? ''); return id === null ? undefined : buildScriptSource(o.web, id, now()); } },
     { method: 'GET', pattern: /^\/api\/epics$/, handler: () => buildEpics(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/cost$/, handler: () => buildCost(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/projects$/, handler: () => buildProjects(o.web, now()) },

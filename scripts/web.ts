@@ -16,7 +16,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CONFIGURED_PROJECT, CONTAINER_PROJECT, CONTAINER_ROOT, LEDGER_ROOT, PODIUM_SERIES, PODIUM_TRUSTED_ATLASSIAN_HOSTS, PRIORITIES_MAX, STALE_WIP_DAYS, VAULT_ROOT, statusDirFor } from './local-config.ts';
+import { CONFIGURED_PROJECT, CONTAINER_PROJECT, CONTAINER_ROOT, LEDGER_ROOT, PODIUM_SERIES, PODIUM_TRUSTED_ATLASSIAN_HOSTS, PRIORITIES_MAX, SCRIPT_ROOTS, STALE_WIP_DAYS, VAULT_ROOT, statusDirFor } from './local-config.ts';
 import { pageConfig } from './status-page.ts';
 import { createWebServer } from './lib/web/server.ts';
 import { loadHookGuard } from './lib/run/hook-guard.ts';
@@ -34,7 +34,7 @@ async function main(argv: string[]): Promise<void> {
   if (!vault) throw new Error('Ledger root is not set. Set ledger_root (LEDGER_ROOT) or pass --vault <path>.');
   if (!statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
   const extraGuard = await loadHookGuard();   // the user's secret-file hook, when installed: an extra check on every block, never the only one
-  const server = createWebServer({ extraGuard, web: { vault, project, statusDir, page: pageConfig(project, statusDir), prioritiesMax: PRIORITIES_MAX, staleWipDays: STALE_WIP_DAYS, containerProject: CONTAINER_PROJECT, ...(CONTAINER_ROOT ? { containerRoot: CONTAINER_ROOT } : {}), ...(VAULT_ROOT ? { vaultRoot: VAULT_ROOT } : {}) }, clientDir: CLIENT, trustedAtlassianHosts: PODIUM_TRUSTED_ATLASSIAN_HOSTS, namedSeries: PODIUM_SERIES });
+  const server = createWebServer({ extraGuard, web: { vault, project, statusDir, page: pageConfig(project, statusDir), prioritiesMax: PRIORITIES_MAX, staleWipDays: STALE_WIP_DAYS, scriptRoots: SCRIPT_ROOTS, containerProject: CONTAINER_PROJECT, ...(CONTAINER_ROOT ? { containerRoot: CONTAINER_ROOT } : {}), ...(VAULT_ROOT ? { vaultRoot: VAULT_ROOT } : {}) }, clientDir: CLIENT, trustedAtlassianHosts: PODIUM_TRUSTED_ATLASSIAN_HOSTS, namedSeries: PODIUM_SERIES });
   process.once('exit', () => server.killRuns());   // a run is in its own process group and would outlive the server
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.once(sig, () => process.exit(0));
   server.once('error', (e) => { console.error(`web: ${e.message.split('\n')[0]}`); process.exitCode = 1; });

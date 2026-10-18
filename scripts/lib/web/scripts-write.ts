@@ -11,6 +11,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { openStore } from '../journal/store.ts';
 import { isScriptId, recordRan } from '../scripts/registry.ts';
 import { markRefusal, viewsFor } from '../scripts/view.ts';
+import { sourcesOf } from '../scripts/source.ts';
+import type { SourceFile } from '../scripts/source.ts';
 import type { ScriptView } from '../scripts/view.ts';
 import { answerAsk } from './answer-write.ts';
 import { MAX_BODY_BYTES, sendError, sendJson } from './guard.ts';
@@ -23,6 +25,12 @@ export const SCRIPTS_RAN_PATH = '/api/scripts/ran';
 export function buildScripts(web: { vault: string; project: string; warn?: (m: string) => void }, now: Date): { generatedAt: string; scripts: ScriptView[] } {
   const store = openStore({ vault: web.vault, project: web.project, dryRun: false, warn: web.warn ?? (() => {}) });
   return { generatedAt: now.toISOString(), scripts: viewsFor(store, web) };
+}
+
+/** The source files behind one script's command, read-only; undefined (a 404) for an id that is not registered. The page sends only the id. */
+export function buildScriptSource(web: { vault: string; project: string; scriptRoots?: string[]; warn?: (m: string) => void }, id: string, now: Date): { generatedAt: string; id: string; files: SourceFile[] } | undefined {
+  const view = isScriptId(id) ? buildScripts(web, now).scripts.find((s) => s.id === id) : undefined;
+  return view ? { generatedAt: now.toISOString(), id, files: sourcesOf(view.command, web.scriptRoots ?? []) } : undefined;
 }
 
 export type RanOutcome = { ok: true; id: string; resolvedAsk: boolean } | { ok: false; status: number; error: string; message: string };
