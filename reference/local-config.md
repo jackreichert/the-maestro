@@ -125,6 +125,7 @@ status_streams: Alpha, Beta # stream order on the Podium
 status_repo_streams: api=Alpha, web=Beta # repo (short name) to stream for the PR tables; last resort after ledger evidence and stream-overrides.json
 tracker_url_base: https://tracker.example.com/browse/ # tracker key links; omit for plain text
 scripts_dir: /path/to/scripts # shared scripts shelf: README.md index, scratch/, helpers/; a leading ~/ is expanded; omit to turn the shelf protocol off
+script_roots: /path/to/scripts, /path/to/other # folders the Podium's Scripts tab may show script source from; a leading ~/ is expanded; default scripts_dir when set, else the scripts folder of the dev-env container under your home
 memory_dir: /path/to/memory # where `decide --scope working-rule` writes memory files and MEMORY.md; a leading ~/ is expanded; omit to refuse working rules
 ```
 ````

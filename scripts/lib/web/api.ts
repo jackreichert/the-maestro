@@ -45,6 +45,8 @@ export interface WebConfig {
   staleWipDays?: number;
   /** `container_root`: the folder whose repos the local review queue reads; absent means the queue says it is not configured. */
   containerRoot?: string;
+  /** `script_roots`: the folders the Scripts tab may show script source from; absent or empty means none is shown. */
+  scriptRoots?: string[];
 }
 
 const MAX_FRAGMENT_BYTES = 64 * 1024;

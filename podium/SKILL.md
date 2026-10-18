@@ -69,6 +69,10 @@ the page is read, and if one matters, answer it in the reply or ask the user to 
 
 Comments drafted for GitHub wait in `drafts.jsonl` (ledger root, `Journal/`) until the user decides them on the web Podium's Others' PRs tab: Approve (posts as him, once), Edit, Reject (reason required, posts nothing). Add one with `node scripts/drafts.ts add` (JSON on stdin; same `key` is a no-op). Never post a drafted comment yourself, and never call the approve route: only his click approves. The web server must be restarted to serve the tab after an update.
 
+## Reading a script from the web Podium
+
+Each card on the web Podium's Scripts tab has a closed fold, "Script source (read-only)", that shows the files the registered command runs (plus one level of files they source), with `MUTATES:` and `GATE:` lines highlighted and a warning badge for a file that mutates with no gate. Only files under `script_roots` are served, never a secret-bearing file name, and a file the secret scan flags is replaced by "hidden: possible secret". Details: [README.md](../README.md#scripts-you-are-blocked-on).
+
 ## Keeping it fresh
 
 Register one watch and the page rebuilds itself, with no model:

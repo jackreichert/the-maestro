@@ -10,6 +10,11 @@ export interface ScriptRow {
   id: string; kind: 'one-time' | 'reusable'; title: string; what: string; why: string; after: string; blocks: string; blockedBy?: string; command: string;
   createdAt: string; ask: string; status: 'blocked' | 'reusable' | 'history'; askOpen: boolean; runs: number; lastRun?: LastRun;
 }
+/** One file behind a script's command, as the server's source route describes it. `text` is absent when the file is not shown, and `hidden` says why. */
+export interface SourceRow {
+  path: string; role: 'script' | 'include'; lines: number; mutates: number; gates: number; warn: boolean; modified?: string; hidden?: string;
+  text?: string; marks: Record<number, 'mutates' | 'gate'>;
+}
 export type MarkOutcome = { ok: true; resolvedAsk: boolean } | { ok: false; message: string };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -25,6 +30,27 @@ export function sanitizeScript(v: unknown): ScriptRow | null {
   if (typeof askOpen !== 'boolean' || typeof runs !== 'number') return null;
   const last = isObj(lastRun) && isStr(lastRun.at) && isStr(lastRun.result) && isStr(lastRun.via) ? { at: lastRun.at, result: lastRun.result, via: lastRun.via } : undefined;
   return { id: id as string, kind, title: title as string, what: what as string, why: why as string, after: after as string, blocks: blocks as string, ...(isStr(blockedBy) ? { blockedBy } : {}), command: command as string, createdAt: createdAt as string, ask: ask as string, status, askOpen, runs, ...(last ? { lastRun: last } : {}) };
+}
+
+const count = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/** One source file if it has every field the page reads, else null. Marks keep only line numbers with a known kind. */
+export function sanitizeSource(v: unknown): SourceRow | null {
+  if (!isObj(v)) return null;
+  const { path, role, lines, mutates, gates, warn, modified, hidden, text, marks } = v;
+  if (!isStr(path) || (role !== 'script' && role !== 'include') || !count(lines) || !count(mutates) || !count(gates) || typeof warn !== 'boolean') return null;
+  const kept: SourceRow['marks'] = {};
+  if (isObj(marks)) for (const [k, kind] of Object.entries(marks)) if (/^\d+$/.test(k) && (kind === 'mutates' || kind === 'gate')) kept[Number(k)] = kind;
+  return { path, role, lines, mutates, gates, warn, marks: kept, ...(isStr(modified) ? { modified } : {}), ...(isStr(hidden) ? { hidden } : {}), ...(isStr(text) ? { text } : {}) };
+}
+
+/** The source files behind one script's command (`GET /api/scripts/<id>/source`), or null when the server has none to give. */
+export async function loadScriptSource(id: string, fetchFn: Fetch = (u, i) => fetch(u, i)): Promise<SourceRow[] | null> {
+  try {
+    const res = await fetchFn(`/api/scripts/${encodeURIComponent(id)}/source`, { headers: { accept: 'application/json' } });
+    const body: unknown = res.ok ? await res.json() : null;
+    return isObj(body) && Array.isArray(body.files) ? body.files.flatMap((f) => sanitizeSource(f) ?? []) : null;
+  } catch { return null; }
 }
 
 /** The registered scripts, or null when the server has none to give. */

@@ -2,11 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { installDom, mount } from './dom-harness.ts';
-import type { MarkOutcome, ScriptActions, ScriptRow } from '../src/scripts-api.ts';
+import type { MarkOutcome, ScriptActions, ScriptRow, SourceRow } from '../src/scripts-api.ts';
 
 installDom();
 const { clearScriptQueueState, targetOf } = await import('../src/script-queue.ts');
-type Queue = HTMLElement & { actions: ScriptActions; loader: () => Promise<ScriptRow[] | null>; refresh(): Promise<void> };
+type Queue = HTMLElement & { actions: ScriptActions; loader: () => Promise<ScriptRow[] | null>; sourceLoader: (id: string) => Promise<SourceRow[] | null>; refresh(): Promise<void> };
 const wait = (ms = 10): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 const row = (over: Partial<ScriptRow>): ScriptRow => ({ id: 'sc-00000001', kind: 'one-time', title: 'Close ticket 12', what: 'Closes one vault ticket.', why: 'The agent cannot write the vault.', after: 'The ticket is closed.', blocks: 'abcd', command: 'node ticket.mjs close 12', createdAt: '2026-10-15T15:00:00.000Z', ask: 'ab12', status: 'blocked', askOpen: true, runs: 0, ...over });
@@ -125,5 +125,99 @@ test('#tab=scripts&script=<id> marks that card as the target', async () => {
   const { root, cleanup } = await view([BLOCKED, REUSABLE]);
   assert.deepEqual([...root.querySelectorAll('article.target')].map((a) => a.getAttribute('data-id')), ['sc-00000002']);
   window.location.hash = '';
+  cleanup();
+});
+
+const FILE: SourceRow = { path: '/s/run.sh', role: 'script', lines: 4, mutates: 1, gates: 1, warn: false, modified: '2026-10-18T10:00:00.000Z', text: '#!/bin/bash\n# GATE: dry run\n# MUTATES: one row\necho go\n', marks: { 2: 'gate', 3: 'mutates' } };
+async function withSource(files: SourceRow[] | null, rows: ScriptRow[] = [BLOCKED]) {
+  clearScriptQueueState();
+  const asked: string[] = [];
+  const m = await mount<Queue>('../src/script-queue.ts', 'script-queue', { actions: fakeActions().actions, loader: async () => rows, sourceLoader: async (id: string) => { asked.push(id); return files; } });
+  await wait();
+  const fold = m.root.querySelector('details.source') as HTMLDetailsElement;
+  return { ...m, fold, asked, open: async () => { fold.open = true; await wait(); } };
+}
+
+test('the source fold is closed by default and fetches nothing until it is opened', async () => {
+  const { fold, asked, open, cleanup } = await withSource([FILE]);
+  assert.equal(fold.open, false);
+  assert.deepEqual(asked, []);
+  await open();
+  assert.deepEqual(asked, [BLOCKED.id]);
+  cleanup();
+});
+
+test('an opened fold shows the summary line, and highlights MUTATES and GATE lines in their own styles', async () => {
+  const { root, open, cleanup } = await withSource([FILE]);
+  await open();
+  const sum = root.querySelector('.file .sum')!.textContent ?? '';
+  assert.match(sum, /\/s\/run\.sh/);
+  assert.match(sum, /4 lines/);
+  assert.match(sum, /1 MUTATES/);
+  assert.match(sum, /1 GATE/);
+  assert.match(sum, /modified/);
+  assert.equal(root.querySelector('.badge.warn'), null);
+  const lines = [...root.querySelectorAll('pre.src .ln')];
+  assert.deepEqual(lines.map((l) => l.className.replace('ln', '').trim()), ['', 'gate', 'mutates', '']);
+  assert.deepEqual(lines.map((l) => l.textContent), ['#!/bin/bash', '# GATE: dry run', '# MUTATES: one row', 'echo go']);
+  cleanup();
+});
+
+test('MUTATES with no GATE shows the warning badge', async () => {
+  const { root, open, cleanup } = await withSource([{ ...FILE, gates: 0, warn: true, marks: { 3: 'mutates' } }]);
+  await open();
+  assert.match(root.querySelector('.badge.warn')!.textContent ?? '', /MUTATES without any GATE/);
+  cleanup();
+});
+
+test('a missing, outside-root or secret-hiding file shows its reason and no body', async () => {
+  const missing: SourceRow = { path: '/s/gone.sh', role: 'include', lines: 0, mutates: 0, gates: 0, warn: false, marks: {}, hidden: 'missing' };
+  const secret: SourceRow = { ...FILE, path: '/s/leaky.sh', hidden: 'hidden: possible secret', marks: {} };
+  delete secret.text;
+  const { root, open, cleanup } = await withSource([missing, secret]);
+  await open();
+  assert.equal(root.querySelector('pre.src'), null);
+  const notes = [...root.querySelectorAll('.hiddenfile')].map((n) => n.textContent);
+  assert.match(notes[0] ?? '', /not found: \/s\/gone\.sh/);
+  assert.match(notes[1] ?? '', /Not shown: hidden: possible secret/);
+  cleanup();
+});
+
+test('source text is text, never markup', async () => {
+  const evil = { ...FILE, text: '<img src=x onerror=alert(1)>\necho "<b>"\n', marks: {} };
+  const { root, open, cleanup } = await withSource([{ ...evil, path: '/s/<script>.sh' }]);
+  await open();
+  assert.equal(root.querySelector('pre.src img'), null);
+  assert.equal(root.querySelector('pre.src .ln')!.textContent, '<img src=x onerror=alert(1)>');
+  assert.equal(root.querySelector('.file .sum code')!.textContent, '/s/<script>.sh');
+  assert.equal(root.querySelector('.file b'), null);
+  cleanup();
+});
+
+test('a failed load and a command with no script file each say so, and the page does not break', async () => {
+  const failed = await withSource(null);
+  await failed.open();
+  assert.match(failed.root.querySelector('.source-body [role=alert]')!.textContent ?? '', /could not be loaded/);
+  failed.cleanup();
+  const none = await withSource([]);
+  await none.open();
+  assert.match(none.root.querySelector('.source-body')!.textContent ?? '', /runs no script file/);
+  none.cleanup();
+});
+
+test('an open fold stays open, and is fetched again, when the list reloads', async () => {
+  const { el, root, open, asked, cleanup } = await withSource([FILE]);
+  await open();
+  await el.refresh();
+  await wait();
+  assert.equal((root.querySelector('details.source') as HTMLDetailsElement).open, true);
+  assert.ok(asked.length >= 2);
+  assert.equal(root.querySelectorAll('pre.src').length, 1);
+  cleanup();
+});
+
+test('every card has its own fold, and History cards too', async () => {
+  const { root, cleanup } = await withSource([FILE], [BLOCKED, REUSABLE, DONE]);
+  assert.equal(root.querySelectorAll('details.source').length, 3);
   cleanup();
 });
