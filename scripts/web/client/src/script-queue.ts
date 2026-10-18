@@ -42,9 +42,8 @@ const CSS = `${BASE_CSS}${UI_CSS}
 let historyOpen = false;
 const messages = new Map<string, string>();
 const sourceOpen = new Set<string>();
-const sources = new Map<string, SourceRow[] | null>();
 /** Forget the kept state (tests). */
-export const clearScriptQueueState = (): void => { historyOpen = false; messages.clear(); sourceOpen.clear(); sources.clear(); };
+export const clearScriptQueueState = (): void => { historyOpen = false; messages.clear(); sourceOpen.clear(); };
 
 const WHEN: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' };
 const when = (iso: string): string => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('en-US', WHEN); };
@@ -109,7 +108,6 @@ export class ScriptQueueElement extends HTMLElement {
     const fill = async (): Promise<void> => {
       body.replaceChildren(h('p', { class: 'note', role: 'status' }, 'Loading the source...'));
       const files = await this.#loadSource(r.id);
-      sources.set(r.id, files);
       if (!fold.open) return;
       body.replaceChildren(...(files === null ? [h('p', { class: 'note', role: 'alert' }, 'The source could not be loaded.')] : files.length === 0 ? [h('p', { class: 'note' }, 'This command runs no script file the page can read.')] : files.map((f) => this.#file(r, f))));
     };
@@ -119,7 +117,7 @@ export class ScriptQueueElement extends HTMLElement {
   }
 
   #file(r: ScriptRow, f: SourceRow): HTMLElement {
-    const when = f.modified ? new Date(f.modified) : null;
+    const mtime = f.modified ? new Date(f.modified) : null;
     const sum = h('p', { class: 'sum' },
       h('code', {}, f.path),
       f.role === 'include' ? h('span', { class: 'badge' }, 'include') : null,
@@ -127,7 +125,7 @@ export class ScriptQueueElement extends HTMLElement {
       h('span', { class: 'badge mutates' }, `${f.mutates} MUTATES`),
       h('span', { class: 'badge gate' }, `${f.gates} GATE`),
       f.warn ? h('span', { class: 'badge warn', title: 'This file says it changes something and names no gate that guards it.' }, 'warning: MUTATES without any GATE') : null,
-      when && !Number.isNaN(when.getTime()) ? h('span', {}, `modified ${when.toLocaleString('en-US', SHORT_WHEN)}`) : null);
+      mtime && !Number.isNaN(mtime.getTime()) ? h('span', {}, `modified ${mtime.toLocaleString('en-US', SHORT_WHEN)}`) : null);
     if (f.text === undefined) return h('section', { class: 'file' }, sum, h('p', { class: 'hiddenfile', role: 'note' }, hiddenNote(f)));
     const lines = f.text.replace(/\n$/, '').split('\n');
     const pre = h('pre', { class: 'src', tabindex: '0', 'aria-label': `Source of ${f.path.split('/').pop() ?? r.title}` },
