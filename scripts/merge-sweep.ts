@@ -25,6 +25,8 @@
  * `--prune-others` is the second write, and it touches the Podium only: it drops a teammate PR card from the Others' PRs tab's cache, and rejects the review
  * draft queued for it, when the PR is merged or closed or a person other than you, the author and the bots has reviewed or commented on it
  * (lib/teammate/prune.ts). Each pruned item is logged on stderr and listed under `pruned` in the JSON; running it twice prunes nothing the second time.
+ * `--resync-runtime` is the third write, and it touches the loop daemon only: it fast-forwards the daemon's worktree to origin/main and restarts it when that is a
+ * pure fast-forward, the worktree is clean and CI `test` is green on the commit (lib/runtime-resync.ts); `runtimeResync` in the JSON is the result. A refusal never changes the exit code.
  * If the open rows name no PR at all the sweep is blind, not clean: it prints a WARNING and exits 3.
  * `--json` adds `actions` (rows left for a decision, +1 when blind; 0 exactly when the exit is 0), `closedCount` and `blind`.
  * Exit 0 when every named PR was read and none is merged, stale, or closed-unmerged; 1 when any of those lists is
@@ -43,8 +45,10 @@ import { openStore } from './lib/journal/store.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { printJson } from './lib/json-out.ts';
 import { toolCommand } from './lib/tool-bin.ts';
+import { liveDeps, resyncRuntime, runtimeWorktree } from './lib/runtime-resync.ts';
+import type { ResyncResult } from './lib/runtime-resync.ts';
 
-const USAGE = 'Usage: merge-sweep.ts [--json] [--close-ledger] [--prune-others] [--vault <path>] [--project <name>] [--stale-days N] [--today YYYY-MM-DD]';
+const USAGE = 'Usage: merge-sweep.ts [--json] [--close-ledger] [--prune-others] [--resync-runtime] [--vault <path>] [--project <name>] [--stale-days N] [--today YYYY-MM-DD]';
 const DEFAULT_STALE_DAYS = 7;
 const SAFE_ID = /^[a-z0-9]{4,6}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -54,7 +58,7 @@ const REF_RE = /(?<![\w/.-])([\w.-]+\/[\w.-]+)#(\d+)\b/g;
 const URL_RE = /(?<![\w.-])https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)\b/g;
 const KNOWN_STATE = new Set(['MERGED', 'OPEN', 'CLOSED']);
 const VALUED = new Set(['--vault', '--project', '--stale-days', '--today']);
-const BOOLEAN = new Set(['--json', '--close', '--close-ledger', '--prune-others']);
+const BOOLEAN = new Set(['--json', '--close', '--close-ledger', '--prune-others', '--resync-runtime']);
 
 /** `linked` is true when the PR is named in the row's refs (written by pr-open.ts), not only mentioned in its text or gate. */
 export interface NamedPr { repo: string; number: number; owned: boolean; linked?: boolean }
@@ -323,9 +327,17 @@ export function main(argv: string[]): number {
         try { pruned = pruneOthers({ statusDir: statusDirFor(project), draftsFile: draftsPath(vault, project), self: GH_LOGIN }, (line) => console.error(`merge-sweep: ${line}`)); }
         catch (e) { console.error(`merge-sweep: Others' PRs not pruned (${(e as Error).message.split('\n')[0]})`); }
     }
-    if (has('json')) printJson(toJson(report, pruned));
+    let resync: ResyncResult | undefined;
+    if (has('resync-runtime')) {
+        // Runs after the close/prune so a merged PR is already on origin/main. Like the prune, it never changes the sweep's exit code.
+        const cwd = runtimeWorktree();
+        if (cwd) { try { resync = resyncRuntime(liveDeps(cwd, (line) => console.error(`merge-sweep: ${line}`))); } catch (e) { console.error(`merge-sweep: runtime not resynced (${(e as Error).message.split('\n')[0]})`); } }
+        else console.error('merge-sweep: runtime not resynced (no runtime worktree found; set MAESTRO_RUNTIME_WORKTREE)');
+    }
+    if (has('json')) printJson({ ...toJson(report, pruned), ...(resync ? { runtimeResync: resync } : {}) });
     else {
         printText(report, closing);
+        if (resync) console.log(`Runtime resync: ${resync.action}${resync.old ? ` ${resync.old.slice(0, 8)}` : ''}${resync.new && resync.new !== resync.old ? ` -> ${resync.new.slice(0, 8)}` : ''}${resync.reason ? ` (${resync.reason})` : ''}`);
         if (pruned) console.log(`Pruned from the Others' PRs tab: ${pruned.cards.length} cards, ${pruned.drafts.length} drafts${pruned.unread ? ` (${pruned.unread} PRs unreadable, left)` : ''}`);
     }
     return exitCode(report);

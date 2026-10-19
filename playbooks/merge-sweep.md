@@ -1,12 +1,13 @@
 # Playbook: merge-sweep standing pickup (for a cheap runner)
 
-You are the runner. The `merge-sweep` standing pickup is due. The sweep has four steps and each is its own command, so each can be allowed or refused on its own. Run them in order, copy the lists into your report, and never close a ledger row or delete a branch by any other route.
+You are the runner. The `merge-sweep` standing pickup is due. The sweep has five steps and each is its own command, so each can be allowed or refused on its own. Run them in order, copy the lists into your report, and never close a ledger row or delete a branch by any other route.
 
 | Step | Command | Writes | Reversible |
 |---|---|---|---|
 | 1. Read | `merge-sweep.ts --json` | nothing | n/a |
 | 2. Close ledger rows | `merge-sweep.ts --close-ledger` | appends `done` to local ledger rows whose linked PRs all merged | yes (the ledger is append-only and local) |
 | 2b. Prune Others' PRs | `merge-sweep.ts --prune-others --json` | drops settled teammate PR cards from the Podium's Others' PRs cache and rejects the review drafts queued for them | the prune is remembered, so a rebuild keeps the card off until the PR changes and the rules no longer settle it; a rejected draft keeps its text and reason |
+| 2c. Resync the loop daemon | `merge-sweep.ts --resync-runtime --json` | fast-forwards the daemon's worktree to origin/main and restarts it, only when clean, a pure fast-forward and CI `test` is green on that commit | yes (`git checkout <old sha>` in the runtime worktree, then restart; both shas are logged) |
 | 3. Delete branches | `branch-sweep.ts --apply --ids ...` | deletes remote branches from a fresh listing | no, but each deletion prints a `restore` line first |
 | 4. Harvest review misses | `review-harvest.ts harvest --since <7 days ago>`, then [review-miss-harvest.md](review-miss-harvest.md) | the local harvest store, triage lines, and the weekly note | yes (local files; the note is never overwritten) |
 
@@ -44,6 +45,14 @@ node scripts/merge-sweep.ts --prune-others --json [--vault <ledger root>] [--pro
 ```
 
 Run it with step 1's flags (it repeats the read, so it may be combined: `--close-ledger --prune-others --json`). It reads each cached teammate PR once and drops the card, and rejects any pending review draft, when the PR is merged or closed, or when someone other than the user, the PR's author and the bots has reviewed it or left an inline comment. A PR the user was asked to review and has not reviewed stays. `pruned` in the JSON lists `cards`, `drafts` and `unread` (PRs it could not read, left in place); each pruned item is also a `merge-sweep: pruned card ...` or `rejected draft ...` line on stderr. Running it again prunes nothing. If it fails, report it and go on.
+
+## 2c. Resync the loop daemon
+
+```bash
+node scripts/merge-sweep.ts --resync-runtime --json [--vault <ledger root>] [--project <name>]
+```
+
+The loop daemon runs from a detached runtime worktree that nothing else moves, so a merged maestro PR is dead there until this runs. Run it after step 2 (it can be combined: `--close-ledger --prune-others --resync-runtime --json`). `runtimeResync` in the JSON is `{ action, old, new, reason }`: `resynced` (moved and restarted), `current` (nothing to do, no restart), `refused` (not clean, not a pure fast-forward, or CI `test` on that commit is not green; the reason says which) or `error` (moved, but `launchctl kickstart` failed). Each outcome is a `merge-sweep: runtime-resync: ...` line on stderr with the old and new shas. Never fast-forward, reset or restart by hand, and never retry a refusal: report it. The hourly loop sweep runs this itself, so you only see `refused` when something needs a person.
 
 ## 3. Delete merged branches
 
@@ -88,13 +97,14 @@ Report at most 20 lines, then stop:
 6. one line per closed-without-merging row: `<id> -> closed unmerged, not closed`
 7. one line per deleted branch: its `restore` line; one line per `REFUSED`: `<id> -> <reason>`
 8. `pruned: <N> cards, <M> drafts` from `pruned` (step 2b), one line per card as `<repo>#<n> -> <reason>`
-9. `harvest: <N> new findings, <M> pending, note <path or none>`
+9. `runtime: <action> <old> -> <new>` from `runtimeResync` (step 2c), plus the reason when refused
+10. `harvest: <N> new findings, <M> pending, note <path or none>`
 
 Do not paraphrase `MERGED`, `OPEN`, `CLOSED`, or `UNKNOWN`. If a list has more rows than fit, end with `+N more`. Do not paste raw JSON, `gh` stderr, or logs. If `actions` is 0, nothing was closed and nothing was deleted, the whole report is `merge-sweep: clean` plus the harvest line.
 
 ## Hard rules
 
-- The only ledger write is `merge-sweep.ts --close-ledger`; the only Podium write is `--prune-others`. Never run `journal.ts done`, never close, drop or resolve a row by hand, never edit `ledger.jsonl` or `standing.jsonl`. Never close a `question`, `decision` or ask row.
+- The only ledger write is `merge-sweep.ts --close-ledger`; the only Podium write is `--prune-others`; the only daemon write is `--resync-runtime`. Never run `journal.ts done`, never close, drop or resolve a row by hand, never edit `ledger.jsonl` or `standing.jsonl`. Never close a `question`, `decision` or ask row.
 - The only deletion is `branch-sweep.ts --apply --ids` from a listing you just made. No `git push --delete`, no `git branch -D`, no `--force`.
 - Never treat `UNKNOWN` as merged, and never treat a PR the script did not list as merged. A missing read is not a merge.
 - Do not sync an overlay, merge, comment, or push. Do not record `journal.ts standing done` yourself; the orchestrator does that after reading your report.

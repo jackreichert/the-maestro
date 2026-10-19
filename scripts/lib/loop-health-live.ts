@@ -5,6 +5,7 @@ import { digestDir, unseenDigests } from './digest-store.ts';
 import { readHeartbeat } from './heartbeat.ts';
 import { loopHealth } from './loop-health.ts';
 import type { LoopHealth } from './loop-health.ts';
+import { runtimeStaleLine } from './runtime-resync.ts';
 import { supervisorStatus } from './supervisor-state.ts';
 import { lockHolder } from './watch-registry.ts';
 
@@ -32,6 +33,8 @@ export function unreadDigestCount(dir: string | null = LEDGER_ROOT ? digestDir(L
 /** The loop's health right now. Never throws: a broken read must not take the footer or prime down. */
 export function liveLoopHealth(now: number = Date.now()): LoopHealth {
   try {
-    return loopHealth({ now, heartbeat: readHeartbeat(EVENT_DIR), lockPid: lockHolder(EVENT_DIR), supervisor: supervisorStatus(EVENT_DIR), required: LOOP_SUPERVISOR_REQUIRED, alive, tz: WATCH_TZ, wokeAt: lastWake(), unreadDigests: unreadDigestCount() });
+    const health = loopHealth({ now, heartbeat: readHeartbeat(EVENT_DIR), lockPid: lockHolder(EVENT_DIR), supervisor: supervisorStatus(EVENT_DIR), required: LOOP_SUPERVISOR_REQUIRED, alive, tz: WATCH_TZ, wokeAt: lastWake(), unreadDigests: unreadDigestCount() });
+    const stale = runtimeStaleLine();
+    return stale ? { ...health, line: health.line ? `${health.line} · ${stale}` : `**Loop:** ${stale}` } : health;
   } catch { return { state: 'absent', line: '' }; }
 }

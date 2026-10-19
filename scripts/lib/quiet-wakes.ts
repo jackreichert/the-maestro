@@ -106,11 +106,11 @@ function describeReport(stdout: string): string | null {
   } catch { return null; }
 }
 
-/** The real outside world: `merge-sweep.ts --close --json` (exit 0 clean, 1 or 3 findings, anything else a failure), `gh pr view`, and `journal.ts note`. */
+/** The real outside world: `merge-sweep.ts --close --resync-runtime --json` (exit 0 clean, 1 or 3 findings, anything else a failure), `gh pr view`, and `journal.ts note`. */
 export function realQuietDeps(): QuietDeps {
   return {
     sweep: () => {
-      const r = spawnSync(process.execPath, [MERGE_SWEEP, '--close', '--json'], { encoding: 'utf8', timeout: SWEEP_TIMEOUT_MS });
+      const r = spawnSync(process.execPath, [MERGE_SWEEP, '--close', '--resync-runtime', '--json'], { encoding: 'utf8', timeout: SWEEP_TIMEOUT_MS });
       if (r.status === 0) return { status: 'clean', closed: closedIds(r.stdout) };
       if (r.status === 1 || r.status === 3) return { status: 'findings', summary: oneLine(describeReport(r.stdout) ?? `exit ${r.status}, run merge-sweep.ts for the list`, 200) };
       return { status: 'failed', reason: oneLine(r.error?.message ?? `exit ${r.status}`, 80) };
@@ -124,7 +124,7 @@ export function realQuietDeps(): QuietDeps {
       } catch { return undefined; }
     },
     closeRows: () => {
-      const r = spawnSync(process.execPath, [MERGE_SWEEP, '--close', '--json'], { encoding: 'utf8', timeout: SWEEP_TIMEOUT_MS });
+      const r = spawnSync(process.execPath, [MERGE_SWEEP, '--close', '--resync-runtime', '--json'], { encoding: 'utf8', timeout: SWEEP_TIMEOUT_MS });
       if (r.status !== 0 && r.status !== 1 && r.status !== 3) throw new Error(`merge-sweep exited ${r.status}`);
       return closedIds(r.stdout);
     },
