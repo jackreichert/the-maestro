@@ -1,6 +1,7 @@
 import './stream-board.ts';
 import './podium-chart.ts';
 import { keepRegionScroll } from './priority-list.ts';
+import { createCelebrator, localSeenStore, priorityStatuses } from './priority-done.ts';
 import './local-review.ts';
 import './open-prs.ts';
 import './draft-queue.ts';
@@ -44,6 +45,9 @@ import type { Source } from './api.ts';
 import type { AskBusyDetail, ChartsData, CostData, EpicsData, LocalReview, PodiumState, StreamHome } from './types.ts';
 
 interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; cost: CostData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number; needsSig: string }
+
+/** What the page has already celebrated, remembered across reloads; a priority is celebrated once, when it becomes done. */
+const celebrator = createCelebrator(localSeenStore());
 
 const CSS = `${GRID_CSS}${PAGER_CSS}${BOARD_CSS}${HOME_TAB_CSS}
   .wrap { max-width: var(--grid-max); margin: 0 auto; padding-inline: var(--page-pad); }
@@ -619,7 +623,9 @@ export class PodiumApp extends HTMLElement {
       ? `Priorities are from ${longDate(pri.date) || pri.date}. ${editable ? 'Add one to start today\'s list.' : 'Set today\'s with journal.ts priorities set.'}`
       : 'No priorities set for today.';
     const priorities = h('priority-list');
-    priorities.data = { items: pri.state === 'ok' ? pri.items : [], max: st.prioritiesMax, streams: st.streams, editable, note };
+    const items = pri.state === 'ok' ? pri.items : [];
+    const statuses = priorityStatuses(items, st.footer, st.done);
+    priorities.data = { items, max: st.prioritiesMax, streams: st.streams, editable, note, progress: { statuses, celebration: celebrator.observe(st.today, statuses), tz: st.tz } };
     return priorities;
   }
 
