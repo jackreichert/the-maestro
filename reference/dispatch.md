@@ -354,6 +354,22 @@ wait.
   the change between the two heads touches only docs or tests; then say which it was, with both
   commits. This is the one home of the rule; `release-rehearsal` applies it to go-live sets.
 
+### Fix-round breaker
+
+A loop of review, fix and re-review needs a cap, or one stubborn finding burns tokens for as long as it is allowed to. A round is one fix pass followed by one re-review of the same finding set.
+
+| Round | Who fixes | Model |
+|---|---|---|
+| 1 to 3 | The builder, or a fresh builder of the same tier | Per the brief |
+| 4 and 5 | A fresh agent that has not seen the earlier attempts, given the open findings and the diff | One tier up from rounds 1 to 3 (Sonnet to Opus; already Opus stays Opus) |
+| After 5 | Nobody: the open findings go to the user as one ask | n/a |
+
+- Count rounds per finding set, in the ledger item's notes (`journal.ts log <id> --kind note "fix round N: <open findings>"`), so a resumed session does not restart the count.
+- The "continue while a round finds real problems, stop on nitpicks" judgement still applies inside the cap: a round that finds nothing real ends the loop early. The cap only bounds the worst case.
+- After round 5, ask once, with each open finding, the fix attempts so far, and a recommendation (accept as is, ticket it, or rework the approach). Do not start a sixth round unasked.
+
+The cap and the escalation are adapted from the subagent-driven-development skill in [obra/superpowers](https://github.com/obra/superpowers) (MIT), reworded for our ledger.
+
 Go-live work built on these loops (gated readiness plans, merge sets, rollback runbooks) has its
 own skill: `release-rehearsal`. Org-specific go-live steps come from the org overlay, if one is configured (see [local-config.md](local-config.md#org-overlay)).
 
