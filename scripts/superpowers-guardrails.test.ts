@@ -24,6 +24,16 @@ test('the standing brief block carries the claims line and points at the table',
     assert.match(block, /definition-of-done\.md/);
 });
 
+test('the cold read is defined in definition-of-done.md and is the closing step of grill.md', () => {
+    const dod = read('reference/definition-of-done.md');
+    assert.match(dod, /^### Cold read /m);
+    assert.match(dod, /`--one-point`\) skips this/);
+    const grill = read('reference/grill.md');
+    assert.match(grill, /^## Closing step: cold read$/m);
+    assert.ok(grill.includes('definition-of-done.md#cold-read-non-trivial-briefs-after-the-four-items'));
+    assert.ok(dod.includes('### Cold read (non-trivial briefs, after the four items)'));
+});
+
 test('dispatch.md caps fix rounds at five and escalates rounds 4 and 5', () => {
     const md = read('reference/dispatch.md');
     const section = md.split(/^### Fix-round breaker$/m)[1]?.split(/^## /m)[0] ?? '';

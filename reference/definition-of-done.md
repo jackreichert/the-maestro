@@ -13,6 +13,17 @@ Dispatch only when the brief names all four. A missing one is a question to sett
 | Deadline | The date it gates, or "none" |
 | Review owner | Who reviews it, or that it is self-reviewed |
 
+### Cold read (non-trivial briefs, after the four items)
+
+Four items present does not mean a stranger can act on the brief. Before dispatching non-trivial work (a build brief, anything touching more than one file or more than one repo), hand the finished brief to a fresh agent on the cheapest tier (Haiku) with one instruction: read only this, then list the questions you would still need answered before you could start, most blocking first, or say "nothing important left". It reads the brief and nothing else, does no work, and dispatches nothing.
+
+- Each question it raises is either answered in the brief or, if the brief is right and the reader was careless, ignored with a one-line reason. Fix the brief, not the reader.
+- "Nothing important left" means dispatch. A second cold read is only worth it if the first one's questions changed the scope.
+- A 1-point, one-file brief (`--one-point`) skips this; so does a rerun of a brief that already passed.
+- When the work came out of a [grill](grill.md) round, this is its closing step.
+
+The check is adapted from the builder-check prompt in [obra/superpowers](https://github.com/obra/superpowers) (MIT), reworded.
+
 ## Done block (before close)
 
 Close a ticket only when each line is true and the report says how it is known. A line that does not apply says "n/a" and why.
