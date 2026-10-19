@@ -25,7 +25,18 @@ Close a ticket only when each line is true and the report says how it is known. 
 | Tracker status moved | The status it now holds |
 | Follow-ups ticketed | The ids of each, or "none found" |
 
-An agent's "done" is a claim: accept "I changed X" only with the VCS diff or sha, and "tests pass" only with the command's output on this head, not its report or an earlier run.
+An agent's "done" is a claim, and a claim is accepted only with the proof that fits it. A report, a confident tone or an earlier run is never the proof.
+
+| Claim | Proof that counts | Does not count |
+|---|---|---|
+| "I changed X" / "it succeeded" | The VCS diff or sha for the change, read by the checker | The agent's summary of what it did |
+| "Tests pass" | The command's output on this head, with its result line | A report of passing, or a run on an earlier commit |
+| "Types and lint are clean" | The `tsc` or linter command's own output on this head | "Tests pass" (a passing suite is not a build) |
+| "Fixed" | The original failing check re-run on this head and now passing | The code reading as right |
+| "PR is ready" | `pr-state.ts` printing `READY-FOR-REVIEW: yes` now | A comment count or a memory of an earlier state |
+| "Pushed" | The remote branch listing showing the sha | The push command exiting 0 earlier |
+
+A claim with no row here gets the nearest row's standard: the checker names what would prove it and looks at that.
 
 A ticket reopened for a missing line here is a defect in the brief or the close, not in the work: fix the page or the habit, then reopen.
 

@@ -6,6 +6,24 @@ import { readFileSync } from 'node:fs';
 
 const read = (rel: string) => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
 
+/** The first text fence under the standing-block heading of brief.md. */
+function standingBlock(): string {
+    const after = read('reference/brief.md').split(/^### Standing brief block.*$/m)[1] ?? '';
+    return (after.match(/^```text\n([\s\S]*?)^```/m) ?? [])[1] ?? '';
+}
+
+test('definition-of-done.md has a claim-to-proof table covering tests, diffs and ready', () => {
+    const md = read('reference/definition-of-done.md');
+    assert.match(md, /^\| Claim \| Proof that counts \| Does not count \|$/m);
+    for (const claim of ['"Tests pass"', '"I changed X"', '"PR is ready"']) assert.ok(md.includes(claim), claim);
+});
+
+test('the standing brief block carries the claims line and points at the table', () => {
+    const block = standingBlock();
+    assert.match(block, /^- Claims: /m);
+    assert.match(block, /definition-of-done\.md/);
+});
+
 test('dispatch.md caps fix rounds at five and escalates rounds 4 and 5', () => {
     const md = read('reference/dispatch.md');
     const section = md.split(/^### Fix-round breaker$/m)[1]?.split(/^## /m)[0] ?? '';
