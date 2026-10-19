@@ -30,6 +30,10 @@ Keep a round to what is ready. Padding it with questions from further down the t
 - A call that is a one-way door and still unanswered at the end of a round goes through the normal Podium ask path (`ask` with `--recommend`, `--door`, `--default` for a two-way door only, and the context in the body, see [ledger.md](ledger.md)), so it survives the session. A decision the user answered in the round is recorded, not asked again.
 - Facts the round established that a later session would have to re-derive go in with `journal.ts learned`.
 
+## Closing step: cold read
+
+After the user says "go" and the brief is written, run the [cold read](definition-of-done.md#cold-read-non-trivial-briefs-after-the-four-items) on it before dispatching: a fresh Haiku agent reads only the brief and lists what it would still need answered. A grill settles what the user and orchestrator know; the cold read checks what a stranger would not.
+
 ## Example round
 
 Fictional plan: add a retry queue to a hypothetical `widget-sync` service. The first round asks the three decisions with no prerequisites; a fourth (the dead-letter policy) waits on question 1, and "which queue library is installed" is a fact, so a sub-agent looks it up instead.
