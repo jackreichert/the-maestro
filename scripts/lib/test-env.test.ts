@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cleanEnv, notifyCalls, NOTIFY_LOG_VAR } from './test-env.ts';
+import { cleanEnv, notifyCalls, NOTIFY_LOG_VAR, waitForPidFile } from './test-env.ts';
 
 const LOCAL_CONFIG = new URL('../local-config.ts', import.meta.url).pathname;
 
@@ -65,4 +65,21 @@ test('the stub records its calls, and reports none when it was not called', () =
   const [cmd, ...args] = JSON.parse(env.MAESTRO_NOTIFY_COMMAND as string) as string[];
   spawnSync(cmd as string, [...args, 'maestro: x']);
   assert.deepEqual(notifyCalls(env), ['maestro: x']);
+});
+
+test('waitForPidFile ignores a pid file that exists but is still empty or partial, and returns the pid once it is complete', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'maestro-pidfile-')), 'step.pid');
+  writeFileSync(file, '');
+  setTimeout(() => writeFileSync(file, '4'), 100);
+  setTimeout(() => writeFileSync(file, '4321\n'), 250);
+  assert.equal(await waitForPidFile(file, 10_000), 4321);
+});
+
+test('waitForPidFile gives up with null when no complete pid appears, and for a missing file or a pid that is not a process id', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'maestro-pidfile-'));
+  assert.equal(await waitForPidFile(join(dir, 'absent.pid'), 150), null);
+  writeFileSync(join(dir, 'empty.pid'), '');
+  assert.equal(await waitForPidFile(join(dir, 'empty.pid'), 150), null);
+  writeFileSync(join(dir, 'zero.pid'), '0\n');
+  assert.equal(await waitForPidFile(join(dir, 'zero.pid'), 150), null);
 });

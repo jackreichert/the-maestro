@@ -41,3 +41,20 @@ export function notifyCalls(env: NodeJS.ProcessEnv): string[] {
   const log = env[NOTIFY_LOG_VAR];
   return log && existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
 }
+
+/**
+ * Waits up to `ms` for `file` to hold a complete pid: a positive integer and its newline. A shell's `echo $$ > file` creates the file empty
+ * before it writes, so "the file exists" is not "the pid is there"; a test that read it at that moment got 0, and `process.kill(0, 0)`
+ * (our own process group) then read as "the step is still alive" for the whole deadline. Resolves null when no complete pid appears in time.
+ */
+export async function waitForPidFile(file: string, ms: number): Promise<number | null> {
+  const read = (): number | null => {
+    try {
+      const m = /^(\d+)\n/.exec(readFileSync(file, 'utf8'));
+      const pid = m ? Number(m[1]) : 0;
+      return pid > 1 ? pid : null;
+    } catch { return null; }
+  };
+  for (const end = Date.now() + ms; Date.now() < end && read() === null; ) await new Promise((r) => setTimeout(r, 50));
+  return read();
+}

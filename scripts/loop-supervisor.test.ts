@@ -16,7 +16,7 @@ import { appendEvents, readInbox } from './lib/event-inbox.ts';
 import { checkedOutBranch, commands, fillTemplate, LABEL, otherLoopPlists, shq, supervisorPath } from './install-loop-supervisor.ts';
 import { WAKE_PROMPT } from './lib/session-wake.ts';
 import { supervisorLogPath } from './lib/supervisor-state.ts';
-import { cleanEnv, notifyCalls } from './lib/test-env.ts';
+import { cleanEnv, notifyCalls, waitForPidFile } from './lib/test-env.ts';
 import { startLockOwner } from './lib/lock-owner-fixture.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'loop-supervisor-test-'));
@@ -498,8 +498,8 @@ test('a supervisor whose owner is killed outright stops itself and its loop inst
   let loopPid = 0;
   try {
     supervisorPid = Number(await new Promise<string>((resolve) => owner.stdout!.once('data', (d) => resolve(String(d).trim()))));
-    assert.equal(await waitFor(() => existsSync(marker)), true, 'the loop never started');
-    loopPid = Number(readFileSync(marker, 'utf8').trim().split('\n')[0]);
+    loopPid = (await waitForPidFile(marker, PATIENCE_MS)) ?? 0;
+    assert.ok(loopPid, 'the loop never started and recorded its pid');
     owner.kill('SIGKILL');
     assert.equal(await waitFor(() => !alive(supervisorPid) && !alive(loopPid)), true, 'the supervisor or its loop outlived the process that started it');
   } finally {

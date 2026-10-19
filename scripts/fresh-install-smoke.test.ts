@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { quickStartBlock, rewrite } from './fresh-install-smoke.ts';
+import { waitForPidFile } from './lib/test-env.ts';
 
 const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
 
@@ -44,9 +45,8 @@ test('SIGTERM mid-run (the playbook\'s outer timeout) removes the temp dir and k
       for (const end = Date.now() + ms; Date.now() < end && !done(); ) await new Promise((r) => setTimeout(r, 50));
       return done();
     };
-    await until(() => existsSync(pidfile), 60_000);
-    assert.ok(existsSync(pidfile), 'the clone step started');
-    const stepPid = Number(readFileSync(pidfile, 'utf8').trim());
+    const stepPid = await waitForPidFile(pidfile, 60_000);
+    assert.ok(stepPid, 'the clone step started and recorded its pid');
     assert.equal(readdirSync(scratch).filter((d) => d.startsWith('maestro-smoke-')).length, 1, 'the smoke created its temp dir');
     child.kill('SIGTERM');
     assert.equal(await closed, 143);

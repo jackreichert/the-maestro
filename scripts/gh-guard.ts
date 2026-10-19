@@ -11,7 +11,7 @@
  *   - when a call comes back rate-limited, starts a backoff, so a limited account stops being hammered by every poller on every tick.
  * `MAESTRO_GH_GUARD=off` bypasses it (lib/tool-bin.ts then calls `gh` directly).
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import os from 'node:os';
 import { basename } from 'node:path';
@@ -74,21 +74,42 @@ export async function runGuarded(args: string[], deps: GuardDeps): Promise<numbe
   return r.status ?? 1;
 }
 
+const STOP_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const;
+let stopSignal: NodeJS.Signals | null = null;
+let runningGh: ChildProcess | null = null;
+let armed = false;
+
+/**
+ * Arms the stop handlers once, before the first gh is spawned. A signal that lands between a fork and a later `process.on` meets the default
+ * action and kills this guard at once (exit by signal, not 128+n) with the gh it just started orphaned; and a signal between the probe and the
+ * real call must still be remembered, so the state is the module's, not one call's.
+ */
+function armStopHandlers(): void {
+  if (armed) return;
+  armed = true;
+  for (const sig of STOP_SIGNALS) process.on(sig, () => { stopSignal = sig; runningGh?.kill(sig); });
+}
+
 /**
  * The real gh, as a child that gets the caller's SIGTERM, SIGINT and SIGHUP: a caller's timeout kills this guard, and without forwarding the
  * gh it started would live on, orphaned. Once signalled the guard exits when that child does, so it never goes on to send a later call (the
  * real one after a probe) that the caller has given up on. A SIGKILL cannot be forwarded; that child is left running.
  */
 const realGh: GuardDeps['gh'] = (args, passStdout) => new Promise((resolve) => {
+  armStopHandlers();
   const child = spawn('gh', args, { stdio: ['inherit', passStdout ? 'inherit' : 'pipe', 'pipe'] });
-  let signalled: NodeJS.Signals | null = null;
-  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(sig, () => { signalled = sig; child.kill(sig); });
+  runningGh = child;
+  if (stopSignal) child.kill(stopSignal);
   let stdout = '';
   let stderr = '';
   child.stdout?.on('data', (d) => { stdout += d; });
   child.stderr?.on('data', (d) => { stderr += d; });
   child.on('error', (e) => resolve({ status: 127, stdout: '', stderr: `${e.message}\n` }));
-  child.on('close', (code) => { if (signalled) process.exit(128 + (os.constants.signals[signalled] ?? 15)); resolve({ status: code, stdout, stderr }); });
+  child.on('close', (code) => {
+    runningGh = null;
+    if (stopSignal) process.exit(128 + (os.constants.signals[stopSignal] ?? 15));
+    resolve({ status: code, stdout, stderr });
+  });
 });
 
 const isMain = (): boolean => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };
