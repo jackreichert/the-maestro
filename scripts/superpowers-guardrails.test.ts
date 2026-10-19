@@ -28,8 +28,9 @@ test('the brief has a Model field and the standing block bans unasked sub-agents
     assert.match(read('reference/brief.md'), /^9\. \*\*Model\*\* /m);
     const block = standingBlock();
     assert.match(block, /^- Sub-agents: dispatch none unless this brief says so/m);
-    assert.match(block, /Model line/);
-    assert.match(block, /names it explicitly/);
+    assert.match(block, /the model named in this brief/);
+    assert.match(block, /every call names a model explicitly/);
+    assert.match(read('reference/brief.md'), /a line starting `Model:`/);
 });
 
 test('the cold read is defined in definition-of-done.md and is the closing step of grill.md', () => {

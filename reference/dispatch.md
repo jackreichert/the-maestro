@@ -356,7 +356,7 @@ wait.
 
 ### Fix-round breaker
 
-A loop of review, fix and re-review needs a cap, or one stubborn finding burns tokens for as long as it is allowed to. A round is one fix pass followed by one re-review of the same finding set.
+A loop of review, fix and re-review needs a cap, or one stubborn finding burns tokens for as long as it is allowed to. A round is one fix pass followed by one re-review of the same finding set. The cap applies to both loops in this section: review, fix and re-review, and a verification's find, fix PR and re-run.
 
 | Round | Who fixes | Model |
 |---|---|---|
