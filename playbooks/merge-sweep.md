@@ -6,7 +6,7 @@ You are the runner. The `merge-sweep` standing pickup is due. The sweep has four
 |---|---|---|---|
 | 1. Read | `merge-sweep.ts --json` | nothing | n/a |
 | 2. Close ledger rows | `merge-sweep.ts --close-ledger` | appends `done` to local ledger rows whose linked PRs all merged | yes (the ledger is append-only and local) |
-| 2b. Prune Others' PRs | `merge-sweep.ts --prune-others --json` | drops settled teammate PR cards from the Podium's Others' PRs cache and rejects the review drafts queued for them | the cache is rebuilt on the next page refresh; a rejected draft keeps its text and reason |
+| 2b. Prune Others' PRs | `merge-sweep.ts --prune-others --json` | drops settled teammate PR cards from the Podium's Others' PRs cache and rejects the review drafts queued for them | the prune is remembered, so a rebuild keeps the card off until the PR changes and the rules no longer settle it; a rejected draft keeps its text and reason |
 | 3. Delete branches | `branch-sweep.ts --apply --ids ...` | deletes remote branches from a fresh listing | no, but each deletion prints a `restore` line first |
 | 4. Harvest review misses | `review-harvest.ts harvest --since <7 days ago>`, then [review-miss-harvest.md](review-miss-harvest.md) | the local harvest store, triage lines, and the weekly note | yes (local files; the note is never overwritten) |
 

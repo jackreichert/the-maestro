@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { addDraft, listDrafts } from '../drafts/queue.ts';
 import type { NewDraft } from '../drafts/queue.ts';
 import type { GhRead } from '../drafts/reconcile.ts';
-import { readOthersCache, writeOthersCache } from './others.ts';
+import { readOthersCache, refreshOthers, writeOthersCache } from './others.ts';
+import { liveFacts } from './pruned.ts';
 import type { OtherPr } from './others.ts';
 import { pruneOthers } from './prune.ts';
 
@@ -86,4 +87,44 @@ test('with no cache and no drafts there is nothing to prune and nothing throws',
   const root = mkdtempSync(join(tmpdir(), 'prune-'));
   const out = pruneOthers({ statusDir: join(root, 'none'), draftsFile: join(root, 'drafts.jsonl'), self: 'me-fake', run: gh({}) });
   assert.deepEqual([out.cards.length, out.drafts.length, out.unread], [0, 0, 0]);
+});
+
+const SCOPE = { owners: ['acme'], selfRepos: [], self: 'me-fake' };
+const NOW = new Date('2026-10-19T01:00:00Z');
+
+test('prune, rebuild, still absent: the rebuild keeps a pruned card off until it changes and the rules stop settling it', () => {
+  const { statusDir, draftsFile } = setup([3, 5]);
+  const byPr: Record<number, Pr> = { 3: { comments: [cm('lee-fake', '2026-10-02T00:00:00Z')] }, 5: {} };
+  pruneOthers({ statusDir, draftsFile, self: 'me-fake', run: gh(byPr) });
+  assert.deepEqual(readOthersCache(statusDir)?.prs.map((p) => p.number), [5]);
+
+  // The search (which cannot see inline comments) offers both cards again, unchanged: 3 stays off with no read of GitHub at all.
+  const reads: number[] = [];
+  const facts = (run: GhRead) => liveFacts((args) => { if (args[0] === 'pr') reads.push(Number(args[args.indexOf('view') + 1])); return run(args); });
+  const again = refreshOthers(statusDir, SCOPE, NOW, () => [card(3), card(5)], facts(gh(byPr)));
+  assert.deepEqual(again.prs.map((p) => p.number), [5]);
+  assert.deepEqual(reads, []);
+
+  // New activity moves updatedAt, and the same inline-comment commenter still settles it: stays off.
+  const moved = { ...card(3), updatedAt: '2026-10-05T00:00:00Z' };
+  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [moved, card(5)], facts(gh(byPr))).prs.map((p) => p.number), [5]);
+  assert.deepEqual(reads, [3]);
+  // ...and the new updatedAt is remembered, so the next rebuild does not read again.
+  refreshOthers(statusDir, SCOPE, NOW, () => [moved, card(5)], facts(gh(byPr)));
+  assert.deepEqual(reads, [3]);
+
+  // The commenter's activity no longer settles it (the PR is now waiting on you): it returns.
+  const asked = { ...card(3), updatedAt: '2026-10-06T00:00:00Z' };
+  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [asked, card(5)], facts(gh({ 3: { requested: ['me-fake'], comments: byPr[3]?.comments }, 5: {} }))).prs.map((p) => p.number), [3, 5]);
+  // Once it is back the record is gone: an unchanged card is shown without a read.
+  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [asked, card(5)], facts(gh({}))).prs.map((p) => p.number), [3, 5]);
+});
+
+test('a pruned PR whose facts cannot be read stays off the tab, and a partial read does not forget it', () => {
+  const { statusDir, draftsFile } = setup([3]);
+  pruneOthers({ statusDir, draftsFile, self: 'me-fake', run: gh({ 3: { state: 'MERGED' } }) });
+  const moved = { ...card(3), updatedAt: '2026-10-05T00:00:00Z' };
+  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [moved], liveFacts(gh({}))).prs, []);
+  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [], liveFacts(gh({}))).prs, []);
+  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [card(3)], liveFacts(gh({}))).prs.map((p) => p.number), [3], 'a complete read without it forgot the record');
 });
