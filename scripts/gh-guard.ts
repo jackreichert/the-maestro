@@ -74,11 +74,6 @@ export async function runGuarded(args: string[], deps: GuardDeps): Promise<numbe
   return r.status ?? 1;
 }
 
-/**
- * The real gh, as a child that gets the caller's SIGTERM, SIGINT and SIGHUP: a caller's timeout kills this guard, and without forwarding the
- * gh it started would live on, orphaned. Once signalled the guard exits when that child does, so it never goes on to send a later call (the
- * real one after a probe) that the caller has given up on. A SIGKILL cannot be forwarded; that child is left running.
- */
 const STOP_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const;
 let stopSignal: NodeJS.Signals | null = null;
 let runningGh: ChildProcess | null = null;
@@ -95,6 +90,11 @@ function armStopHandlers(): void {
   for (const sig of STOP_SIGNALS) process.on(sig, () => { stopSignal = sig; runningGh?.kill(sig); });
 }
 
+/**
+ * The real gh, as a child that gets the caller's SIGTERM, SIGINT and SIGHUP: a caller's timeout kills this guard, and without forwarding the
+ * gh it started would live on, orphaned. Once signalled the guard exits when that child does, so it never goes on to send a later call (the
+ * real one after a probe) that the caller has given up on. A SIGKILL cannot be forwarded; that child is left running.
+ */
 const realGh: GuardDeps['gh'] = (args, passStdout) => new Promise((resolve) => {
   armStopHandlers();
   const child = spawn('gh', args, { stdio: ['inherit', passStdout ? 'inherit' : 'pipe', 'pipe'] });
