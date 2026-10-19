@@ -13,6 +13,8 @@ import { isFormerTeammate } from './former.ts';
 import { settledReason } from './settled.ts';
 import type { SettledReview } from './settled.ts';
 import { writeAtomic } from '../status-page/seen.ts';
+import { applyPruned, liveFacts } from './pruned.ts';
+import type { FactsReader } from './pruned.ts';
 import type { Run } from '../types.ts';
 
 export const OTHERS_CACHE = '.now-others-prs.json';
@@ -177,17 +179,17 @@ export function writeOthersCache(dir: string, cache: OthersCache): void {
 
 /**
  * One refresh: read GitHub and store the set. A failed read keeps the last good set, adding the reason and leaving `fetchedAt` where it was, so the
- * tab says how old the list is. Never throws: this rides the page rebuild, which must not fail because teammates' PRs could not be read.
+ * tab says how old the list is. PRs the merge-sweep pruned stay off the tab until they change and the full rules no longer settle them (lib/teammate/pruned.ts). Never throws: this rides the page rebuild, which must not fail because teammates' PRs could not be read.
  */
-export function refreshOthers(dir: string, scope: OthersScope, now: Date, fetch: (scope: OthersScope, known: readonly OtherPr[]) => OtherPr[] = (sc, known) => fetchOthers(sc, undefined, known, now.getTime())): OthersCache {
+export function refreshOthers(dir: string, scope: OthersScope, now: Date, fetch: (scope: OthersScope, known: readonly OtherPr[]) => OtherPr[] = (sc, known) => fetchOthers(sc, undefined, known, now.getTime()), facts: FactsReader = liveFacts()): OthersCache {
   try {
-    const cache: OthersCache = { fetchedAt: now, prs: fetch(scope, readOthersCache(dir)?.prs ?? []) };
+    const cache: OthersCache = { fetchedAt: now, prs: applyPruned(dir, fetch(scope, readOthersCache(dir)?.prs ?? []), scope.self, facts, true) };
     writeOthersCache(dir, cache);
     return cache;
   } catch (e) {
     const prev = readOthersCache(dir);
     const failure = (e instanceof Error ? e.message : String(e)).split('\n')[0] || 'unknown error';
-    const kept: OthersCache = { fetchedAt: prev?.fetchedAt ?? null, prs: e instanceof PartialOthers ? e.prs : prev?.prs ?? [], failure: e instanceof PartialOthers ? `partial read: ${failure}` : failure };
+    const kept: OthersCache = { fetchedAt: prev?.fetchedAt ?? null, prs: e instanceof PartialOthers ? applyPruned(dir, e.prs, scope.self, facts, false) : prev?.prs ?? [], failure: e instanceof PartialOthers ? `partial read: ${failure}` : failure };
     try { writeOthersCache(dir, kept); } catch { /* the cache is a convenience: a failed write must not fail the rebuild */ }
     return kept;
   }
