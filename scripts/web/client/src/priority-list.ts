@@ -113,6 +113,8 @@ export class PriorityList extends HTMLElement {
   #over = -1;
   #message: { text: string; error: boolean } = { text: '', error: false };
   #focus: string | null = null;
+  /** The celebration of the data last given: used by the first draw of it only, so an internal redraw (a confirm, a drag, an edit) never replays it. */
+  #celebration: Celebration | null = null;
   #announce: ReturnType<typeof setTimeout> | null = null;
   #dragHold = false;   // the drag's own hold on redraws; released once, by whichever of drop or dragend comes first
   #holds = 0;   // reasons to hold the page's redraws: a drag, a request; the page is told only on 0 to 1 and 1 to 0
@@ -130,6 +132,7 @@ export class PriorityList extends HTMLElement {
     this.#data = d;
     this.#items = d.items;
     this.#max = d.max;
+    this.#celebration = d.progress?.celebration ?? null;
     if (this.isConnected) this.#render();
   }
 
@@ -270,6 +273,7 @@ export class PriorityList extends HTMLElement {
     frag.push(this.#live());
     this.#region.replaceChildren(...frag, h('div', { class: 'fade', 'aria-hidden': 'true' }));
     this.#syncFade();
+    if (this.#celebration) this.#celebration = { ...this.#celebration, fresh: new Set(), cleared: false, announce: '' };
     if (want) (this.#root.getElementById(want) as HTMLElement | null)?.focus();
   }
 
@@ -280,25 +284,25 @@ export class PriorityList extends HTMLElement {
     if (!prog || total === 0) return null;
     const byKey = new Map(prog.statuses.map((x) => [x.key, x]));
     const n = this.#items.filter((p) => byKey.get(priorityKey(p))?.done).length;
-    const fresh = prog.celebration.fresh.size > 0;
+    const fresh = (this.#celebration ?? prog.celebration).fresh.size > 0;
     const full = n === total;
-    const before = Math.min(Math.max(prog.celebration.before, 0), n);
+    const before = Math.min(Math.max((this.#celebration ?? prog.celebration).before, 0), n);
     const fill = h('span', { class: 'fill' });
     fill.style.setProperty('--p', String(n / total));
     fill.style.setProperty('--from', String(before / total));
     const meter = h('span', { class: `meter${full ? ' full' : ''}${fresh ? ' fresh' : ''}`, id: 'pl-meter' },
       h('span', { class: 'count' }, h('span', { class: 'vh' }, 'Progress: '), `${n} of ${total} done`),
       h('span', { class: 'track', 'aria-hidden': 'true' }, fill));
-    const spark = full && prog.celebration.cleared ? burst(true) : null;
+    const spark = full && (this.#celebration ?? prog.celebration).cleared ? burst(true) : null;
     if (spark) meter.append(spark);
     if (!full) return meter;
-    return h('span', { class: 'ttl-done' }, meter, h('span', { class: `cleared${prog.celebration.cleared ? ' fresh' : ''}`, id: 'pl-cleared' }, 'Board cleared ', h('span', { 'aria-hidden': 'true' }, '✓')));
+    return h('span', { class: 'ttl-done' }, meter, h('span', { class: `cleared${(this.#celebration ?? prog.celebration).cleared ? ' fresh' : ''}`, id: 'pl-cleared' }, 'Board cleared ', h('span', { 'aria-hidden': 'true' }, '✓')));
   }
 
   /** The announcement for a screen reader. Its words go in just after it is on the page, because a live region only speaks changes. */
   #live(): HTMLElement {
     const live = h('div', { class: 'vh', id: 'pl-live', role: 'status', 'aria-live': 'polite' });
-    const said = this.#data.progress?.celebration.announce ?? '';
+    const said = this.#celebration?.announce ?? '';
     if (said) {
       if (this.#announce !== null) clearTimeout(this.#announce);
       this.#announce = setTimeout(() => { live.textContent = said; this.#announce = null; }, 60);
@@ -319,7 +323,7 @@ export class PriorityList extends HTMLElement {
     const shown = splitStream(p);
     const status = this.#data.progress?.statuses.find((x) => x.key === priorityKey(p));
     const done = status?.done === true;
-    const fresh = done && this.#data.progress?.celebration.fresh.has(status!.key) === true;
+    const fresh = done && this.#celebration?.fresh.has(status!.key) === true;
     // Only the stream is drawn; the full text stays in the page for assistive tech and as a tooltip. A priority whose stream has no tab (none, or one nobody has opened) has nowhere else to show its text, so it is drawn, on one line.
     const hasTab = shown.stream !== '' && this.#data.streams.includes(shown.stream);
     const text = hasTab

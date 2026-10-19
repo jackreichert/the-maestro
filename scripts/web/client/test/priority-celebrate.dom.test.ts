@@ -110,3 +110,17 @@ test('with no progress given (an older page) nothing is marked done and there is
   assert.equal(root.querySelector('li.done'), null);
   cleanup();
 });
+
+test('an internal redraw (a delete confirm) never replays a celebration that has already played', async () => {
+  setMotion(false);
+  const { root, cleanup } = await mount<List>('../src/priority-list.ts', 'priority-list', { data: data([st(A, true), st(B, false)], { fresh: new Set([A]), before: 0, cleared: false, announce: 'Avonlea done. 1 of 2 priorities done.' }) });
+  assert.equal(root.querySelectorAll('li.fresh').length, 1, 'the first draw plays it');
+  await new Promise((r) => setTimeout(r, 120));
+  (root.querySelector('#pl-del-1') as HTMLButtonElement).click();
+  assert.equal(root.querySelectorAll('li.fresh').length, 0);
+  assert.equal(root.querySelectorAll('.burst').length, 0);
+  assert.equal(root.querySelector('#pl-live')?.textContent, '', 'and nothing is announced again');
+  assert.equal(root.querySelector('li.done .when')?.textContent, 'Done ✓ at 3:42 pm ET', 'the row stays done');
+  assert.equal(root.querySelector('#pl-meter .count')?.textContent, 'Progress: 1 of 2 done');
+  cleanup();
+});
