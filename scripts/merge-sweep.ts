@@ -22,6 +22,9 @@
  * PR in its text is listed with the printed command and is not closed.
  * Only `wip` and `blocked` rows are matched at all, and only `wip` closes; a `question` or pending `decision` is skipped
  * (counted in `skipped`), however it cites a PR.
+ * `--prune-others` is the second write, and it touches the Podium only: it drops a teammate PR card from the Others' PRs tab's cache, and rejects the review
+ * draft queued for it, when the PR is merged or closed or a person other than you, the author and the bots has reviewed or commented on it
+ * (lib/teammate/prune.ts). Each pruned item is logged on stderr and listed under `pruned` in the JSON; running it twice prunes nothing the second time.
  * If the open rows name no PR at all the sweep is blind, not clean: it prints a WARNING and exits 3.
  * `--json` adds `actions` (rows left for a decision, +1 when blind; 0 exactly when the exit is 0), `closedCount` and `blind`.
  * Exit 0 when every named PR was read and none is merged, stale, or closed-unmerged; 1 when any of those lists is
@@ -30,7 +33,10 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { CONFIGURED_PROJECT, LEDGER_ROOT, REPO_OWNERS, VAULT_ROOT } from './local-config.ts';
+import { CONFIGURED_PROJECT, GH_LOGIN, LEDGER_ROOT, REPO_OWNERS, VAULT_ROOT, statusDirFor } from './local-config.ts';
+import { draftsPath } from './lib/drafts/queue.ts';
+import { pruneOthers } from './lib/teammate/prune.ts';
+import type { PruneResult } from './lib/teammate/prune.ts';
 import { daysBetween } from './lib/boxes.ts';
 import { fold, isOpen, type LedgerRow } from './lib/ledger-core.ts';
 import { openStore } from './lib/journal/store.ts';
@@ -38,7 +44,7 @@ import { parseArgs } from './lib/journal/args.ts';
 import { printJson } from './lib/json-out.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 
-const USAGE = 'Usage: merge-sweep.ts [--json] [--close-ledger] [--vault <path>] [--project <name>] [--stale-days N] [--today YYYY-MM-DD]';
+const USAGE = 'Usage: merge-sweep.ts [--json] [--close-ledger] [--prune-others] [--vault <path>] [--project <name>] [--stale-days N] [--today YYYY-MM-DD]';
 const DEFAULT_STALE_DAYS = 7;
 const SAFE_ID = /^[a-z0-9]{4,6}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -48,7 +54,7 @@ const REF_RE = /(?<![\w/.-])([\w.-]+\/[\w.-]+)#(\d+)\b/g;
 const URL_RE = /(?<![\w.-])https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)\b/g;
 const KNOWN_STATE = new Set(['MERGED', 'OPEN', 'CLOSED']);
 const VALUED = new Set(['--vault', '--project', '--stale-days', '--today']);
-const BOOLEAN = new Set(['--json', '--close', '--close-ledger']);
+const BOOLEAN = new Set(['--json', '--close', '--close-ledger', '--prune-others']);
 
 /** `linked` is true when the PR is named in the row's refs (written by pr-open.ts), not only mentioned in its text or gate. */
 export interface NamedPr { repo: string; number: number; owned: boolean; linked?: boolean }
@@ -56,7 +62,7 @@ export interface PrHit { repo: string; number: number; state: string; updatedAt?
 export interface SweepRow { id: string; text: string; prs: PrHit[]; allMerged: boolean; closable: boolean; done?: string }
 export interface SweepReport { today: string; staleDays: number; merged: SweepRow[]; stale: SweepRow[]; unknown: SweepRow[]; closed: SweepRow[]; autoClosed: SweepRow[]; openRows: number; parsed: number; warning?: string; skipped?: number }
 /** The JSON a caller reads: the report plus `actions` (rows left for a decision, plus 1 when blind) and `closedCount` (rows this run closed). actions 0 is exit 0. */
-export interface SweepJson extends SweepReport { actions: number; closedCount: number; blind: boolean }
+export interface SweepJson extends SweepReport { actions: number; closedCount: number; blind: boolean; /** Present with `--prune-others`: the Others' PRs cards and review drafts it pruned. */ pruned?: PruneResult }
 
 /** Why argv cannot be used, or null. A positional, an unknown flag, or a valued flag with no value. */
 export function usageError(argv: string[]): string | null {
@@ -217,8 +223,8 @@ export function actionCount(report: SweepReport): number {
     return report.merged.length + report.stale.length + report.closed.length + report.unknown.length + (report.warning ? 1 : 0);
 }
 
-export function toJson(report: SweepReport): SweepJson {
-    return { ...report, actions: actionCount(report), closedCount: report.autoClosed.length, blind: Boolean(report.warning) };
+export function toJson(report: SweepReport, pruned?: PruneResult): SweepJson {
+    return { ...report, actions: actionCount(report), closedCount: report.autoClosed.length, blind: Boolean(report.warning), ...(pruned ? { pruned } : {}) };
 }
 
 /** 0 clean, 1 something to report, 3 unknown only. Usage errors are the caller's 2. */
@@ -311,8 +317,17 @@ export function main(argv: string[]): number {
     const report = classifyRows(open, ghView, today, Number(staleRaw));
     const closing = has('close') || has('close-ledger');
     if (closing) closeMerged(report, (id, why) => journalDone(id, why, vault, project));
-    if (has('json')) printJson(toJson(report));
-    else printText(report, closing);
+    let pruned: PruneResult | undefined;
+    if (has('prune-others')) {
+        // A prune that cannot run (no status dir, gh down) is reported and never changes the sweep's own exit code.
+        try { pruned = pruneOthers({ statusDir: statusDirFor(project), draftsFile: draftsPath(vault, project), self: GH_LOGIN }, (line) => console.error(`merge-sweep: ${line}`)); }
+        catch (e) { console.error(`merge-sweep: Others' PRs not pruned (${(e as Error).message.split('\n')[0]})`); }
+    }
+    if (has('json')) printJson(toJson(report, pruned));
+    else {
+        printText(report, closing);
+        if (pruned) console.log(`Pruned from the Others' PRs tab: ${pruned.cards.length} cards, ${pruned.drafts.length} drafts${pruned.unread ? ` (${pruned.unread} PRs unreadable, left)` : ''}`);
+    }
     return exitCode(report);
 }
 
