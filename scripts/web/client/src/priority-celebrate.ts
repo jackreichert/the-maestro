@@ -19,10 +19,9 @@ export function reducedMotion(): boolean {
 
 /** A check that draws itself when `fresh`, and is simply there otherwise. Decorative: the row's words carry the meaning. */
 export function checkMark(fresh: boolean): SVGElement {
-  const svg = s('svg', { class: `tick${fresh ? ' draw' : ''}`, viewBox: '0 0 16 16', 'aria-hidden': 'true', focusable: 'false' },
+  return s('svg', { class: `tick${fresh ? ' draw' : ''}`, viewBox: '0 0 16 16', 'aria-hidden': 'true', focusable: 'false' },
     s('circle', { class: 'ring', cx: '8', cy: '8', r: '7' }),
     s('path', { class: 'stroke', d: 'M4.6 8.4 7.1 10.9 11.6 5.4', pathLength: '1' }));
-  return svg;
 }
 
 /** The sparks, or null under reduced motion. Decorative and out of the accessibility tree. */

@@ -16,7 +16,7 @@ import type { DoneItem, FooterRow, Priority } from './types.ts';
 
 export interface PriorityStatus { key: string; stream: string; done: boolean; /** ISO time the stream's latest item closed; empty when unknown. */ doneAt: string }
 
-/** The celebration plays for about this long; a redraw inside it replays the card rather than cutting it short. */
+/** The celebration plays for about this long (the keyframes in priority-celebrate.ts run 1.4 s at most; keep this at least as long); a redraw inside it replays the card rather than cutting it short. */
 export const CELEBRATE_MS = 1600;
 
 const keyOf = (text: string, stream: string): string => `${stream}\n${text}`;

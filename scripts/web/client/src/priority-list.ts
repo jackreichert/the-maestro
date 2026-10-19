@@ -17,6 +17,7 @@ export interface PriorityData {
 import { splitStream } from './glance.ts';
 export { splitStream };
 
+const NO_CELEBRATION: Celebration = { fresh: new Set(), before: 0, cleared: false, announce: '' };
 const MAX_TEXT = 200;
 const MAX_STREAM = 40;
 
@@ -113,8 +114,6 @@ export class PriorityList extends HTMLElement {
   #over = -1;
   #message: { text: string; error: boolean } = { text: '', error: false };
   #focus: string | null = null;
-  /** The celebration of the data last given: used by the first draw of it only, so an internal redraw (a confirm, a drag, an edit) never replays it. */
-  #celebration: Celebration | null = null;
   #announce: ReturnType<typeof setTimeout> | null = null;
   #dragHold = false;   // the drag's own hold on redraws; released once, by whichever of drop or dragend comes first
   #holds = 0;   // reasons to hold the page's redraws: a drag, a request; the page is told only on 0 to 1 and 1 to 0
@@ -132,12 +131,11 @@ export class PriorityList extends HTMLElement {
     this.#data = d;
     this.#items = d.items;
     this.#max = d.max;
-    this.#celebration = d.progress?.celebration ?? null;
-    if (this.isConnected) this.#render();
+    if (this.isConnected) this.#render(d.progress?.celebration);
   }
 
   connectedCallback(): void {
-    this.#render();
+    this.#render(this.#data.progress?.celebration);
     // The host's height follows the page (the hero row), so whether more sits below changes without any redraw.
     if (typeof ResizeObserver === 'function') { this.#resize = new ResizeObserver(() => this.#syncFade()); this.#resize.observe(this); }
   }
@@ -224,7 +222,8 @@ export class PriorityList extends HTMLElement {
     });
   }
 
-  #render(): void {
+  /** `celebration` is given only by a fresh `data`: that draw plays it, and every internal redraw (a confirm, a drag, an edit) gets none, so nothing replays. */
+  #render(celebration: Celebration = NO_CELEBRATION): void {
     // Whatever has focus keeps it across the rebuild (by id), unless a caller named where focus should land.
     const want = this.#focus ?? this.#root.activeElement?.id ?? null;
     this.#focus = null;
@@ -236,11 +235,11 @@ export class PriorityList extends HTMLElement {
     frag.push(h('div', { class: 'bar' },
       h('div', { class: 'ttl' }, h('span', { class: 'instrument', 'aria-hidden': 'true' }, 'Liner notes'), h('h2', {}, 'Today\'s priorities')),
       h('span', { class: 'cap', id: 'pl-count' }, h('span', { class: 'vh' }, 'Priorities: '), c.label),
-      this.#meter(),
+      this.#meter(celebration),
       c.over ? h('span', { class: 'warn' }, `Over the cap of ${this.#max}: you can reorder and remove, not add.`) : null));
     if (items.length === 0) frag.push(h('p', { class: 'empty' }, note || 'No priorities set for today.'));
     else {
-      const list = h('ol', { class: 'priorities', role: 'list', 'aria-describedby': 'pl-count' }, ...items.map((p, i) => this.#row(p, i, editable)));
+      const list = h('ol', { class: 'priorities', role: 'list', 'aria-describedby': 'pl-count' }, ...items.map((p, i) => this.#row(p, i, editable, celebration)));
       list.setAttribute('aria-busy', String(this.#pending));
       frag.push(list);
     }
@@ -270,39 +269,38 @@ export class PriorityList extends HTMLElement {
       if (blocked) frag.push(h('p', { class: 'hint', id: 'pl-hint' }, blocked));
       frag.push(h('div', { class: `msg${this.#message.error ? ' err' : ''}`, role: this.#message.error ? 'alert' : 'status' }, this.#message.text));
     }
-    frag.push(this.#live());
+    frag.push(this.#live(celebration));
     this.#region.replaceChildren(...frag, h('div', { class: 'fade', 'aria-hidden': 'true' }));
     this.#syncFade();
-    if (this.#celebration) this.#celebration = { ...this.#celebration, fresh: new Set(), cleared: false, announce: '' };
     if (want) (this.#root.getElementById(want) as HTMLElement | null)?.focus();
   }
 
   /** "3 of 5 done" with a bar that fills forward from where it stood, and the "Board cleared" line once every priority is done. */
-  #meter(): HTMLElement | null {
+  #meter(cel: Celebration): HTMLElement | null {
     const prog = this.#data.progress;
     const total = this.#items.length;
     if (!prog || total === 0) return null;
     const byKey = new Map(prog.statuses.map((x) => [x.key, x]));
     const n = this.#items.filter((p) => byKey.get(priorityKey(p))?.done).length;
-    const fresh = (this.#celebration ?? prog.celebration).fresh.size > 0;
+    const fresh = cel.fresh.size > 0;
     const full = n === total;
-    const before = Math.min(Math.max((this.#celebration ?? prog.celebration).before, 0), n);
+    const before = Math.min(Math.max(cel.before, 0), n);
     const fill = h('span', { class: 'fill' });
     fill.style.setProperty('--p', String(n / total));
     fill.style.setProperty('--from', String(before / total));
     const meter = h('span', { class: `meter${full ? ' full' : ''}${fresh ? ' fresh' : ''}`, id: 'pl-meter' },
       h('span', { class: 'count' }, h('span', { class: 'vh' }, 'Progress: '), `${n} of ${total} done`),
       h('span', { class: 'track', 'aria-hidden': 'true' }, fill));
-    const spark = full && (this.#celebration ?? prog.celebration).cleared ? burst(true) : null;
+    const spark = full && cel.cleared ? burst(true) : null;
     if (spark) meter.append(spark);
     if (!full) return meter;
-    return h('span', { class: 'ttl-done' }, meter, h('span', { class: `cleared${(this.#celebration ?? prog.celebration).cleared ? ' fresh' : ''}`, id: 'pl-cleared' }, 'Board cleared ', h('span', { 'aria-hidden': 'true' }, '✓')));
+    return h('span', { class: 'ttl-done' }, meter, h('span', { class: `cleared${cel.cleared ? ' fresh' : ''}`, id: 'pl-cleared' }, 'Board cleared ', h('span', { 'aria-hidden': 'true' }, '✓')));
   }
 
   /** The announcement for a screen reader. Its words go in just after it is on the page, because a live region only speaks changes. */
-  #live(): HTMLElement {
+  #live(cel: Celebration): HTMLElement {
     const live = h('div', { class: 'vh', id: 'pl-live', role: 'status', 'aria-live': 'polite' });
-    const said = this.#celebration?.announce ?? '';
+    const said = cel.announce;
     if (said) {
       if (this.#announce !== null) clearTimeout(this.#announce);
       this.#announce = setTimeout(() => { live.textContent = said; this.#announce = null; }, 60);
@@ -319,18 +317,17 @@ export class PriorityList extends HTMLElement {
     return [chk, h('span', { class: 'when' }, clock ? `Done ✓ at ${clock}` : 'Done ✓')];
   }
 
-  #row(p: Priority, i: number, editable: boolean): HTMLElement {
+  #row(p: Priority, i: number, editable: boolean, cel: Celebration): HTMLElement {
     const shown = splitStream(p);
     const status = this.#data.progress?.statuses.find((x) => x.key === priorityKey(p));
     const done = status?.done === true;
-    const fresh = done && this.#celebration?.fresh.has(status!.key) === true;
     // Only the stream is drawn; the full text stays in the page for assistive tech and as a tooltip. A priority whose stream has no tab (none, or one nobody has opened) has nowhere else to show its text, so it is drawn, on one line.
     const hasTab = shown.stream !== '' && this.#data.streams.includes(shown.stream);
     const text = hasTab
       ? h('span', { class: 'text', title: shown.text }, streamTag(shown.stream), h('span', { class: 'vh' }, `: ${shown.text}`))
       : h('span', { class: 'text untagged', title: shown.text }, shown.text);
-    if (done && status) { text.classList.add('done'); text.append(...this.#doneMarks(status, fresh)); }
-    const li = h('li', { 'data-i': String(i), ...(done ? { class: fresh ? 'done fresh' : 'done' } : {}) }, text);
+    if (done && status) { text.classList.add('done'); text.append(...this.#doneMarks(status, cel.fresh.has(status.key))); }
+    const li = h('li', { 'data-i': String(i), ...(done ? { class: status && cel.fresh.has(status.key) ? 'done fresh' : 'done' } : {}) }, text);
     if (!editable) return li;
     if (this.#confirm === i) {
       const yes = h('button', { type: 'button', class: 'danger', id: `pl-yes-${i}`, 'aria-label': actionLabel('Confirm delete', p) }, 'Delete');
