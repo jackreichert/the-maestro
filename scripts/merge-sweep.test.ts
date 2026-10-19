@@ -364,3 +364,15 @@ test('the playbook names the exit codes and the close flag', () => {
     assert.match(text, /not merged/i);
     assert.match(text, /acme\/widget|owner\/repo/);
 });
+
+test('--prune-others adds a pruned report to the JSON, changes nothing in the sweep, and the playbook names it', () => {
+    const { vault } = ledgerWith([base('aaaa', { kind: 'wip', text: 'follow-ups for acme/widget#12' })]);
+    const plain = run(vault, ['--json'], fakeGh(VIEWS));
+    const pruned = run(vault, ['--json', '--prune-others'], fakeGh(VIEWS));
+    assert.equal(pruned.status, plain.status, pruned.stderr);
+    const out = JSON.parse(pruned.stdout) as { pruned?: { cards: unknown[]; drafts: unknown[]; unread: number }; merged: unknown[] };
+    assert.deepEqual(out.pruned, { cards: [], drafts: [], unread: 0 }, 'nothing cached and nothing queued: nothing pruned');
+    assert.equal(out.merged.length, 1);
+    assert.equal('pruned' in (JSON.parse(plain.stdout) as object), false, 'without the flag the JSON has no pruned key');
+    assert.match(readFileSync(PLAYBOOK, 'utf8'), /--prune-others/);
+});

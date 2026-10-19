@@ -6,6 +6,7 @@ You are the runner. The `merge-sweep` standing pickup is due. The sweep has four
 |---|---|---|---|
 | 1. Read | `merge-sweep.ts --json` | nothing | n/a |
 | 2. Close ledger rows | `merge-sweep.ts --close-ledger` | appends `done` to local ledger rows whose linked PRs all merged | yes (the ledger is append-only and local) |
+| 2b. Prune Others' PRs | `merge-sweep.ts --prune-others --json` | drops settled teammate PR cards from the Podium's Others' PRs cache and rejects the review drafts queued for them | the cache is rebuilt on the next page refresh; a rejected draft keeps its text and reason |
 | 3. Delete branches | `branch-sweep.ts --apply --ids ...` | deletes remote branches from a fresh listing | no, but each deletion prints a `restore` line first |
 | 4. Harvest review misses | `review-harvest.ts harvest --since <7 days ago>`, then [review-miss-harvest.md](review-miss-harvest.md) | the local harvest store, triage lines, and the weekly note | yes (local files; the note is never overwritten) |
 
@@ -35,6 +36,14 @@ node scripts/merge-sweep.ts --close-ledger --json [--vault <ledger root>] [--pro
 ```
 
 This is the only ledger write the sweep makes, and it closes only a `wip` row linked to its PR through refs (`pr-open.ts` writes the link) once every PR on the row is MERGED. A row that only mentions a PR in its text, a `blocked` row, or a row with another PR still open or unreadable is listed and left open. It never touches a branch. Rows it closed are in `autoClosed`. `--close` is the old name for the same flag. If the command is refused or fails, report it and go on to step 3; do not retry with other flags.
+
+## 2b. Prune the Others' PRs tab
+
+```bash
+node scripts/merge-sweep.ts --prune-others --json [--vault <ledger root>] [--project <name>]
+```
+
+Run it with step 1's flags (it repeats the read, so it may be combined: `--close-ledger --prune-others --json`). It reads each cached teammate PR once and drops the card, and rejects any pending review draft, when the PR is merged or closed, or when someone other than the user, the PR's author and the bots has reviewed it or left an inline comment. A PR the user was asked to review and has not reviewed stays. `pruned` in the JSON lists `cards`, `drafts` and `unread` (PRs it could not read, left in place); each pruned item is also a `merge-sweep: pruned card ...` or `rejected draft ...` line on stderr. Running it again prunes nothing. If it fails, report it and go on.
 
 ## 3. Delete merged branches
 
@@ -69,7 +78,7 @@ If anything is pending, follow [review-miss-harvest.md](review-miss-harvest.md) 
 
 ## 5. Report back
 
-Report at most 15 lines, then stop:
+Report at most 20 lines, then stop:
 
 1. `merge-sweep: <clean | N actions | BLIND>`, the step 1 exit code, and `closedCount`
 2. one line per row in `autoClosed`: `<id> -> closed by --close-ledger`
@@ -78,13 +87,14 @@ Report at most 15 lines, then stop:
 5. one line per unknown row: `<id> -> could not read, not merged`
 6. one line per closed-without-merging row: `<id> -> closed unmerged, not closed`
 7. one line per deleted branch: its `restore` line; one line per `REFUSED`: `<id> -> <reason>`
-8. `harvest: <N> new findings, <M> pending, note <path or none>`
+8. `pruned: <N> cards, <M> drafts` from `pruned` (step 2b), one line per card as `<repo>#<n> -> <reason>`
+9. `harvest: <N> new findings, <M> pending, note <path or none>`
 
 Do not paraphrase `MERGED`, `OPEN`, `CLOSED`, or `UNKNOWN`. If a list has more rows than fit, end with `+N more`. Do not paste raw JSON, `gh` stderr, or logs. If `actions` is 0, nothing was closed and nothing was deleted, the whole report is `merge-sweep: clean` plus the harvest line.
 
 ## Hard rules
 
-- The only ledger write is `merge-sweep.ts --close-ledger`. Never run `journal.ts done`, never close, drop or resolve a row by hand, never edit `ledger.jsonl` or `standing.jsonl`. Never close a `question`, `decision` or ask row.
+- The only ledger write is `merge-sweep.ts --close-ledger`; the only Podium write is `--prune-others`. Never run `journal.ts done`, never close, drop or resolve a row by hand, never edit `ledger.jsonl` or `standing.jsonl`. Never close a `question`, `decision` or ask row.
 - The only deletion is `branch-sweep.ts --apply --ids` from a listing you just made. No `git push --delete`, no `git branch -D`, no `--force`.
 - Never treat `UNKNOWN` as merged, and never treat a PR the script did not list as merged. A missing read is not a merge.
 - Do not sync an overlay, merge, comment, or push. Do not record `journal.ts standing done` yourself; the orchestrator does that after reading your report.

@@ -61,7 +61,7 @@ test('an open PR nobody picked up keeps its draft, and a draft already rejected 
   const { id } = addDraft(f, draft(2), { now: () => T0 });
   assert.equal(rejectDraft(f, id, 'no thanks').ok, true);
   assert.deepEqual(settleStaleDrafts(f, 'me-fake', { run: gh({ 1: {}, 2: { state: 'MERGED' } }, calls), now: NOW }), []);
-  assert.equal(calls.length, 2, 'only the pending draft\'s PR is read (view and reviews)');
+  assert.equal(calls.length, 3, 'only the pending draft\'s PR is read (view, reviews and inline comments)');
   assert.equal(listDrafts(f).find((d) => d.pr === 1)?.state, 'pending');
 });
 
