@@ -42,10 +42,26 @@ function readReviews(run: GhRead, repo: string, pr: number): SettledReview[] | n
   return out;
 }
 
+/** Inline review comments by people, as COMMENTED reviews carrying the comment text, so a reviewer who commented line by line without a review body still counts as having picked the PR up. Best effort: a failed read adds nothing. */
+function readInlineComments(run: GhRead, repo: string, pr: number): SettledReview[] {
+  let r;
+  try { r = run(['api', '--paginate', `repos/${repo}/pulls/${pr}/comments`, '--jq', '.[] | tojson']); } catch { return []; }
+  if (r.status !== 0) return [];
+  const out: SettledReview[] = [];
+  for (const line of r.stdout.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const x = JSON.parse(line) as { user?: { login?: string; type?: string } | null; created_at?: string; body?: string | null };
+      if (x.created_at && x.body?.trim()) out.push({ login: x.user?.login ?? '', bot: isBotAuthor({ login: x.user?.login, type: x.user?.type }), state: 'COMMENTED', at: x.created_at, body: x.body });
+    } catch { /* a line that is not a comment is skipped */ }
+  }
+  return out;
+}
+
 const FIELDS = 'state,reviewDecision,author,createdAt,reviewRequests,commits';
 
 /** The PR's facts, or null when GitHub cannot say or the answer is not shaped like a PR. */
-function read(run: GhRead, repo: string, pr: number, self: string): SettledFacts | null {
+export function readFacts(run: GhRead, repo: string, pr: number, self: string): SettledFacts | null {
   let r;
   try { r = run(['pr', 'view', String(pr), '--repo', repo, '--json', FIELDS]); } catch { return null; }
   if (r.status !== 0) return null;
@@ -59,7 +75,7 @@ function read(run: GhRead, repo: string, pr: number, self: string): SettledFacts
   const headAt = dates[dates.length - 1];
   return {
     state, decision: v.reviewDecision || null, author: v.author.login, self, createdAt: v.createdAt ?? '', ...(headAt ? { headAt } : {}),
-    requested: (v.reviewRequests ?? []).map((q) => q?.login).filter((l): l is string => !!l), reviews,
+    requested: (v.reviewRequests ?? []).map((q) => q?.login).filter((l): l is string => !!l), reviews: [...reviews, ...readInlineComments(run, repo, pr)],
   };
 }
 
@@ -72,7 +88,7 @@ export function settleStaleDrafts(file: string, self: string, o: SettleOptions =
   const out: SettledDraft[] = [];
   for (const drafts of byPr.values()) {
     const first = drafts[0] as Draft;
-    const facts = read(run, first.repo, first.pr, self);
+    const facts = readFacts(run, first.repo, first.pr, self);
     const why = facts ? settledReason(facts) : null;
     if (!why) continue;
     const reason = `Settled automatically: ${why.text}; this review is not posted.`;
