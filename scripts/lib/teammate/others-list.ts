@@ -16,6 +16,8 @@ import { isPrKey } from './others-actions.ts';
 
 /** A PR key whose owner is shaped like a GitHub login (never `.` or `..`): the key goes into a GraphQL query, so it is checked tighter than a plain key. */
 export const isListKey = (k: unknown): k is string => isPrKey(k) && /^[A-Za-z0-9][A-Za-z0-9-]*\//.test(k);
+/** GitHub treats owner and repo names case-insensitively, so a list key is lower case: the same PR named two ways is one entry. */
+export const listKey = (k: string): string => k.toLowerCase();
 
 export const OTHERS_LIST = '.now-others-list.jsonl';
 export const listPath = (statusDir: string): string => join(statusDir, OTHERS_LIST);
@@ -47,14 +49,15 @@ function parseRow(line: string): Row | null {
   if (typeof r !== 'object' || r === null) return null;
   const x = r as Record<string, unknown>;
   if (!isListKey(x.key) || typeof x.ts !== 'number' || !Number.isFinite(x.ts)) return null;
+  const key = listKey(x.key);
   if (x.op === 'drop') {
     const updatedAt = short(x.updatedAt, 40);
-    return { op: 'drop', key: x.key, why: short(x.why, 120) ?? 'dropped', ts: x.ts, ...(updatedAt ? { updatedAt } : {}) };
+    return { op: 'drop', key, why: short(x.why, 120) ?? 'dropped', ts: x.ts, ...(updatedAt ? { updatedAt } : {}) };
   }
   if (x.op !== 'add' || !isSource(x.source) || typeof x.at !== 'number' || !Number.isFinite(x.at)) return null;
   const channel = short(x.channel, 80);
   const author = short(x.author, 80);
-  return { op: 'add', key: x.key, source: x.source, at: x.at, ts: x.ts, ...(channel ? { channel } : {}), ...(author ? { author } : {}) };
+  return { op: 'add', key, source: x.source, at: x.at, ts: x.ts, ...(channel ? { channel } : {}), ...(author ? { author } : {}) };
 }
 
 /** The list as it stands. A missing or damaged file is an empty list; a row that does not parse is skipped. */
@@ -84,14 +87,16 @@ function append(file: string, row: Row): void { mkdirSync(dirname(file), { recur
 /** Adds a PR. Idempotent: a PR already on the list writes nothing. Returns whether a row was written. Throws on a malformed key. */
 export function addToList(file: string, e: Omit<ListEntry, 'at'> & { at?: number }, now: number = Date.now()): boolean {
   if (!isListKey(e.key)) throw new Error(`not a PR key (owner/repo#number): ${e.key}`);
-  if (readList(file).active.has(e.key)) return false;
-  append(file, { op: 'add', key: e.key, source: e.source, at: e.at ?? now, ts: now, ...(e.channel ? { channel: e.channel } : {}), ...(e.author ? { author: e.author } : {}) });
+  const key = listKey(e.key);
+  if (readList(file).active.has(key)) return false;
+  append(file, { op: 'add', key, source: e.source, at: e.at ?? now, ts: now, ...(e.channel ? { channel: e.channel } : {}), ...(e.author ? { author: e.author } : {}) });
   return true;
 }
 
 /** Drops a PR with a reason (and the `updatedAt` it was judged at). Idempotent: a PR not on the list writes nothing. */
-export function dropFromList(file: string, key: string, why: string, updatedAt?: string, now: number = Date.now()): boolean {
-  if (!isListKey(key)) throw new Error(`not a PR key (owner/repo#number): ${key}`);
+export function dropFromList(file: string, rawKey: string, why: string, updatedAt?: string, now: number = Date.now()): boolean {
+  if (!isListKey(rawKey)) throw new Error(`not a PR key (owner/repo#number): ${rawKey}`);
+  const key = listKey(rawKey);
   if (!readList(file).active.has(key)) return false;
   append(file, { op: 'drop', key, why, ts: now, ...(updatedAt ? { updatedAt } : {}) });
   return true;
@@ -104,7 +109,8 @@ export interface Evidence { askedAt?: number; updatedAt?: string }
  * Whether a discovered PR should join the list. Not if it is on it already. A PR that was never dropped joins. A dropped one rejoins only on news:
  * an ask newer than the drop, or a GitHub `updatedAt` later than the one it was dropped at (a push, a comment, a review or a re-request moves it).
  */
-export function mayRejoin(state: ListState, key: string, ev: Evidence): boolean {
+export function mayRejoin(state: ListState, rawKey: string, ev: Evidence): boolean {
+  const key = listKey(rawKey);
   if (state.active.has(key)) return false;
   const gone = state.dropped.get(key);
   if (!gone) return true;

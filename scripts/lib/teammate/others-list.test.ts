@@ -78,3 +78,12 @@ test('compaction rewrites to the fold and changes nothing a reader sees', () => 
   assert.equal(after.rows, 2);
   assert.equal(compactList(f, 3000), false, 'a small file is left alone');
 });
+
+test('keys compare case-insensitively: the same PR named two ways is one entry', () => {
+  const f = file();
+  assert.equal(addToList(f, { key: 'Acme-Fake/Widgets#7', source: 'manual' }, 1000), true);
+  assert.equal(addToList(f, { key: 'acme-fake/widgets#7', source: 'slack' }, 2000), false);
+  assert.deepEqual([...readList(f).active.keys()], ['acme-fake/widgets#7']);
+  assert.equal(dropFromList(f, 'ACME-FAKE/WIDGETS#7', 'merged', undefined, 3000), true);
+  assert.equal(mayRejoin(readList(f), 'Acme-Fake/Widgets#7', { askedAt: 2500 }), false);
+});
