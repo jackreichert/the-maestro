@@ -37,7 +37,7 @@ const keysIn = (text: string, owners: ReadonlySet<string>): string[] => {
   return [...out];
 };
 
-/** Asks and claims in one note's text. `channel` is the note's name; the same PR asked twice keeps its newest ask. */
+/** Asks and claims in one note's text. `channel` is the note's name; the same PR asked twice keeps its newest ask. With no `selfNames` no claim is read (a reply by you could not be told from a teammate's, and a wrong claim drops a PR you meant to review); asks are unaffected. */
 export function scanNote(text: string, channel: string, o: SlackScanOptions): SlackScan {
   const owners = new Set(o.owners.map((x) => x.toLowerCase()));
   const me = new Set((o.selfNames ?? []).map((n) => n.trim().toLowerCase()).filter(Boolean));
@@ -59,7 +59,7 @@ export function scanNote(text: string, channel: string, o: SlackScanOptions): Sl
         const prev = asks.get(key);
         if (!prev || at > prev.at) asks.set(key, { key, at, channel, ...(author ? { author } : {}) });
       }
-    } else if (isReply && thread.keys.size && CLAIM.test(body) && !NOT_AN_ASK.test(body)) {
+    } else if (me.size && isReply && thread.keys.size && CLAIM.test(body) && !NOT_AN_ASK.test(body)) {
       const who = author?.toLowerCase();
       if (who && (me.has(who) || who === thread.poster?.toLowerCase())) continue;
       for (const key of thread.keys) claims.push({ key, at });

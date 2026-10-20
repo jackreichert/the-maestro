@@ -228,7 +228,7 @@ export function refreshOthers(dir: string, scope: OthersScope, now: Date, run?: 
   try {
     const file = listPath(dir);
     const failures: string[] = [];
-    if (!existsSync(file)) for (const key of scope.seedKeys ?? []) { try { addToList(file, { key, source: 'seed' }, nowMs); } catch { /* a draft's key that is not a PR key is not seeded */ } }
+    if (!existsSync(file)) for (const key of (scope.seedKeys ?? []).filter((k) => scope.owners.some((o) => o.toLowerCase() === (k.split('/')[0] ?? '')))) { try { addToList(file, { key, source: 'seed' }, nowMs); } catch { /* a draft's key that is not a PR key is not seeded */ } }
     const claims = joinList(file, scope, nowMs, run, failures);
     const listed = [...readList(file).active.values()];
     const read = readPullRequests<Node>(listed.map((e) => e.key), PR_SELECTION, run);

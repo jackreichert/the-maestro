@@ -307,8 +307,8 @@ test('an empty list reads nothing and shows nothing', () => {
 test('migration: a missing list is seeded once from the PRs with a draft waiting, and never again', () => {
   const { d, file } = fresh();
   const g = () => fakeGh({ byKey: { [KEY]: hit(1) } });
-  refreshOthers(d, { ...SCOPE, seedKeys: [KEY, 'not a key'] }, NOW, g().run);
-  assert.deepEqual([...readList(file).active.values()].map((e) => [e.key, e.source]), [[KEY, 'seed']]);
+  refreshOthers(d, { ...SCOPE, seedKeys: [KEY, 'not a key', 'stranger-fake/x#1'] }, NOW, g().run);
+  assert.deepEqual([...readList(file).active.values()].map((e) => [e.key, e.source]), [[KEY, 'seed']], 'a key outside the review owners is not seeded');
   dropFromList(file, KEY, 'merged');
   refreshOthers(d, { ...SCOPE, seedKeys: [KEY] }, NOW, g().run);
   assert.equal(readList(file).active.size, 0, 'a list that exists is not re-seeded');
@@ -348,10 +348,10 @@ test('an old Slack ask is not listed; a new ask after a drop brings the PR back'
 test('a teammate claiming the PR in the thread drops it, unless you were asked and have not reviewed', () => {
   const sd = slackDir(`- 2026-10-21 09:00 ET **Frodo Fake**: PTAL ${URL1}`, '- 2026-10-21 09:20 ET ↳ **Samwise Fake**: I\'ll take it');
   const a = fresh();
-  refreshOthers(a.d, { ...SCOPE, slackDir: sd }, NOW, fakeGh({ byKey: { [KEY]: hit(1) } }).run);
+  refreshOthers(a.d, { ...SCOPE, slackDir: sd, selfNames: ['Jack Fake'] }, NOW, fakeGh({ byKey: { [KEY]: hit(1) } }).run);
   assert.equal(readList(a.file).dropped.get(KEY)?.why, 'a teammate claimed it in Slack');
   const b = fresh();
-  refreshOthers(b.d, { ...SCOPE, slackDir: sd }, NOW, fakeGh({ byKey: { [KEY]: hit(1, asked) } }).run);
+  refreshOthers(b.d, { ...SCOPE, slackDir: sd, selfNames: ['Jack Fake'] }, NOW, fakeGh({ byKey: { [KEY]: hit(1, asked) } }).run);
   assert.deepEqual(shown(b.d), [1]);
   const c = fresh();
   refreshOthers(c.d, { ...SCOPE, slackDir: sd, selfNames: ['Samwise Fake'] }, NOW, fakeGh({ byKey: { [KEY]: hit(1) } }).run);
