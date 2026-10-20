@@ -87,6 +87,13 @@ export type Judgement = { pr: OtherPr } | { drop: string; updatedAt?: string } |
 /** When judging for the list: the time, the day the PR was listed (the ask is its first sign of life) and a Slack claim made after the ask. */
 export interface JudgeContext { now: number; listedAt?: number; claimedAt?: number }
 
+/** Whether a PR is not yours to review here: your own, a bot's, in a self-review repo, a former teammate's, or outside the review owners. One rule for discovery and for the read. */
+function outOfScope(repo: string, author: string, authorNode: Node['author'], scope: OthersScope): boolean {
+  const self = scope.self.toLowerCase();
+  return isBotAuthor(authorNode) || (self !== '' && author.toLowerCase() === self) || isSelfReview(repo, scope.selfRepos) || isFormerTeammate(author, scope.former)
+    || !scope.owners.some((o) => o.toLowerCase() === repo.split('/')[0]?.toLowerCase());
+}
+
 /** One listed PR's node, judged. Not yours to review here, settled (merged, closed, approved, picked up: lib/teammate/settled.ts), claimed in Slack, or quiet for two working days drops it. */
 export function judgeNode(n: Node, scope: OthersScope, ctx?: JudgeContext): Judgement {
   const self = scope.self.toLowerCase();
@@ -94,7 +101,7 @@ export function judgeNode(n: Node, scope: OthersScope, ctx?: JudgeContext): Judg
   const repo = n.repository?.nameWithOwner;
   const author = n.author?.login;
   if (!repo || !author || typeof n.number !== 'number' || !n.url || typeof n.isDraft !== 'boolean') return { skip: true };
-  if (isBotAuthor(n.author) || (self !== '' && author.toLowerCase() === self) || isSelfReview(repo, scope.selfRepos) || isFormerTeammate(author, scope.former) || !scope.owners.some((o) => o.toLowerCase() === repo.split('/')[0]?.toLowerCase())) return { drop: 'not yours to review here: your own PR, a bot, a self-review repo, a former teammate or another owner', updatedAt };
+  if (outOfScope(repo, author, n.author, scope)) return { drop: 'not yours to review here: your own PR, a bot, a self-review repo, a former teammate or another owner', updatedAt };
   const mine = (n.reviews?.nodes ?? []).filter((r) => r && r.state && r.state !== 'PENDING' && r.submittedAt && self !== '' && (r.author?.login ?? '').toLowerCase() === self).sort((a, b) => (a?.submittedAt ?? '').localeCompare(b?.submittedAt ?? '')).pop();
   const head = n.commits?.nodes?.[0]?.commit;
   const settled = settledReason({ state: n.state === 'MERGED' || n.state === 'CLOSED' ? n.state : 'OPEN', decision: n.reviewDecision ?? null, author, self: scope.self, createdAt: n.createdAt ?? '', ...(head?.committedDate ? { headAt: head.committedDate } : {}),
@@ -166,8 +173,7 @@ export function discover(scope: OthersScope, run?: Run): { found: Found[]; error
       const repo = n.repository?.nameWithOwner;
       const author = n.author?.login;
       if (!repo || !author || typeof n.number !== 'number') continue;
-      if (isBotAuthor(n.author) || (self !== '' && author.toLowerCase() === self) || isSelfReview(repo, scope.selfRepos) || isFormerTeammate(author, scope.former)) continue;
-      if (!scope.owners.some((o) => o.toLowerCase() === repo.split('/')[0]?.toLowerCase())) continue;
+      if (outOfScope(repo, author, n.author, scope)) continue;
       const kind = source === 'special' ? specialKind(n) : source;
       if (!kind) continue;
       const key = listKey(`${repo}#${n.number}`);
