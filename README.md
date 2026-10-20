@@ -94,7 +94,7 @@ Register the hooks, or the guards stay prose. Nothing installs them for you: the
 node ~/.claude/skills/the-maestro/scripts/hooks/print-settings-snippet.ts --project my-workspace
 ```
 
-The snippet covers the board at session start, the handoff before a compaction, `git-guard.ts` (asks before a protected-branch push, a force-push or `git add -A`), `agent-dispatch.ts` and `agent-return.ts` (so dispatched agents reach the ledger), and `jira-freeze-guard.ts`. If you skip `agent-dispatch.ts` and `agent-return.ts`, the footer reports `ledger drift` while agents run untracked; see [Loading the board automatically](#loading-the-board-automatically).
+The snippet covers the board at session start, the handoff before a compaction, `git-guard.ts` (asks before a protected-branch push, a force-push or `git add -A`), `agent-dispatch.ts` and `agent-return.ts` (so dispatched agents reach the ledger), `jira-freeze-guard.ts`, and the session-end and event-inject entries. If you skip `agent-dispatch.ts` and `agent-return.ts`, the footer reports `ledger drift` while agents run untracked; see [Loading the board automatically](#loading-the-board-automatically).
 
 Decide whether the skill keeps itself current. Until you answer, `prime` ends its first lines with `auto_pull is not set` each session (unset is different from off, so a new install is asked once rather than silently opted out). Answer it now, or let your agent ask:
 
