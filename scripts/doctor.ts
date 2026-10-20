@@ -52,6 +52,9 @@ function readSettings(files: string[]): { read: string[]; commands: HookCommand[
   return { read, commands };
 }
 
+/** The real directory holding `file`, or undefined when a link is dangling. */
+const resolvedDir = (file: string): string | undefined => { try { return dirname(realpathSync(file)); } catch { return undefined; } };
+
 const names = (dir: string): string[] => { try { return readdirSync(dir); } catch { return []; } };
 
 function installFacts(): InstallFacts {
@@ -77,12 +80,13 @@ function main(): void {
   const { read, commands } = readSettings(settingsFiles);
   const runtime = runtimeWorktree();
   const skill = join(claude, 'skills', 'the-maestro');
+  const overlayDir = overlayPath ? resolvedDir(overlayPath) : undefined;
   const results: CheckResult[] = [
     checkRegistered(expectedHookFiles(snippet([])), commands, read),
     checkHookLocation(commands, runtime),
     checkSkillLocation(existsSync(skill) || lstatSync(skill, { throwIfNoEntry: false }) ? skill : undefined, runtime),
     checkBehind('runtime worktree current', runtime, behindMain(runtime)),
-    checkBehind('overlay checkout current', overlayPath ? dirname(realpathSync(overlayPath)) : undefined, behindMain(overlayPath ? dirname(realpathSync(overlayPath)) : undefined)),
+    checkBehind('overlay checkout current', overlayDir, behindMain(overlayDir)),
     checkDuplicateInstalls(installFacts()),
   ];
   if (json) printJson({ results }); else console.log(render(results));
