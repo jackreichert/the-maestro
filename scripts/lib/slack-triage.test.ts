@@ -116,6 +116,8 @@ test('ruleProblem rejects malformed rules, one named problem each', () => {
     [{ ...ok, label: 'urgent' }, /label/],
     [{ ...ok, match: '(' }, /regular expression/],
     [{ ...ok, flags: 'g' }, /flags/],
+    [{ ...ok, match: '(a+)+$' }, /nested quantifier/],
+    [{ ...ok, match: '(\\w+\\s?)*x' }, /nested quantifier/],
     [{ name: 'a', reason: 'r', verdict: 'drop' }, /at least one condition/],
     [{ ...ok, channels: [] }, /channels/],
   ];
@@ -126,4 +128,22 @@ test('parseRules names every problem at once and loads nothing', () => {
   const bad = { me: [], channels: { eng: { group: 'engineering', playbook: 'x.txt' } }, rules: [{ name: 'a', reason: 'r', verdict: 'drop', match: 'x' }, { name: 'a', reason: 'r', verdict: 'drop', match: 'y' }] };
   assert.throws(() => parseRules(JSON.stringify(bad), '/'), (err: Error) => /`me`/.test(err.message) && /channel eng/.test(err.message) && /repeats a name/.test(err.message));
   assert.throws(() => parseRules('{not json', '/'), /not JSON/);
+});
+
+test('a dated line the format misses is kept and escalated, never silently lost', () => {
+  const text = '- 2026-10-15 17:50 EDT **Ford**: @Arthur look\n- 2026-10-15 17:51 ET **Ford**: fine';
+  const ms = parseMessages(text);
+  assert.deepEqual(ms.map((m) => [m.line, m.unparsed ?? false]), [[1, true], [2, false]]);
+  const d = decide(ms[0]!, 'eng', rules);
+  assert.deepEqual([d.verdict, d.rule, d.author], ['escalate', 'unparsed', '']);
+  assert.equal(parseMessages('- not a message\n# - 2026-10-15 header').length, 0, 'only dated list lines count');
+});
+
+test('a tag that names an Object prototype key is a missing channel, not a crash', () => {
+  assert.equal(decide(msg('Ford Prefect', 'something'), 'constructor', rules).verdict, 'escalate');
+});
+
+test('safe patterns with quantifiers inside a group still load', () => {
+  assert.equal(ruleProblem({ name: 'a', reason: 'r', verdict: 'drop', match: '^(ty|thanks)!*$' }), null);
+  assert.equal(ruleProblem({ name: 'a', reason: 'r', verdict: 'drop', match: '(:[a-z_]+:\\s*)?released' }), null);
 });

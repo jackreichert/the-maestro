@@ -46,12 +46,13 @@ flowchart LR
 
 - **A mention is never dropped.** The script lifts any @-mention of the user to `surface` (label `ask` unless a rule set one), and a bare-name mention or a broadcast to at least `model`. The runner may not skip a `surface` item.
 - **Unsure goes up, not out.** When the playbook does not settle a `model` item, escalate it. Never drop an item because the playbook is silent.
+- **A line the script cannot parse escalates** (rule `unparsed`): a dated line in a format it does not know is never dropped. Several in a row mean the note writer changed; fix the parser.
 - **No playbook, no cheap triage.** A conversation missing from the channel map escalates; add it to the map and write its playbook rather than guessing.
 - **Quote nothing.** Describe each message in your own words, in as few words as the relay needs. Never copy message text into tickets, the ledger, PRs or chat, and never name patients, clients' people or anyone's personal details.
 - Read-only: never write to Slack, the notes or the new-messages files.
 
 ## Changing the rules
 
-A rule in the table has a `name`, a one-line `reason`, a `verdict`, optional `label` and `route`, and at least one condition: `channels` (tags), `authors` (display names), `match` (a regular expression over the message, with optional `flags` from `imsu`), `reply` (true for thread replies only, false for top-level posts only). `self: true` makes a rule read only the user's own posts; every other rule reads only other people's. First match wins. With no match, the user's own post is dropped and anything else goes to the model. The script refuses a table with any malformed rule and names every problem.
+A rule in the table has a `name`, a one-line `reason`, a `verdict`, optional `label` and `route`, and at least one condition: `channels` (tags), `authors` (display names), `match` (a regular expression over the message, with optional `flags` from `imsu`), `reply` (true for thread replies only, false for top-level posts only). `self: true` makes a rule read only the user's own posts; every other rule reads only other people's. First match wins. With no match, the user's own post is dropped and anything else goes to the model. The script refuses a table with any malformed rule and names every problem. It also refuses a pattern with a nested quantifier such as `(a+)+`, which can hang on a long message.
 
 When the cheap model keeps making the same call on the same pattern, turn the pattern into a rule. When a rule drops something the user later asked about, fix the rule the same day.

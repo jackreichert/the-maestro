@@ -38,6 +38,8 @@ export interface SlackMessage {
   text: string;
   /** For a reply that quotes its parent, the parent's author. */
   parent?: string;
+  /** A dated message line the format did not match (a new zone, a `*` in a name, a changed writer): never dropped, always escalated. */
+  unparsed?: true;
 }
 
 /**
@@ -46,11 +48,16 @@ export interface SlackMessage {
  */
 const MESSAGE = /^- (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) ET (↳ )?\*\*([^*]+)\*\*(?: \(re \d{4}-\d{2}-\d{2} \d{2}:\d{2} ET \*\*([^*]+)\*\*: ".*?"\))?: ?(.*)$/;
 
-/** The message lines of a note or new-messages file, in file order; headers and anything else are skipped. */
+/** Any line that starts like a message, so a line the strict format misses is kept rather than silently lost. */
+const DATED = /^- (\d{4}-\d{2}-\d{2}) (.*)$/;
+
+/** The message lines of a note or new-messages file, in file order; headers and anything else are skipped. A dated line the format misses is kept as `unparsed`. */
 export function parseMessages(text: string): SlackMessage[] {
-  return text.split('\n').flatMap((l, i) => {
+  return text.split('\n').flatMap((l, i): SlackMessage[] => {
     const m = MESSAGE.exec(l);
-    return m ? [{ line: i + 1, date: m[1]!, time: m[2]!, reply: Boolean(m[3]), author: m[4]!.trim(), text: m[6]!, ...(m[3] && m[5] ? { parent: m[5].trim() } : {}) }] : [];
+    if (m) return [{ line: i + 1, date: m[1]!, time: m[2]!, reply: Boolean(m[3]), author: m[4]!.trim(), text: m[6]!, ...(m[3] && m[5] ? { parent: m[5].trim() } : {}) }];
+    const d = DATED.exec(l);
+    return d ? [{ line: i + 1, date: d[1]!, time: '', reply: false, author: '', text: d[2]!, unparsed: true }] : [];
   });
 }
 
@@ -100,6 +107,8 @@ export interface Decision {
 
 /** Rule, group and route names: lower-case letters, digits and dashes. */
 const SLUG = /^[a-z0-9][a-z0-9-]{0,60}$/;
+/** A quantified group that is itself quantified, such as `(a+)+`: the classic shape of a pattern that backtracks for minutes. */
+const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)[+*{]/;
 const RULE_KEYS = new Set(['name', 'reason', 'verdict', 'label', 'route', 'channels', 'authors', 'match', 'flags', 'reply', 'self']);
 const strings = (v: unknown): boolean => Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === 'string' && s.trim() !== '');
 const compiles = (src: unknown, flags: unknown): boolean => { try { new RegExp(String(src), String(flags ?? '')); return true; } catch { return false; } };
@@ -116,6 +125,7 @@ const RULE_CHECKS: { failsOn: (r: Record<string, unknown>) => boolean; message: 
   { failsOn: (r) => r.channels !== undefined && !strings(r.channels), message: 'has channels that are not a list of tags' },
   { failsOn: (r) => r.authors !== undefined && !strings(r.authors), message: 'has authors that are not a list of names' },
   { failsOn: (r) => r.match !== undefined && (typeof r.match !== 'string' || !compiles(r.match, r.flags)), message: 'has a match that is not a valid regular expression' },
+  { failsOn: (r) => typeof r.match === 'string' && NESTED_QUANTIFIER.test(r.match), message: 'has a nested quantifier such as (a+)+, which can hang on a long message; flatten it' },
   { failsOn: (r) => r.flags !== undefined && (typeof r.flags !== 'string' || !/^[imsu]*$/.test(r.flags)), message: 'has flags other than i, m, s, u' },
   { failsOn: (r) => r.reply !== undefined && typeof r.reply !== 'boolean', message: 'has a reply that is not true or false' },
   { failsOn: (r) => r.self !== undefined && typeof r.self !== 'boolean', message: 'has a self that is not true or false' },
@@ -196,7 +206,8 @@ const applies = (r: TriageRule, m: SlackMessage, tag: string, own: boolean): boo
 /** The decision for one message of conversation `tag`: the table's first match (or a built-in fallback), then the two enforced floors. */
 export function decide(m: SlackMessage, tag: string, rules: TriageRules): Decision {
   const own = isMe(m.author, rules.me);
-  const channel = rules.channels[tag];
+  const channel = Object.hasOwn(rules.channels, tag) ? rules.channels[tag] : undefined;
+  if (m.unparsed) return { tag, group: channel?.group ?? '', playbook: channel ? resolve(rules.baseDir, channel.playbook) : '', line: m.line, at: `${m.date} ?`, author: '', reply: false, verdict: 'escalate', rule: 'unparsed', reason: 'a dated line the message format did not match; read it, and fix the parser if the format changed' };
   const hit = rules.rules.find((r) => applies(r, m, tag, own));
   const base: Pick<Decision, 'verdict' | 'label' | 'route' | 'rule' | 'reason'> = hit
     ? { verdict: hit.verdict, label: hit.label, route: hit.route, rule: hit.name, reason: hit.reason }
