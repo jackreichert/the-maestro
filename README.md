@@ -337,6 +337,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | Script | Purpose |
 |---|---|
 | [journal.ts](#journalts) | The ledger: log, board, standup, streams, claims, handoff, roll |
+| [doctor.ts](#doctorts-read-only-install-check) | Read-only install check: unregistered hooks and guards, hooks or the skill symlink outside the runtime worktree, a runtime or overlay checkout behind main, duplicate installs |
 | [ledger-index.ts](#ledger-indexts) | Disposable full-text index over the ledger, tickets, handoffs and library pages |
 | [prs-snapshot.ts](#prs-snapshotts) | Mid-day PR board snapshot and actionable diff |
 | [status-page.ts](#status-pagets) | The Podium, the always-current status page, with today's priorities and inline answers |
@@ -909,6 +910,17 @@ launchctl bootout gui/$(id -u)/com.jackreichert.the-maestro-web   # uninstall
 The loop agent's reload (`launchctl kickstart -k` on `com.jackreichert.the-maestro-loop`) does not touch the web server: it is a separate process. Restart the web server too whenever the runtime checkout changes, and rebuild `dist/` first. The server re-reads the client directories when a request names a file it has not seen (at most once per second), so a module a later build adds is served without a restart; code in `scripts/` (the API routes) still needs the restart. A hand-started `journal.ts web` is not restarted by anything, so a stale one answers with old routes until it is killed.
 
 Stop any hand-started server on the port first, or launchd's copy exits on `EADDRINUSE` and retries. Run the installer from the main checkout, not a worktree. The log is `<ledger root>/Projects/<project>/Journal/Supervisor/podium-web.log`.
+
+### doctor.ts (read-only install check)
+
+`node scripts/doctor.ts [--settings <file>]... [--json]` reports whether an install is wired the way this README describes, and changes nothing: it never edits a settings file, never fetches and never runs a fixing command, and a test checks that the settings file is byte-identical afterwards. It reads only the `hooks` key of each settings file (default `~/.claude/settings.json` and `settings.local.json`, and the same two under `./.claude`) and prints only script paths. Checks:
+
+- every hook script that `scripts/hooks/print-settings-snippet.ts` prints is registered, so a guard that exists as code but is not wired in is named (the expected list is derived from the snippet, not kept twice);
+- each registered maestro hook, and the installed `the-maestro` skill path, resolves into the runtime worktree rather than a checkout where a branch can move;
+- the runtime worktree and the overlay checkout are not behind the local `origin/main` ref (it does not fetch, so run `git fetch` first for the latest);
+- no plugin is also installed as loose skill, command or agent files under `~/.claude`, and no git clone is nested inside this checkout.
+
+A check that cannot run (no runtime worktree known, no overlay, no readable settings file) prints `skip` with the reason. Exit 0 when nothing warns, 1 when any check warns, 2 on a usage error. Fixing is yours: merge the snippet into your settings, fast-forward the runtime with `merge-sweep.ts --resync-runtime`, and remove the duplicate installs by hand.
 
 ### loop-supervisor.ts (keep the loop alive without a session)
 
