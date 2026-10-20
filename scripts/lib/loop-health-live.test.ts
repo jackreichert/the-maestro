@@ -10,6 +10,7 @@ const ledger = mkdtempSync(join(tmpdir(), 'lh-ledger-'));
 process.env.MAESTRO_LOCAL_CONFIG = '';
 process.env.LEDGER_ROOT = ledger;
 process.env.MAESTRO_EVENT_DIR = join(ledger, 'events');
+process.env.MAESTRO_RUNTIME_WORKTREE = ledger; // a non-git folder, so the line never picks up this machine's real runtime-staleness suffix
 process.env.MAESTRO_LOOP_SUPERVISOR = 'required'; // gives the health line a body with no loop running, so the digest suffix has something to attach to
 const T0 = Date.now(); // digests older than 24 h are expired, so saved times must be recent
 const { CONTAINER_PROJECT } = await import('../local-config.ts');
