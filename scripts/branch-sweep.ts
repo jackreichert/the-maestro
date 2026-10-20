@@ -443,7 +443,7 @@ const realEnvFiles = (root: string, ignored: string[], storeRoot: string): strin
 const UNTRACKED_NOISE: Rule<[string, string], boolean>[] = [
   rule('BODY.md (PR body scratch file)', (_root, p) => p === 'BODY.md', () => 'BODY.md'),
   rule('tools/scaffold/index.js (scaffold output)', (_root, p) => p === 'tools/scaffold/index.js', () => 'tools/scaffold/index.js'),
-  rule('__pycache__ (Python bytecode)', (_root, p) => p.split('/').includes('__pycache__'), () => '__pycache__'),
+  rule('__pycache__ (Python bytecode)', (_root, p) => /(^|\/)__pycache__\/[^/]+\.pyc$/.test(p), () => '__pycache__'),
   rule('node_modules symlink (regenerated link)', (root, p) => p.split('/').pop() === 'node_modules' && lstatSync(join(root, p), { throwIfNoEntry: false })?.isSymbolicLink() === true, () => 'node_modules symlink'),
 ];
 /** True when an untracked path (a git status path, so a quoted one never matches) is one of UNTRACKED_NOISE. */
