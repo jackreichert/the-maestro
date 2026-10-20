@@ -6,7 +6,7 @@ Script: `node scripts/teammate-review.ts` (`prepare`, `firstpass`, `ticket`, `in
 
 ## Before prepare: the wait gate
 
-`pr-watch` already enforces the base wait in code ([lib/teammate/wait.ts](../scripts/lib/teammate/wait.ts)): the PR is ready, someone else's, has no human review or decision yet, and has waited `teammate_review_minutes` (15) since it was opened or marked ready. The rest below is judgement the run applies by hand before `prepare`; none of it is enforced in `prepare` (it needs review-thread, mention and twin data that `REVIEW-WAIT` does not carry), so say in the report which rule you applied.
+`pr-watch` already enforces the base wait in code ([lib/teammate/wait.ts](../scripts/lib/teammate/wait.ts)): the PR is on the Others' PRs review list (a Slack review ask, a review request or @-mention of you, a manual add, or a staging twin, backmerge or P0/hotfix PR; a teammate PR nobody asked you about is never reviewed unasked), is ready, someone else's, has no human review or decision yet, and has waited `teammate_review_minutes` (15) since it was opened or marked ready. The rest below is judgement the run applies by hand before `prepare`; none of it is enforced in `prepare` (it needs review-thread, mention and twin data that `REVIEW-WAIT` does not carry), so say in the report which rule you applied.
 
 - Wait the 15 minutes from the latest of opened, marked ready, or re-requested. If a teammate reviewed in that window, draft only for a blocking issue.
 - Skip a PR another teammate is clearly reviewing: they submitted a review on the current head, or have open review threads or comments from the last day. Exceptions: the user is requested or @-mentioned, or there is a blocking issue they have not raised.

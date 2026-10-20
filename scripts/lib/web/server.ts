@@ -1,7 +1,7 @@
 /**
  * The Podium server: GET endpoints over buildState/buildCharts and the client's static files, plus one narrow write surface.
  * `GET /api/events` is the one streaming route: Server-Sent Events from a shared watcher (events.ts), so the page updates without a reload.
- * The write surface is nineteen POST routes (the six `/api/run/*` ones run a reviewed command or list the script catalog; see run-write.ts): three reorder, add and delete today's priorities (priorities-write.ts), one answers an ask (answer-write.ts), one comments on a blocked item and optionally unblocks it (blocked-write.ts), one marks a registered script as run by the person (scripts-write.ts), one refreshes the PR data (prs-refresh.ts), and three decide a drafted GitHub comment: approve (the only route that posts), edit, reject (drafts-write.ts), and three belong to the Others' PRs tab: ignore, un-ignore and review anyway, which only append a row to the actions file (others-write.ts).
+ * The write surface is twenty POST routes (the six `/api/run/*` ones run a reviewed command or list the script catalog; see run-write.ts): three reorder, add and delete today's priorities (priorities-write.ts), one answers an ask (answer-write.ts), one comments on a blocked item and optionally unblocks it (blocked-write.ts), one marks a registered script as run by the person (scripts-write.ts), one refreshes the PR data (prs-refresh.ts), and three decide a drafted GitHub comment: approve (the only route that posts), edit, reject (drafts-write.ts), and four belong to the Others' PRs tab: ignore, un-ignore and review anyway, which only append a row to the actions file, and add, which puts a PR on the opt-in list (others-write.ts).
  * They need a per-start token the page reads from `GET /api/edit-token`, and guard.ts only lets them through from the page's own origin.
  * Every request goes through guard.refuse first; every response is written by guard.send, so the security headers
  * are on 404s and 500s too. Every GET is read-only: nothing on a GET path writes the ledger, the priorities file or the page.
@@ -18,7 +18,7 @@ import type { ChangeHub } from './events.ts';
 import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildOpenPrs, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
-import { GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, OTHERS_PRS_ACTIVE_HOURS, OTHERS_PRS_DROP_DAYS, OTHERS_PRS_OPEN_HOURS } from '../../local-config.ts';
+import { WATCH_TZ, GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, OTHERS_PRS_ACTIVE_HOURS, OTHERS_PRS_DROP_DAYS, OTHERS_PRS_OPEN_HOURS } from '../../local-config.ts';
 import { buildOthersPrs } from './others-prs.ts';
 import type { OthersScopeOptions } from './others-prs.ts';
 import { buildEpics, buildHome } from './home.ts';
@@ -108,7 +108,7 @@ function decodeName(segment: string): string | null {
 
 /** What the Others' PRs tab is built from (its GET route and the checks its writes make against the rows it shows). */
 function othersOptions(o: WebServerOptions): OthersScopeOptions {
-  return { statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN, openHours: OTHERS_PRS_OPEN_HOURS, activeHours: OTHERS_PRS_ACTIVE_HOURS, dropDays: OTHERS_PRS_DROP_DAYS, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, actionsFile: actionsPath(o.web.vault, o.web.project), ...(o.web.vaultRoot ? { slackDir: join(o.web.vaultRoot, 'Projects', o.web.containerProject ?? o.web.project, 'Slack') } : {}) };
+  return { statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN, openHours: OTHERS_PRS_OPEN_HOURS, activeHours: OTHERS_PRS_ACTIVE_HOURS, dropDays: OTHERS_PRS_DROP_DAYS, tz: WATCH_TZ, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, actionsFile: actionsPath(o.web.vault, o.web.project), ...(o.web.vaultRoot ? { slackDir: join(o.web.vaultRoot, 'Projects', o.web.containerProject ?? o.web.project, 'Slack') } : {}) };
 }
 
 /** The data routes. Handlers return the JSON value, or undefined for "no such thing" (404). */

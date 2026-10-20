@@ -1,17 +1,18 @@
 /**
- * The Others' PRs tab's own writes: three POST routes, ignore, unignore and review-anyway (the guard and the per-start token run first, as for every write).
- * They only append a row to the actions file (lib/teammate/others-actions.ts); none of them reaches GitHub. The body names a PR by repo, number and head
+ * The Others' PRs tab's own writes: four POST routes, ignore, unignore, review-anyway and add (the guard and the per-start token run first, as for every write).
+ * The first three only append a row to the actions file (lib/teammate/others-actions.ts); `add` puts a PR on the opt-in list (lib/teammate/others-list.ts) and takes the PR as text, `{ ref }`, a key or a URL checked against the review owners. None of them reaches GitHub. The body names a PR by repo, number and head
  * sha, and the PR must be a row of the tab at that head right now, so a stale page cannot ignore the wrong commit. Review-anyway is for a hands-off row only.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { actionsPath, ignorePr, isSha, requestReview, unignorePr } from '../teammate/others-actions.ts';
+import { addToList, listPath, parsePrRef } from '../teammate/others-list.ts';
 import type { OthersPrRow } from '../../web/client/src/types.ts';
 import { sendError, sendJson } from './guard.ts';
 import { readBody, tokenOk, TOKEN_HEADER } from './priorities-write.ts';
 import type { WriteOptions } from './priorities-write.ts';
 
 export const OTHERS_PATH = '/api/others';
-export const OPS = ['ignore', 'unignore', 'review-anyway'] as const;
+export const OPS = ['ignore', 'unignore', 'review-anyway', 'add'] as const;
 export type Op = typeof OPS[number];
 export const OTHERS_WRITE_PATHS: ReadonlySet<string> = new Set(OPS.map((o) => `${OTHERS_PATH}/${o}`));
 export const OTHERS_BODY_LIMIT = 2 * 1024;
@@ -21,6 +22,8 @@ export const OTHERS_BODY_LIMITS: ReadonlyMap<string, number> = new Map([...OTHER
 export interface OthersWriteOptions extends WriteOptions { rows: () => OthersPrRow[] }
 
 export interface Body { repo: string; pr: number; head?: string }
+/** The `add` body: one PR named as text (`owner/repo#n` or its URL). */
+export const MAX_REF = 200;
 const REPO = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+$/;
 
 /** The body in the exact shape the route takes (`unignore` has no head), or null. */
@@ -44,6 +47,28 @@ export function refusal(op: Op, b: Body, rows: readonly OthersPrRow[]): { status
   return null;
 }
 
+/** The key an `add` body names, or why not: the body must be exactly `{ ref: <text> }`, the text a PR, and its owner one of the review owners. */
+export function addTarget(body: unknown, owners: readonly string[]): { key: string } | { status: number; message: string } {
+  if (typeof body !== 'object' || body === null || Array.isArray(body) || Object.keys(body).join(',') !== 'ref' || typeof (body as { ref: unknown }).ref !== 'string' || (body as { ref: string }).ref.length > MAX_REF) return { status: 400, message: 'Send the PR as owner/repo#number or its GitHub link.' };
+  const key = parsePrRef((body as { ref: string }).ref);
+  if (!key) return { status: 422, message: 'That is not a PR. Use owner/repo#number or the PR\'s GitHub link.' };
+  if (!owners.some((x) => x.toLowerCase() === key.split('/')[0])) return { status: 422, message: `${key.split('/')[0]} is not one of your review owners, so that PR would never be listed.` };
+  return { key };
+}
+
+/** `add`: puts the PR on the list. It shows on the tab at the next refresh (this makes no GitHub call). Idempotent. */
+async function handleAdd(o: OthersWriteOptions, body: unknown, res: ServerResponse): Promise<void> {
+  const t = addTarget(body, o.web.page.reviewQueueOwners ?? []);
+  if ('status' in t) return t.status === 400 ? sendError(res, 400) : sendJson(res, t.status, { error: 'refused', message: t.message });
+  try {
+    const added = addToList(listPath(o.web.statusDir), { key: t.key, source: 'manual' }, o.now().getTime());
+    sendJson(res, 200, { ok: true, key: t.key, added });
+  } catch (e) {
+    o.log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error');
+    sendError(res, 500);
+  }
+}
+
 /** Handles one Others' PRs POST that the guard let through. Always answers; never throws. */
 export async function handleOthers(o: OthersWriteOptions, path: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const op = OPS.find((x) => path === `${OTHERS_PATH}/${x}`);
@@ -53,6 +78,7 @@ export async function handleOthers(o: OthersWriteOptions, path: string, req: Inc
   if (text === null) return sendError(res, 413, { connection: 'close' });
   let parsed: unknown;
   try { parsed = JSON.parse(text); } catch { return sendError(res, 400); }
+  if (op === 'add') return handleAdd(o, parsed, res);
   const body = parseOthersBody(op, parsed);
   if (!body) return sendError(res, 400);
   try {

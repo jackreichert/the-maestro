@@ -4,7 +4,11 @@ process.env.MAESTRO_LOCAL_CONFIG ??= '';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as prWatch from './event-types/pr-watch.ts';
-import { advanceHelper, selectWaiting, teammateSearch } from './lib/teammate/wait.ts';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { advanceHelper, selectWaiting, WAIT_SELECTION } from './lib/teammate/wait.ts';
+import { addToList, listPath } from './lib/teammate/others-list.ts';
 import type { WaitNode } from './lib/teammate/wait.ts';
 import type { Run } from './lib/types.ts';
 
@@ -42,11 +46,11 @@ test('never your own PR, a draft, a bot author, a self-review repo, a reviewed o
   assert.equal(selectWaiting([node({ reviews: { nodes: [{ author: { login: 'cop[bot]', __typename: 'Bot' }, state: 'COMMENTED' }] } })], O).length, 1, 'a bot review does not count as being reviewed');
 });
 
-test('off by default: zero minutes selects nothing, and an empty owner list builds no search at all', () => {
+test('off by default: zero minutes selects nothing; a merged or closed PR is never selected', () => {
   assert.deepEqual(selectWaiting([node()], { ...O, minutes: 0 }), []);
-  assert.equal(teammateSearch([]), null);
-  assert.equal(teammateSearch(['bad owner"; x']), null, 'an unsafe owner is dropped, never searched');
-  assert.match(teammateSearch(['acme']) ?? '', /^is:pr is:open draft:false -author:@me org:acme$/);
+  assert.deepEqual(selectWaiting([node({ state: 'MERGED' }), node({ number: 13, state: 'CLOSED' })], O), []);
+  assert.equal(selectWaiting([node({ state: 'OPEN' })], O).length, 1);
+  assert.match(WAIT_SELECTION, /timelineItems\(last: 1, itemTypes: \[READY_FOR_REVIEW_EVENT\]\)/);
 });
 
 test('advanceHelper adopts silently with no record, speaks once for a newly waiting PR, and gives a push its own wait', () => {
@@ -71,20 +75,34 @@ test('advanceHelper adopts silently with no record, speaks once for a newly wait
   assert.deepEqual(advanceHelper(stood.told, selectWaiting([node({ headRefOid: 'd'.repeat(40) })], O), false, T0 + 3_600_000 * 5, MIN).events, []);
 });
 
-/** A fake gh: the teammate search (recognised by its draft:false term) answers `waiting`; any other search is the user's own board, empty. */
-function rig(waiting: () => unknown[] | Error): { tick: (at: number) => string[]; log: string[] } {
+/** The key of a node, as the list names it. */
+const keyOf = (n: WaitNode): string => `${n.repository.nameWithOwner}#${n.number}`.toLowerCase();
+
+/**
+ * A fake gh and a status directory. The Others' PRs list holds `listed`; reading a listed PR by key answers from `waiting()` (an Error is a failed read); the user's own
+ * board is empty. `log` records what was asked: 'own' for the board search, 'listed' for a by-key read, 'search' for any other search (there must be none).
+ */
+function rig(waiting: () => WaitNode[] | Error, listed: string[]): { tick: (at: number) => string[]; log: string[]; statusDir: string } {
   const log: string[] = [];
+  const statusDir = mkdtempSync(join(tmpdir(), 'pr-watch-list-'));
+  for (const k of listed) addToList(listPath(statusDir), { key: k, source: 'manual' }, T0);
   const run: Run = (_cmd, args) => {
     const q = args.find((a) => a.startsWith('query=')) ?? '';
-    log.push(q.includes('draft:false') ? 'teammate' : 'own');
-    const nodes = q.includes('draft:false') ? waiting() : [];
-    if (nodes instanceof Error) return { status: 1, stdout: '', stderr: nodes.message };
-    return { status: 0, stderr: '', stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes } } }) };
+    if (q.includes('repository(owner:')) {
+      log.push('listed');
+      const nodes = waiting();
+      if (nodes instanceof Error) return { status: 1, stdout: '', stderr: nodes.message };
+      const data: Record<string, unknown> = {};
+      for (const m of q.matchAll(/(p\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\) \{ pullRequest\(number: (\d+)\)/g)) data[m[1] as string] = { pullRequest: nodes.find((n) => keyOf(n) === `${m[2]}/${m[3]}#${m[4]}`.toLowerCase()) ?? null };
+      return { status: 0, stderr: '', stdout: JSON.stringify({ data }) };
+    }
+    log.push(q.includes('draft:false') ? 'search' : 'own');
+    return { status: 0, stderr: '', stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [] } } }) };
   };
   let prev: prWatch.PrWatchState | undefined;
-  const config = { ghLogin: 'me', selfReviewRepos: [] as string[], teammateMinutes: 15, teammateOwners: ['acme'] };
+  const config = { ghLogin: 'me', selfReviewRepos: [] as string[], teammateMinutes: 15, statusDir };
   return {
-    log,
+    log, statusDir,
     tick(at: number): string[] {
       const next = prWatch.check('open-prs', { run, now: T0 + at, prev, config });
       const lines = prWatch.diff(prev ?? null, next).map((e) => e.summary).filter((s) => s.startsWith('REVIEW-WAIT'));
@@ -94,25 +112,42 @@ function rig(waiting: () => unknown[] | Error): { tick: (at: number) => string[]
   };
 }
 
-test('pr-watch end to end: adopt, then a new waiting PR speaks once; a failing teammate search does not fail the check', () => {
-  let nodes: unknown[] = [node({ number: 1 })];
+const W = (n: number): WaitNode => node({ number: n, url: `https://github.com/acme/widgets/pull/${n}` });
+
+test('pr-watch end to end: adopt, then a newly listed waiting PR speaks once; a failing read does not fail the check', () => {
+  let nodes: WaitNode[] = [W(1), W(2)];
   let broken = false;
-  const r = rig(() => (broken ? new Error('HTTP 502') : nodes));
+  const r = rig(() => (broken ? new Error('HTTP 502') : nodes), ['acme/widgets#1']);
   assert.deepEqual(r.tick(0), [], 'first run adopts the PR that was already waiting');
-  nodes = [node({ number: 1 }), node({ number: 2, url: 'https://github.com/acme/widgets/pull/2' })];
+  addToList(listPath(r.statusDir), { key: 'acme/widgets#2', source: 'review-request' }, T0 + MIN);
   assert.equal(r.tick(MIN).length, 1);
   assert.deepEqual(r.tick(2 * MIN), [], 'told once');
   broken = true;
-  assert.deepEqual(r.tick(3 * MIN), [], 'the search failed: no throw, no lines');
+  assert.deepEqual(r.tick(3 * MIN), [], 'the read failed: no throw, no lines');
   broken = false;
   assert.deepEqual(r.tick(4 * MIN), [], 'the record survived the failed tick, so nothing is repeated');
 });
 
-test('with no minutes configured pr-watch never runs the teammate search', () => {
+test('a PR that is not on the list is never read, so it is never reviewed unasked', () => {
+  const r = rig(() => [W(1), W(2)], ['acme/widgets#1']);
+  r.tick(0);
+  addToList(listPath(r.statusDir), { key: 'acme/widgets#2', source: 'manual' }, T0 + MIN);
+  assert.match(r.tick(MIN).join(), /acme\/widgets#2/);
+  assert.ok(!r.tick(2 * MIN).join().includes('#1'), 'PR 1 was adopted silently and is not repeated');
+  const own = rig(() => [W(1)], []);
+  assert.deepEqual(own.tick(0), []);
+  assert.deepEqual(own.tick(MIN), []);
+  assert.equal(own.log.includes('listed'), false, 'an empty list reads nothing by key');
+  assert.equal(own.log.includes('search'), false, 'and there is no teammate search at all');
+});
+
+test('with no minutes configured pr-watch reads no listed PR', () => {
   const log: string[] = [];
+  const statusDir = mkdtempSync(join(tmpdir(), 'pr-watch-list-'));
+  addToList(listPath(statusDir), { key: 'acme/widgets#1', source: 'manual' }, T0);
   const run: Run = (_c, args) => { log.push(args.join(' ')); return { status: 0, stderr: '', stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [] } } }) }; };
-  prWatch.check('open-prs', { run, now: T0, config: { ghLogin: 'me', selfReviewRepos: [], teammateMinutes: 0, teammateOwners: ['acme'] } });
-  assert.equal(log.some((l) => l.includes('draft:false')), false);
+  prWatch.check('open-prs', { run, now: T0, config: { ghLogin: 'me', selfReviewRepos: [], teammateMinutes: 0, statusDir } });
+  assert.equal(log.some((l) => l.includes('repository(owner:') || l.includes('draft:false')), false);
 });
 
 test('a hands-off repo is not reviewed unless the user is a requested reviewer or the owner wrote it; every other repo is open to review', () => {

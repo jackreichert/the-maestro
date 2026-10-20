@@ -96,3 +96,49 @@ export function readNodesById<N extends { id: string }>(ids: string[], selection
   }
   return out;
 }
+
+/** PRs per by-key read: ten PRs with their threads and reviews cost about 20 points. */
+export const KEYS_BATCH = 10;
+const PR_KEY = /^([A-Za-z0-9][A-Za-z0-9-]*)\/([A-Za-z0-9_.-]+)#([1-9][0-9]{0,8})$/;
+
+export interface PullsRead<N> {
+  /** The PRs read, by the key they were asked for. */
+  nodes: Map<string, N>;
+  /** Keys GitHub says do not exist (deleted, renamed away, or not visible to the token). */
+  gone: string[];
+  /** Keys whose batch could not be read, so nothing is known of them; `error` is the first such failure. */
+  failed: string[];
+  error?: Error;
+}
+
+/**
+ * Reads named pull requests (`owner/repo#number`), `KEYS_BATCH` at a time, one aliased `repository(...) { pullRequest(...) }` per key, selecting `selection` on each.
+ * This is the read that replaced searching every open PR: only the PRs asked for cost anything. A key that is not shaped like a PR key is never put in the query text
+ * and is reported as failed. A batch that fails does not lose the batches already read: its keys come back in `failed`, so a caller never mistakes "could not read" for "gone".
+ */
+export function readPullRequests<N>(keys: readonly string[], selection: string, run: Run = execGh): PullsRead<N> {
+  const out: PullsRead<N> = { nodes: new Map(), gone: [], failed: [] };
+  const fail = (batch: readonly string[], e: unknown): void => { out.failed.push(...batch); out.error ??= e instanceof Error ? e : new Error(String(e)); };
+  const ok: string[] = [];
+  for (const k of keys) { if (PR_KEY.test(k)) ok.push(k); else fail([k], new Error(`not a PR key: ${k.slice(0, 60)}`)); }
+  for (let i = 0; i < ok.length; i += KEYS_BATCH) {
+    const batch = ok.slice(i, i + KEYS_BATCH);
+    const body = batch.map((k, n) => { const m = PR_KEY.exec(k) as RegExpExecArray; return `p${n}: repository(owner: "${m[1]}", name: "${m[2]}") { pullRequest(number: ${m[3]}) { ${selection} } }`; }).join('\n');
+    try {
+      const r = run('gh', ['api', 'graphql', '-f', `query=query {\n${body}\n}`]);
+      if (r.status !== 0) throw new Error(`gh api graphql (PRs by key) failed: ${String(r.stderr || '').split('\n')[0]}`);
+      const parsed = JSON.parse(r.stdout) as { errors?: { type?: string; message?: string; path?: unknown[] }[]; data?: Record<string, { pullRequest?: N | null } | null> | null };
+      const errors = parsed.errors ?? [];
+      const missing = new Set(errors.filter((e) => e.type === 'NOT_FOUND').map((e) => String(e.path?.[0] ?? '')));
+      const other = errors.find((e) => e.type !== 'NOT_FOUND');
+      if (other || !parsed.data) throw new Error(`partial GraphQL response: ${other?.message || 'no data'}`);
+      batch.forEach((k, n) => {
+        const pr = parsed.data?.[`p${n}`]?.pullRequest;
+        if (pr) out.nodes.set(k, pr);
+        else if (missing.has(`p${n}`) || parsed.data?.[`p${n}`] === null || parsed.data?.[`p${n}`]?.pullRequest === null) out.gone.push(k);
+        else fail([k], new Error('GitHub returned no data for this PR'));
+      });
+    } catch (e) { fail(batch, e); }
+  }
+  return out;
+}

@@ -1,5 +1,6 @@
 /**
- * Which teammates' PRs have waited long enough for the helper: pure over the GraphQL nodes the pr-watch event type fetches.
+ * Which listed teammate PRs have waited long enough for the helper: pure over the GraphQL nodes the pr-watch event type reads by key for the PRs on the Others' PRs list
+ * (lib/teammate/others-list.ts); a PR nobody asked you about is never read, so it is never reviewed unasked.
  * A PR qualifies when it is open and ready (not a draft), written by someone else (a person, not a bot), in a repo that is not self-review,
  * has no review from a person yet and no decision, and has been ready for review at least `minutes`. It never selects the user's own PR.
  */
@@ -14,7 +15,7 @@ export interface Guard { globs: readonly string[]; login: string }
 export const isGuard = (repo: string, author: string, h: Guard): boolean => h.globs.length > 0 && isSelfReview(repo, h.globs) && author.toLowerCase() !== h.login.toLowerCase();
 
 export interface WaitNode {
-  number: number; url: string; isDraft: boolean; headRefOid: string; headRefName?: string; baseRefName?: string; createdAt?: string;
+  number: number; url: string; /** OPEN, MERGED or CLOSED; absent reads as open. */ state?: string; isDraft: boolean; headRefOid: string; headRefName?: string; baseRefName?: string; createdAt?: string;
   reviewDecision?: string | null;
   reviewRequests?: { nodes: ({ requestedReviewer?: { login?: string } | null } | null)[] };
   author?: { login?: string; __typename?: string } | null;
@@ -40,7 +41,7 @@ export function selectWaiting(nodes: readonly WaitNode[], o: WaitOptions): Waiti
   const out: Waiting[] = [];
   for (const n of nodes) {
     const author = n.author?.login;
-    if (n.isDraft || !author || author.toLowerCase() === self || isBot(n.author) || isFormerTeammate(author, o.former)) continue;
+    if ((n.state !== undefined && n.state !== 'OPEN') || n.isDraft || !author || author.toLowerCase() === self || isBot(n.author) || isFormerTeammate(author, o.former)) continue;
     if (isSelfReview(n.repository.nameWithOwner, o.selfRepos)) continue;
     const key = `${n.repository.nameWithOwner}#${n.number}`;
     if (isIgnored(o.ignored ?? new Map(), key, n.headRefOid)) continue;
@@ -58,17 +59,10 @@ export function selectWaiting(nodes: readonly WaitNode[], o: WaitOptions): Waiti
   return out;
 }
 
-/** The search for other people's open, ready PRs in the given owners. Empty owners means no search at all: never an unscoped one. */
-export function teammateSearch(owners: readonly string[]): string | null {
-  const safe = owners.filter((o) => /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(o));
-  return safe.length ? `is:pr is:open draft:false -author:@me ${safe.map((o) => `org:${o}`).join(' ')}` : null;
-}
-
-export const teammateQuery = (search: string): string => `query($after: String) { search(query: "${search}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
-  number url isDraft createdAt reviewDecision reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } } headRefName baseRefName headRefOid author { login __typename } repository { nameWithOwner }
+/** What is read of each listed PR for the wait: the fields `selectWaiting` judges, nothing nested but the last 20 reviews and the last ready event. */
+export const WAIT_SELECTION = `number url state isDraft createdAt reviewDecision reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } } headRefName baseRefName headRefOid author { login __typename } repository { nameWithOwner }
   reviews(last: 20) { nodes { author { login __typename } state } }
-  timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT]) { nodes { ... on ReadyForReviewEvent { createdAt } } }
-} } } }`;
+  timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT]) { nodes { ... on ReadyForReviewEvent { createdAt } } }`;
 
 /** What is remembered of one waiting PR: the head last seen, when it was first seen, and whether it has been reported. */
 export interface HelperEntry { head: string; seen: number; told: boolean }

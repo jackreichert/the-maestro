@@ -29,14 +29,15 @@
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { CONFIGURED_PROJECT, CONTAINER_PROJECT, COPILOT_ORGS, FORMER_TEAMMATES, GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, LEDGER_ROOT, PR_SEARCH, SELF_REVIEW_REPOS, TEAMMATE_REVIEW_MINUTES, TEAMMATE_REVIEW_OWNERS, VAULT_ROOT } from '../local-config.ts';
+import { CONFIGURED_PROJECT, CONTAINER_PROJECT, COPILOT_ORGS, FORMER_TEAMMATES, GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, LEDGER_ROOT, PR_SEARCH, SELF_REVIEW_REPOS, TEAMMATE_REVIEW_MINUTES, VAULT_ROOT, statusDirFor } from '../local-config.ts';
 import { actionsPath, readActions } from '../lib/teammate/others-actions.ts';
-import { advanceHelper, selectWaiting, teammateQuery, teammateSearch } from '../lib/teammate/wait.ts';
+import { advanceHelper, selectWaiting, WAIT_SELECTION } from '../lib/teammate/wait.ts';
+import { listPath, readList } from '../lib/teammate/others-list.ts';
 import type { HelperEntry, WaitNode } from '../lib/teammate/wait.ts';
 import { isSelfReview } from '../lib/self-review.ts';
 import { FAILING_CHECK_PHRASE, STEER_PREFIX } from '../lib/steer-line.ts';
 import { DRAFT_PROMOTED, isDraftPromoted } from '../lib/draft-promotion.ts';
-import { readNodesById, searchAllPages } from '../lib/gh-search.ts';
+import { readNodesById, readPullRequests, searchAllPages } from '../lib/gh-search.ts';
 import { markPrsDirty } from '../lib/status-page/dirty.ts';
 import { advance, begin, requestReview, trackKey } from '../lib/copilot-follow.ts';
 import type { Tracks } from '../lib/copilot-follow.ts';
@@ -417,20 +418,22 @@ export function check(target: string, ctx: Ctx): PrWatchState {
 }
 
 /**
- * The teammate helper's step: search other people's ready PRs, pick the ones waiting long enough, and say each once per head. Null when the helper is
- * off or has no owners to search (never an unscoped search), or when its search failed: the last record then stands and the check goes on.
+ * The teammate helper's step: read the PRs on the Others' PRs list (by key, so nothing is searched), pick the ones waiting long enough, and say each once per head.
+ * Null when the helper is off, the list is unreadable or a PR on it could not be read (the last record then stands and the check goes on). A PR that is not on the list
+ * is never read here, so the helper reviews only what somebody asked you about.
  */
 function followTeammates(ctx: Ctx, self: string, prev: Snapshot | null, silent: boolean): { told: Record<string, HelperEntry>; events: { summary: string }[] } | null {
   const minutes = ctx.config?.teammateMinutes ?? TEAMMATE_REVIEW_MINUTES;
-  const search = teammateSearch(ctx.config?.teammateOwners ?? TEAMMATE_REVIEW_OWNERS);
-  if (!(minutes > 0) || !search) return null;
+  const statusDir = ctx.config?.statusDir ?? statusDirFor(CONFIGURED_PROJECT || CONTAINER_PROJECT);
+  if (!(minutes > 0) || !statusDir) return null;
   try {
-    const nodes = searchAllPages<WaitNode>(teammateQuery(search), ctx.run);
+    const read = readPullRequests<WaitNode>([...readList(listPath(statusDir)).active.keys()], WAIT_SELECTION, ctx.run);
+    if (read.failed.length) throw read.error ?? new Error('a listed PR could not be read');
     const now = ctx.now ?? Date.now();
-    const waiting = selectWaiting(nodes, { self, minutes, now, selfRepos: ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, former: FORMER_TEAMMATES, ...(({ ignored, requests }) => ({ ignored, requested: requests }))(readActions(actionsFile())) });
+    const waiting = selectWaiting([...read.nodes.values()], { self, minutes, now, selfRepos: ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, former: FORMER_TEAMMATES, ...(({ ignored, requests }) => ({ ignored, requested: requests }))(readActions(actionsFile())) });
     return advanceHelper(prev?.helper, waiting, silent, now, minutes);
   } catch (e) {
-    console.error(`teammate helper search failed: ${firstLine(e instanceof Error ? e.message : e)}`);
+    console.error(`teammate helper read failed: ${firstLine(e instanceof Error ? e.message : e)}`);
     return null;
   }
 }
