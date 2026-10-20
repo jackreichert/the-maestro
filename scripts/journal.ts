@@ -220,6 +220,7 @@ import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, appr
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAskTemplate, envAsksToRaise } from './lib/journal/env-asks.ts';
+import { pileupAskTemplate, pileupAskText } from './lib/journal/sweep-pileup-ask.ts';
 import { sessionFileById, sessionStatus } from './token-metrics.ts';
 import type { SessionStatus } from './lib/session-text.ts';
 import { RULE_SCOPES, isRuleScope, parseRuleScope, ruleFooter, ruleLines } from './lib/journal/scope.ts';
@@ -1617,7 +1618,29 @@ function sweepWorktreesForRoll() {
     if (!result) return;
     console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
     raiseEnvAsks(result.envAsks);
+    raisePileupAsk(result.kept);
     recordBranchSweepRan(result);
+}
+
+/** One question when the sweep kept more than KEPT_PILEUP worktrees (counts by reason, no paths), unless one is already open. Not raised by a dry run's counts. */
+function raisePileupAsk(kept: { reason: string }[]): void {
+    const counts = keptCounts(kept);
+    const open = fold(readLedger()).items.filter((i) => i.kind === 'question' && isOpen(i)).map((i) => i.text ?? '');
+    const text = pileupAskText(kept.length, counts, open);
+    if (!text) return;
+    if (dryRun) { console.log(`would ask  ${kept.length} worktrees kept: triage the list`); return; }
+    const recommend = 'Triage the kept list: the counts above say whether it is real work or unverifiable commits.';
+    const { errors, template } = validateAskTemplate(pileupAskTemplate(kept.length, counts, recommend));
+    if (errors.length) throw new Error(`worktree pile-up ask is missing template fields: ${errors.join(' ')}`);
+    append({
+        id: newId(readLedger()), ts: now(), date: today(), kind: 'question', text, repo: CONTAINER_PROJECT, refs: [],
+        recommend, door: 'two-way',
+        ...template,
+        searched: 'the roll worktree scan (branch-sweep) and the open asks',
+        model: 'n/a', used: ['skill:the-maestro', 'tool:branch-sweep'],
+    });
+    render(true);
+    console.log(`asked  ${kept.length} worktrees kept: triage the list`);
 }
 
 /**
@@ -1718,6 +1741,7 @@ function maintain(today: string): MaintainResult {
     if (result) {
         console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
         raiseEnvAsks(result.envAsks);
+        raisePileupAsk(result.kept);
         recordBranchSweepRan(result);
         problems.push(...result.failed.map((f) => `worktree sweep: ${f}`));
     }
