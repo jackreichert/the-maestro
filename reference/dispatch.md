@@ -28,15 +28,11 @@ If `VAULT_ROOT` is unset, ask where the vault is before filing anything. Do not 
 node <xenophon-skill>/scripts/ticket.mjs new \
   --project <repo-name> \
   --title "..." --type bug --priority 2 \
-  --body-file - <<'EOF'
-<what you found, with file:line anchors>
-
-## What done looks like
-- <the observable result that closes this ticket>
-EOF
+  --problem "<what you found, with file:line anchors>" \
+  --done "<the observable result that closes this ticket>"
 ```
 
-Subcommands are `new | list | close | reopen | set | index`. The id prints on the last line.
+Both `--problem` and `--done` are required, and `--done` may not be blank or `_TBD_`. File through the flags and do not hand-write a body; `--body-file` is a legacy path for content that does not fit the template, and xenophon's `SKILL.md` lists the other flags. The id prints on the last line. The subcommands are listed in xenophon's `SKILL.md`.
 
 **`--project` is mandatory here.** The script infers the project from `git rev-parse --show-toplevel`,
 and this container root is not a git repository — so from here the inference fails or picks the
