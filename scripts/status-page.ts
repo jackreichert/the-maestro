@@ -21,8 +21,9 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { CONFIGURED_PROJECT, FORMER_TEAMMATES, GH_LOGIN, GH_ORG, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, OTHERS_PRS_DROP_DAYS, PR_SEARCH, REVIEW_QUEUE_CAP, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
+import { CONFIGURED_PROJECT, FORMER_TEAMMATES, GH_LOGIN, GH_ORG, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, OTHERS_PRS_ACTIVE_HOURS, OTHERS_PRS_DROP_DAYS, OTHERS_PRS_OPEN_HOURS, PR_SEARCH, REVIEW_QUEUE_CAP, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, SLACK_SELF_NAMES, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
 import { readHomes } from './lib/home/config.ts';
 import { streamProjects } from './lib/library/stream-links.ts';
 import { noteExistsIn, vaultRootFor } from './lib/status-page/links.ts';
@@ -33,6 +34,8 @@ import { withDevelopTwins } from './lib/status-page/twin.ts';
 import type { RepoFlow } from './lib/status-page/twin.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 import { refreshOthers } from './lib/teammate/others.ts';
+import { pendingReviewKeys } from './lib/teammate/others-list.ts';
+import { dropGate } from './lib/teammate/others-drop.ts';
 import { draftsPath } from './lib/drafts/queue.ts';
 import { reconcileFailedReviews } from './lib/drafts/reconcile.ts';
 import { settleStaleDrafts } from './lib/drafts/settle.ts';
@@ -114,7 +117,8 @@ export function regenerate(o: RegenerateOptions): GenerateResult {
   const result = generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config: pageConfig(o.project, o.statusDir) }, deps);
   // The Others' PRs tab's list rides the same read: on the page's own GitHub cadence (never in quiet hours or a cached-only render), and its failure never fails the page.
   if (!o.cachedPrsOnly && !o.dryRun) {
-    const others = refreshOthers(o.statusDir, { owners: REVIEW_QUEUE_ORGS, selfRepos: SELF_REVIEW_REPOS, self: GH_LOGIN, former: FORMER_TEAMMATES, sinceDays: OTHERS_PRS_DROP_DAYS }, new Date());
+    const others = refreshOthers(o.statusDir, { owners: REVIEW_QUEUE_ORGS, selfRepos: SELF_REVIEW_REPOS, self: GH_LOGIN, former: FORMER_TEAMMATES, gate: dropGate(WATCH_TZ, { openHours: OTHERS_PRS_OPEN_HOURS, activeHours: OTHERS_PRS_ACTIVE_HOURS, dropDays: OTHERS_PRS_DROP_DAYS }),
+      selfNames: SLACK_SELF_NAMES, seedKeys: pendingReviewKeys(draftsPath(o.ledger, o.project)), ...(VAULT_ROOT ? { slackDir: join(VAULT_ROOT, 'Projects', CONTAINER_PROJECT || o.project, 'Slack') } : {}) }, new Date());
     if (others.failure) console.error(`status-page: teammate PR list not refreshed (${others.failure}); the Others' PRs tab keeps the last list`);
     // A failed review draft whose PR you already reviewed by hand is settled here, on the rebuild's cadence, so reading the queue never calls GitHub. A GitHub failure leaves the draft as it was.
     try { reconcileFailedReviews(draftsPath(o.ledger, o.project), GH_LOGIN); } catch (e) { console.error(`status-page: failed review drafts not reconciled (${(e as Error).message.split('\n')[0]})`); }

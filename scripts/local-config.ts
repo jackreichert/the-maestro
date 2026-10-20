@@ -486,6 +486,12 @@ export const REVIEWER_CHECKLIST_PATH = ((v: string): string => {
   return existsSync(p) ? p : '';
 })(pick('MAESTRO_REVIEWER_CHECKLIST', 'reviewer_checklist').trim());
 
+/** Slack triage rules (slack-triage.ts): the org's JSON rule table, its user names and channel-to-playbook map. A relative path is read from the overlay's folder (else the user config's); `~/` expands. Empty when unset. */
+export const SLACK_TRIAGE_RULES = ((v: string): string => {
+  if (!v) return '';
+  return v.startsWith('~/') ? join(homedir(), v.slice(2)) : resolve(dirname(overlayPath || userPath), v);
+})(pick('MAESTRO_SLACK_TRIAGE_RULES', 'slack_triage_rules').trim());
+
 /**
  * One PR per ticket: the tracker-key pattern the rule uses. Read from the user config file only (an environment variable must not be able to
  * point it at a pattern that never matches), else the generic default, plus the local key prefixes (MAESTRO-N). Case-sensitive, so `utf-8` is not a key.
@@ -528,13 +534,13 @@ export const OTHERS_PRS_OPEN_HOURS = positiveInt(pick('MAESTRO_OTHERS_PRS_OPEN_H
  */
 const LEGACY_MAX_AGE_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_MAX_AGE_DAYS', 'others_prs_max_age_days'), 0);
 export const OTHERS_PRS_ACTIVE_HOURS = positiveInt(pick('MAESTRO_OTHERS_PRS_ACTIVE_HOURS', 'others_prs_active_hours'), LEGACY_MAX_AGE_DAYS > 0 ? LEGACY_MAX_AGE_DAYS * 24 : 48);
-/** Days without activity after which a teammate PR leaves the Others' PRs tab entirely (Stale included). Never below the stale gate. Default 3. */
-export const OTHERS_PRS_DROP_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_DROP_DAYS', 'others_prs_drop_days'), 3);
+/** Working days (Monday to Friday in `watch_tz`) without a push, comment, review or re-request after which a teammate PR leaves the Others' PRs list (Stale included). Never below the stale gate. Default 2. */
+export const OTHERS_PRS_DROP_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_DROP_DAYS', 'others_prs_drop_days'), 2);
+/** Your display names in Slack, comma-separated: a reply by you in a thread is never read as a teammate claiming the PR (Others' PRs list). Default none. */
+export const SLACK_SELF_NAMES = globList('MAESTRO_SLACK_SELF_NAMES', 'slack_self_names');
 
 /** Teammate PR helper: minutes a ready PR by someone else may wait with no review before pr-watch reports `REVIEW-WAIT` for it (the orchestrator then drafts review comments for your approval; see playbooks/teammate-review.md). Unset or 0 turns it off, the default. */
 export const TEAMMATE_REVIEW_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim()) ? Number(raw) : 0))(pick('MAESTRO_TEAMMATE_REVIEW_MINUTES', 'teammate_review_minutes'));
-/** The owners the helper searches: gh_org plus the plain owners in review_pool_owners. With none, it searches nothing: it is never unscoped. */
-export const TEAMMATE_REVIEW_OWNERS = [...new Set([GH_ORG, ...REVIEW_POOL_OWNERS.map((g) => g.split('/')[0] ?? '')].filter((o) => o !== '' && !o.includes('*')))];
 
 /**
  * Repost nudge (event-types/repost-nudge.ts). Every key is parsed by lib/repost-nudge-config.ts: a bad value falls back to its default and

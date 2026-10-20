@@ -154,3 +154,11 @@ test('an approved PR leaves the list on read and is named in approvedKeys, so it
   const out = buildOthersPrs(opts(cacheWith([pr(1), pr(2, { decision: 'APPROVED' })])), NOW);
   assert.deepEqual([out.prs.map((p) => p.number), out.approvedKeys, out.total], [[1], ['acme/app#2'], 1]);
 });
+
+test('the drop counts working days in the configured zone: a weekend does not age a PR', () => {
+  const tuesday = new Date('2026-10-20T12:00:00Z'); // 08:00 ET
+  const at = (iso: string): OtherPr => pr(1, { createdAt: '2026-10-01T00:00:00Z', updatedAt: iso });
+  const build = (iso: string) => buildOthersPrs({ ...opts(cacheWith([at(iso)])), openHours: 0, activeHours: 48, dropDays: 2, tz: 'America/New_York' }, tuesday);
+  assert.deepEqual(numbers(build('2026-10-16T20:00:00Z')), [1], 'Friday 16:00 ET: about 32 working hours');
+  assert.deepEqual(numbers(build('2026-10-16T11:00:00Z')), [], 'Friday 07:00 ET: 49 working hours');
+});

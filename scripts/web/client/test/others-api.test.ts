@@ -39,3 +39,16 @@ test('a refusal carries the server\'s words; a network failure and a missing tok
   const noToken = createOthersActions(async () => new Response('{}', { status: 500 }));
   assert.match(await noToken.send('unignore', pr) ?? '', /permission/);
 });
+
+test('add sends the trimmed text as { ref }, and an empty box sends nothing', async () => {
+  const { seen, fetchFn } = rig(ok);
+  const a = createOthersActions(fetchFn);
+  assert.equal(await a.add('  acme/app#4 '), null);
+  assert.match(await a.add('   ') ?? '', /Type a PR/);
+  assert.deepEqual(seen, [{ url: '/api/others/add', body: { ref: 'acme/app#4' } }]);
+});
+
+test('add carries the server\'s words when it refuses', async () => {
+  const refused = rig(() => new Response(JSON.stringify({ error: 'refused', message: 'That is not a PR.' }), { status: 422 }));
+  assert.equal(await createOthersActions(refused.fetchFn).add('hello'), 'That is not a PR.');
+});

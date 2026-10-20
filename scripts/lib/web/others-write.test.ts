@@ -9,7 +9,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createWebServer } from './server.ts';
-import { refusal, parseOthersBody } from './others-write.ts';
+import { addTarget, refusal, parseOthersBody } from './others-write.ts';
+import { listPath, readList } from '../teammate/others-list.ts';
 import { actionsPath, readIgnored } from '../teammate/others-actions.ts';
 import { writeOthersCache } from '../teammate/others.ts';
 import type { OtherPr } from '../teammate/others.ts';
@@ -105,4 +106,26 @@ test('review-anyway is allowed for a hands-off row at its current head, and for 
   assert.equal(refusal('review-anyway', { repo: 'acme/guarded', pr: 3, head: '2'.repeat(40) }, [row])?.status, 409);
   assert.equal(refusal('review-anyway', { repo: 'acme/guarded', pr: 3, head: HEAD }, [{ ...row, handsOff: undefined }])?.status, 422);
   assert.equal(parseOthersBody('review-anyway', { repo: 'acme/guarded', pr: 3, head: HEAD })?.head, HEAD);
+});
+
+test('add puts a PR on the list by key or URL, idempotently, and the body must be exactly { ref }', async () => {
+  const r = await rig('add');
+  const statusDir = join(root, 'add', 'Status');
+  const first = await call(r.port, '/api/others/add', { body: { ref: 'acme/app#41' } });
+  assert.deepEqual([first.status, first.json.ok, first.json.key, first.json.added], [200, true, 'acme/app#41', true]);
+  const again = await call(r.port, '/api/others/add', { body: { ref: 'https://github.com/Acme/app/pull/41/files' } });
+  assert.deepEqual([again.status, again.json.added], [200, false]);
+  assert.deepEqual([...readList(listPath(statusDir)).active.values()].map((e) => [e.key, e.source]), [['acme/app#41', 'manual']]);
+  for (const body of [{}, { ref: 7 }, { ref: 'acme/app#41', pr: 1 }, { repo: 'acme/app', pr: 41 }, { ref: 'x'.repeat(201) }]) assert.equal((await call(r.port, '/api/others/add', { body })).status, 400, JSON.stringify(body));
+  assert.equal((await call(r.port, '/api/others/add', { body: '{nope' })).status, 400);
+  assert.equal((await call(r.port, '/api/others/add', { body: { ref: 'acme/app#42' }, token: null })).status, 403);
+  assert.equal(readList(listPath(statusDir)).active.size, 1);
+});
+
+test('add refuses text that is not a PR (422 with words) and a PR outside the review owners', () => {
+  assert.equal((addTarget({ ref: 'hello' }, ['acme']) as { status: number }).status, 422);
+  const other = addTarget({ ref: 'other/app#1' }, ['acme']) as { status: number; message: string };
+  assert.equal(other.status, 422);
+  assert.match(other.message, /review owners/);
+  assert.deepEqual(addTarget({ ref: 'ACME/app#1' }, ['acme']), { key: 'acme/app#1' });
 });

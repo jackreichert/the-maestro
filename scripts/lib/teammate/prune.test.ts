@@ -9,8 +9,10 @@ import { addDraft, listDrafts } from '../drafts/queue.ts';
 import type { NewDraft } from '../drafts/queue.ts';
 import type { GhRead } from '../drafts/reconcile.ts';
 import { readOthersCache, refreshOthers, writeOthersCache } from './others.ts';
-import { liveFacts } from './pruned.ts';
 import type { OtherPr } from './others.ts';
+import { dropGate } from './others-drop.ts';
+import { addToList, listPath, readList } from './others-list.ts';
+import type { Run } from '../types.ts';
 import { pruneOthers } from './prune.ts';
 
 const COMPLIMENT = 'The ID validation before anything goes into a URL is exactly right.';
@@ -39,7 +41,7 @@ function setup(prs: number[]): { statusDir: string; draftsFile: string } {
   mkdirSync(join(root, 'J'), { recursive: true });
   const draftsFile = join(root, 'J', 'drafts.jsonl');
   writeOthersCache(statusDir, { fetchedAt: new Date('2026-10-19T00:00:00Z'), prs: prs.map(card) });
-  for (const n of prs) addDraft(draftsFile, draft(n));
+  for (const n of prs) { addDraft(draftsFile, draft(n)); addToList(listPath(statusDir), { key: `acme/widgets#${n}`, source: 'manual' }, Date.parse('2026-10-18T00:00:00Z')); }
   return { statusDir, draftsFile };
 }
 
@@ -89,42 +91,40 @@ test('with no cache and no drafts there is nothing to prune and nothing throws',
   assert.deepEqual([out.cards.length, out.drafts.length, out.unread], [0, 0, 0]);
 });
 
-const SCOPE = { owners: ['acme'], selfRepos: [], self: 'me-fake' };
+const SCOPE = { owners: ['acme'], selfRepos: [], self: 'me-fake', gate: dropGate('America/New_York', { openHours: 72, activeHours: 48, dropDays: 2 }) };
 const NOW = new Date('2026-10-19T01:00:00Z');
 
-test('prune, rebuild, still absent: the rebuild keeps a pruned card off until it changes and the rules stop settling it', () => {
+/** A fake gh that serves each listed PR as the GraphQL node the rebuild reads (open, nobody has looked: the rebuild cannot see inline comments), and nothing for the discovery searches. */
+const graphql = (open: number[]): Run => (_cmd, args) => {
+  const q = args.find((a) => a.startsWith('query=')) ?? '';
+  if (q.includes('search(')) return { status: 0, stderr: '', stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [] } } }) };
+  const data: Record<string, unknown> = {};
+  for (const m of q.matchAll(/(p\d+): repository\(owner: "[^"]+", name: "[^"]+"\) \{ pullRequest\(number: (\d+)\)/g)) {
+    const n = Number(m[2]);
+    data[m[1] as string] = { pullRequest: open.includes(n) ? { ...card(n), state: 'OPEN', isDraft: false, baseRefName: 'develop', headRefName: 'h', author: { login: 'pat-fake', __typename: 'User' }, repository: { nameWithOwner: 'acme/widgets' }, reviewRequests: { nodes: [] }, reviewThreads: { nodes: [] }, reviews: { nodes: [] } } : null };
+  }
+  return { status: 0, stderr: '', stdout: JSON.stringify({ data }) };
+};
+
+test('a pruned PR leaves the list with the updatedAt it was judged at, and the rebuild does not bring it back', () => {
   const { statusDir, draftsFile } = setup([3, 5]);
-  const byPr: Record<number, Pr> = { 3: { comments: [cm('lee-fake', '2026-10-02T00:00:00Z')] }, 5: {} };
-  pruneOthers({ statusDir, draftsFile, self: 'me-fake', run: gh(byPr) });
-  assert.deepEqual(readOthersCache(statusDir)?.prs.map((p) => p.number), [5]);
-
-  // The search (which cannot see inline comments) offers both cards again, unchanged: 3 stays off with no read of GitHub at all.
-  const reads: number[] = [];
-  const facts = (run: GhRead) => liveFacts((args) => { if (args[0] === 'pr') reads.push(Number(args[args.indexOf('view') + 1])); return run(args); });
-  const again = refreshOthers(statusDir, SCOPE, NOW, () => [card(3), card(5)], facts(gh(byPr)));
+  pruneOthers({ statusDir, draftsFile, self: 'me-fake', run: gh({ 3: { comments: [cm('lee-fake', '2026-10-02T00:00:00Z')] }, 5: {} }) });
+  const s = readList(listPath(statusDir));
+  assert.deepEqual([...s.active.keys()], ['acme/widgets#5']);
+  assert.equal(s.dropped.get('acme/widgets#3')?.updatedAt, card(3).updatedAt);
+  // The rebuild reads reviews but not inline comments, so by itself it would call #3 unsettled: it must not read it at all.
+  const again = refreshOthers(statusDir, SCOPE, NOW, graphql([3, 5]));
   assert.deepEqual(again.prs.map((p) => p.number), [5]);
-  assert.deepEqual(reads, []);
-
-  // New activity moves updatedAt, and the same inline-comment commenter still settles it: stays off.
-  const moved = { ...card(3), updatedAt: '2026-10-05T00:00:00Z' };
-  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [moved, card(5)], facts(gh(byPr))).prs.map((p) => p.number), [5]);
-  assert.deepEqual(reads, [3]);
-  // ...and the new updatedAt is remembered, so the next rebuild does not read again.
-  refreshOthers(statusDir, SCOPE, NOW, () => [moved, card(5)], facts(gh(byPr)));
-  assert.deepEqual(reads, [3]);
-
-  // The commenter's activity no longer settles it (the PR is now waiting on you): it returns.
-  const asked = { ...card(3), updatedAt: '2026-10-06T00:00:00Z' };
-  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [asked, card(5)], facts(gh({ 3: { requested: ['me-fake'], comments: byPr[3]?.comments }, 5: {} }))).prs.map((p) => p.number), [3, 5]);
-  // Once it is back the record is gone: an unchanged card is shown without a read.
-  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [asked, card(5)], facts(gh({}))).prs.map((p) => p.number), [3, 5]);
 });
 
-test('a pruned PR whose facts cannot be read stays off the tab, and a partial read does not forget it', () => {
+test('a pruned PR stays off while a discovery sees nothing new, and returns when it is asked about again after something happened', () => {
   const { statusDir, draftsFile } = setup([3]);
-  pruneOthers({ statusDir, draftsFile, self: 'me-fake', run: gh({ 3: { state: 'MERGED' } }) });
-  const moved = { ...card(3), updatedAt: '2026-10-05T00:00:00Z' };
-  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [moved], liveFacts(gh({}))).prs, []);
-  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [], liveFacts(gh({}))).prs, []);
-  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, () => [card(3)], liveFacts(gh({}))).prs.map((p) => p.number), [3], 'a complete read without it forgot the record');
+  pruneOthers({ statusDir, draftsFile, self: 'me-fake', run: gh({ 3: { comments: [cm('lee-fake', '2026-10-02T00:00:00Z')] } }) });
+  const seen = (updatedAt: string): Run => (cmd, args) => {
+    const q = args.find((a) => a.startsWith('query=')) ?? '';
+    if (q.includes('review-requested:@me')) return { status: 0, stderr: '', stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [{ number: 3, url: card(3).url, updatedAt, headRefName: 'h', baseRefName: 'develop', author: { login: 'pat-fake', __typename: 'User' }, repository: { nameWithOwner: 'acme/widgets' }, labels: { nodes: [] } }] } } }) };
+    return graphql([3])(cmd, args);
+  };
+  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, seen(card(3).updatedAt)).prs, []);
+  assert.deepEqual(refreshOthers(statusDir, SCOPE, NOW, seen('2026-10-18T00:00:00Z')).prs.map((p) => p.number), [3]);
 });

@@ -1,5 +1,5 @@
 /**
- * The Others' PRs tab's data: every open teammate PR the cache holds (`.now-others-prs.json`, written by the status-page rebuild), newest activity first.
+ * The Others' PRs tab's data: the listed teammate PRs the cache holds (`.now-others-prs.json`, written by the status-page rebuild), newest activity first.
  * Reads the cache only, so a page load never reaches GitHub. Own PRs and self-review repos are left out here as well as at fetch time,
  * so a changed `self_review_repos` takes effect before the next rebuild. The review-draft status is joined by the page from the draft queue, which changes on its own.
  */
@@ -12,6 +12,8 @@ import { isGuard, NO_GUARD } from '../teammate/wait.ts';
 import { isSelfReview } from '../self-review.ts';
 import { isFormerTeammate } from '../teammate/former.ts';
 import { ignoreState, readActions } from '../teammate/others-actions.ts';
+import { awaitingAuthor, dropGate, droppedForQuiet } from '../teammate/others-drop.ts';
+import type { DropGate } from '../teammate/others-drop.ts';
 import { PR_STALE_MS } from './state.ts';
 import type { OthersPrRow, OthersPrsData } from '../../web/client/src/types.ts';
 
@@ -25,8 +27,10 @@ export interface OthersScopeOptions { statusDir: string; owners: readonly string
   openHours?: number;
   /** A PR opened longer ago is active only with activity in the last this many hours; otherwise it is stale. */
   activeHours?: number;
-  /** A PR with no activity for more than this many days (and past `openHours`) leaves the tab entirely, Stale included. Never below the stale gate. Absent means nothing is dropped. */
+  /** A PR with no activity for more than this many working days (and past `openHours`) leaves the tab entirely, Stale included. Never below the stale gate. Absent means nothing is dropped. */
   dropDays?: number;
+  /** The time zone the working days are counted in (`watch_tz`); absent reads as UTC. */
+  tz?: string;
   /** The folder of the slack-watch engineering notes (`<vault_root>/Projects/<container>/Slack`); absent means no Slack ask is known. */
   slackDir?: string;
   /** The Others' PRs actions file (ignores and review requests); absent means none. */
@@ -40,13 +44,6 @@ const notAsked = (p: OtherPr, youAsked: boolean, slack: ReadonlyMap<string, Slac
 
 const CI: Record<string, NonNullable<OthersPrRow['ci']>> = { SUCCESS: 'pass', FAILURE: 'fail', ERROR: 'fail', PENDING: 'pending', EXPECTED: 'pending' };
 const BLOCK_LABEL = /block|do not merge|don'?t merge|\bwip\b|\bhold\b/i;
-
-/** A review you posted that the author has not pushed after (a commit at or before the review). An approval is not waiting on anything. */
-const awaiting = (p: OtherPr): boolean => {
-  const r = p.yourReview;
-  if (!r || (r.state !== 'COMMENTED' && r.state !== 'CHANGES_REQUESTED') || !p.headAt) return false;
-  return Date.parse(p.headAt) <= Date.parse(r.at);
-};
 
 function row(p: OtherPr, self: string, guard: Guard, now: Date, slack: ReadonlyMap<string, SlackActivity>, gate: Gate, acts: Acts): OthersPrRow {
   const opened = Date.parse(p.createdAt);
@@ -62,7 +59,7 @@ function row(p: OtherPr, self: string, guard: Guard, now: Date, slack: ReadonlyM
     ci: (p.ci && Object.hasOwn(CI, p.ci) ? CI[p.ci] : undefined) ?? 'none',
     ...(p.mergeable === 'CONFLICTING' ? { conflicting: true } : {}),
     ...(p.head.startsWith('release/') ? { block: 'release' as const } : (p.labels ?? []).some((l) => BLOCK_LABEL.test(l)) ? { block: 'blocked' as const } : {}),
-    ...(awaiting(p) ? { awaitingAuthor: true } : {}),
+    ...(awaitingAuthor(p) ? { awaitingAuthor: true } : {}),
     ...(notAsked(p, youAsked, slack) ? { notAsked: true } : {}),
     ...ask(p, slack, now, gate),
   };
@@ -81,8 +78,7 @@ function ask(p: OtherPr, slack: ReadonlyMap<string, SlackActivity>, now: Date, g
   return { askedAt: new Date(at).toISOString(), ...(why ? { stale: true, staleWhy: why } : {}) };
 }
 
-/** The staleness thresholds in milliseconds; a null gate disables that check. */
-interface Gate { open: number | null; active: number | null; drop: number | null }
+type Gate = DropGate;
 
 /** The newest sign of life: a push, review, comment or re-request (GitHub's updatedAt), or a Slack post or reply carrying the link. NaN when neither is a date. */
 const lastActivityAt = (p: OtherPr, s: SlackActivity | undefined): number => Math.max(Date.parse(p.updatedAt) || 0, s?.at ?? 0, Date.parse(p.createdAt) || 0) || Number.NaN;
@@ -99,11 +95,9 @@ function lapsed(p: OtherPr, last: number, now: Date, gate: Gate): boolean {
   return now.getTime() - last >= gate.active;
 }
 
-/** True when the PR has had no activity for longer than the drop window (never shorter than the active window) and is past the open window. */
+/** True when the PR has had no activity (a push, review, comment, re-request or Slack mention) for longer than the drop window in working time, and is past the open window: the rule the list drops by (lib/teammate/others-drop.ts). */
 function dropped(p: OtherPr, slack: ReadonlyMap<string, SlackActivity>, now: Date, gate: Gate): boolean {
-  if (gate.drop === null || young(p, now, gate)) return false;
-  const last = lastActivityAt(p, slack.get(p.url.toLowerCase()));
-  return Number.isFinite(last) && now.getTime() - last > Math.max(gate.drop, gate.active ?? 0);
+  return droppedForQuiet(p, lastActivityAt(p, slack.get(p.url.toLowerCase())), now.getTime(), gate);
 }
 
 /** What the person did to PRs from the tab: ignores (key -> head) and review requests (key -> head). */
@@ -114,7 +108,7 @@ export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData 
   const owners = new Set(o.owners.map((x) => x.toLowerCase()));
   const self = o.self.toLowerCase();
   const slack = slackActivity(o.slackDir);
-  const gate: Gate = { open: o.openHours === undefined ? null : o.openHours * HOUR_MS, active: o.activeHours === undefined ? null : o.activeHours * HOUR_MS, drop: o.dropDays === undefined ? null : o.dropDays * DAY_MS };
+  const gate: Gate = dropGate(o.tz ?? 'UTC', { ...(o.openHours !== undefined ? { openHours: o.openHours } : {}), ...(o.activeHours !== undefined ? { activeHours: o.activeHours } : {}), ...(o.dropDays !== undefined ? { dropDays: o.dropDays } : {}) });
   const acts: Acts = o.actionsFile ? readActions(o.actionsFile) : { ignored: new Map(), requests: new Map() };
   const approved = (cache?.prs ?? []).filter((p) => p.decision === 'APPROVED');
   const kept = (cache?.prs ?? [])
