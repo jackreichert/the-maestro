@@ -20,7 +20,7 @@ test('a settings file with every snippet hook registered passes the registration
   writeFileSync(file, JSON.stringify(snippet([])));
   const before = digest(file);
   const r = run('--settings', file, '--json');
-  const results = (JSON.parse(r.stdout) as { results: { name: string; status: string }[] }).results;
+  const results = (JSON.parse(r.stdout) as { results: { name: string; status: string; detail: string }[] }).results;
   const reg = results.find((c) => c.name === 'hooks registered');
   assert.equal(reg?.status, 'ok');
   assert.match(reg?.detail ?? '', /all [1-9]\d* hook scripts/, 'a non-empty expected list, so a broken extraction cannot pass');
