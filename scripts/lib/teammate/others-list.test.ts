@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { addDraft } from '../drafts/queue.ts';
 import type { NewDraft } from '../drafts/queue.ts';
-import { addToList, compactList, dropFromList, listPath, mayRejoin, pendingReviewKeys, readList } from './others-list.ts';
+import { addToList, compactList, dropFromList, listPath, mayRejoin, parsePrRef, pendingReviewKeys, readList } from './others-list.ts';
 
 const KEY = 'acme-fake/widgets#7';
 const file = (): string => listPath(mkdtempSync(join(tmpdir(), 'others-list-')));
@@ -99,4 +99,11 @@ test('the migration seed: the PRs with a pending review draft, in list form; not
   assert.deepEqual(pendingReviewKeys(drafts), []);
   addDraft(drafts, review(4133));
   assert.deepEqual(pendingReviewKeys(drafts), ['acme-fake/widgets#4133']);
+});
+
+test('a PR is named by key or by URL; anything else is refused', () => {
+  assert.equal(parsePrRef('Acme-Fake/Widgets#7'), 'acme-fake/widgets#7');
+  assert.equal(parsePrRef(' https://github.com/acme-fake/widgets/pull/7 '), 'acme-fake/widgets#7');
+  assert.equal(parsePrRef('https://github.com/acme-fake/widgets/pull/7/files#diff-abc'), 'acme-fake/widgets#7');
+  for (const bad of ['', 'widgets#7', 'acme-fake/widgets', 'acme-fake/widgets#0', '../x#1', 'https://example.com/acme-fake/widgets/pull/7', 'https://github.com/acme-fake/widgets/issues/7', 'acme-fake/widgets#7 and more']) assert.equal(parsePrRef(bad), null, bad);
 });

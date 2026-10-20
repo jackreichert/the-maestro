@@ -137,3 +137,13 @@ export function compactList(file: string, now: number = Date.now()): boolean {
 export function pendingReviewKeys(draftsFile: string): string[] {
   try { return [...new Set(listDrafts(draftsFile).filter((d) => d.source === 'review' && d.state === 'pending').map((d) => listKey(`${d.repo}#${d.pr}`)))]; } catch { return []; }
 }
+
+const REF = /^([A-Za-z0-9][A-Za-z0-9-]*)\/([A-Za-z0-9_.-]+)#([1-9][0-9]{0,8})$/;
+const URL_REF = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]*)\/([A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]{0,8})(?:[/?#].*)?$/;
+
+/** A PR named by `owner/repo#number` or by its GitHub URL (a trailing `/files` or `#discussion` is fine), as a list key; null when it is neither. */
+export function parsePrRef(text: string): string | null {
+  const t = text.trim();
+  const m = REF.exec(t) ?? URL_REF.exec(t);
+  return m ? listKey(`${m[1]}/${m[2]}#${m[3]}`) : null;
+}
