@@ -29,11 +29,17 @@
  * HEAD is reachable from some origin ref. Right before each removal the worktree is re-read (HEAD unchanged, no modified or
  * untracked file, detached HEAD still on origin). Everything else is printed as `kept` with its reason. Remote branches
  * are untouched; they keep the listing and `--apply --ids` flow.
+ * Two more cases qualify in `--apply-worktrees` only (the listing and `--apply --ids` are unchanged). A worktree of the user's own branch is
+ * SHIPPED, and may go, when its tip has a merged PR into a merge target or protected branch (the PR's head commit is exactly the tip, so a
+ * later local commit is never covered), or `git cherry` finds no unique patch against a merge target, or every file the branch touched is
+ * byte-identical in a merge target: a squash merge leaves SHAs that no remote has, so ancestry alone calls those branches unpushed. And untracked files
+ * that are only regenerated noise (UNTRACKED_NOISE: BODY.md, tools/scaffold/index.js, __pycache__, a node_modules symlink) do not keep a
+ * worktree; the removal deletes exactly those files first, because `git worktree remove` refuses untracked files without --force. Any other untracked file still keeps it.
  * The `gh` binary is `MAESTRO_GH` if set. Settings: local-config.ts and reference/local-config.md.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { availableParallelism, homedir, hostname, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -430,6 +436,19 @@ interface Blocker { rule: string; reason: string; envFiles: string[] }
 const realEnvFiles = (root: string, ignored: string[], storeRoot: string): string[] =>
   ignored.filter(isEnvFile).filter((p) => !isStoreLink(join(root, p.replace(/\/+$/, '')), storeRoot));
 
+/**
+ * Untracked paths that are regenerated noise, never work: the only untracked files a worktree may hold and still be removed. `check` gets (root, path), the
+ * worktree's real root and the path git reports relative to it. Short and explicit on purpose: a path that matches nothing here keeps the worktree.
+ */
+const UNTRACKED_NOISE: Rule<[string, string], boolean>[] = [
+  rule('BODY.md (PR body scratch file)', (_root, p) => p === 'BODY.md', () => 'BODY.md'),
+  rule('tools/scaffold/index.js (scaffold output)', (_root, p) => p === 'tools/scaffold/index.js', () => 'tools/scaffold/index.js'),
+  rule('__pycache__ (Python bytecode)', (_root, p) => p.split('/').includes('__pycache__'), () => '__pycache__'),
+  rule('node_modules symlink (regenerated link)', (root, p) => p.split('/').pop() === 'node_modules' && lstatSync(join(root, p), { throwIfNoEntry: false })?.isSymbolicLink() === true, () => 'node_modules symlink'),
+];
+/** True when an untracked path (a git status path, so a quoted one never matches) is one of UNTRACKED_NOISE. */
+const isUntrackedNoise = (root: string, path: string): boolean => UNTRACKED_NOISE.some((r) => r.check(root, path));
+
 const ENV_RULE = 'no environment files';
 const WORKTREE_RULES: Rule<[WorktreeCtx], boolean>[] = [
   rule('not locked', (c) => !c.w.locked, () => 'locked'),
@@ -464,7 +483,7 @@ function checkWorktree(g: Git, w: Worktree, repoName: string, ctx: SweepContext,
   const c: WorktreeCtx = {
     g, w, repoName, ctx, live, statusError: status.ok ? '' : status.err || 'git status failed', real: wg ? realpathSync(w.path) : w.path,
     tracked: lines.filter((l) => !l.startsWith('??') && !l.startsWith('!!')),
-    untracked: lines.filter((l) => l.startsWith('??')), // a store link git does not ignore is untracked, and `git worktree remove` refuses those without --force
+    untracked: lines.filter((l) => l.startsWith('??') && !isUntrackedNoise(w.path, l.slice(3))), // noise is deleted at removal; a store link git does not ignore is untracked, and `git worktree remove` refuses those without --force
     envFiles: wg ? realEnvFiles(w.path, ignored, ctx.envStoreRoot ?? ENV_STORE_ROOT) : [],
     keptIgnored: ignored.filter((p) => !isEnvFile(p) && !p.split('/').some((seg) => disposable.has(seg))),
     idle: stamps.length ? (Date.now() - Math.max(...stamps)) / 6e4 : 0, // no timestamps readable: treat as just touched
@@ -615,6 +634,39 @@ function unpushedCount(g: Git, ref: string): number | null {
   return r.ok && /^\d+$/.test(r.out) ? Number(r.out) : null;
 }
 
+/** Context for the shipped rules: one local branch (`ref`, named `name`, at `tip`) and the repo's merge targets. */
+interface ShipCtx { g: Git; ref: string; name: string; tip: string; targets: string[]; scan: Scan }
+
+/** Every file the branch touched since it left `target` is byte-identical in `target` (a squash merge, or the same change landed another way). */
+function touchedFilesMatch(g: Git, target: string, ref: string): boolean {
+  const names = (...args: string[]): string[] => must(g, 'diff', '--name-only', '--no-renames', '-z', ...args).split('\0').filter(Boolean);
+  const touched = names(must(g, 'merge-base', target, ref), ref);
+  const differs = new Set(names(target, ref));
+  return touched.length > 0 && touched.every((f) => !differs.has(f));
+}
+
+/** Shipped rules: the first that returns evidence wins. Each keeps the branch's work upstream, so removing its worktree loses nothing. */
+const SHIPPED_RULES: Rule<[ShipCtx], Evidence | false | undefined, [Evidence]>[] = [
+  rule('merged PR at this tip', (c) => {
+    const pr = exactPrs(c.g.repo, c.name, c.tip, c.scan.ctx).find((p) => c.targets.includes(p.baseRefName) || c.scan.protectedRefs.includes(`origin/${p.baseRefName}`));
+    return pr && { how: `PR #${pr.number} merged`, url: pr.url };
+  }, (ev) => ev.how),
+  rule('no unique patches (git cherry)', (c) => { const t = c.targets.find((x) => cherryEquivalent(c.g, `origin/${x}`, c.ref)); return t !== undefined && { how: `no unique patches against ${t} (git cherry)` }; }, (ev) => ev.how),
+  rule('touched files identical to a target', (c) => { const t = c.targets.find((x) => touchedFilesMatch(c.g, `origin/${x}`, c.ref)); return t !== undefined && { how: `every touched file is identical in ${t}` }; }, (ev) => ev.how),
+];
+
+/**
+ * Why a worktree's own, unmerged-looking branch has nothing left to lose, or null: the first SHIPPED_RULES hit. A git or gh error reads as no evidence,
+ * so the worktree stays (the scan's reason for keeping it then says what it could see).
+ */
+function shippedEvidence(g: Git, ref: string, name: string, tip: string, targets: string[], scan: Scan): Evidence | null {
+  const c: ShipCtx = { g, ref, name, tip, targets, scan };
+  try {
+    for (const r of SHIPPED_RULES) { const hit = r.check(c); if (hit) return hit; }
+  } catch { return null; }
+  return null;
+}
+
 /** One linked worktree: qualifies on its branch (or a deleted upstream with nothing unpushed), then must pass every worktree rule. */
 function scanWorktree({ g, w, name, targets, scan, live, res }: { g: Git; w: Worktree; name: string; targets: string[]; scan: Scan; live: Live; res: RepoScan }): void {
   const ref = `refs/heads/${w.branch}`;
@@ -627,7 +679,8 @@ function scanWorktree({ g, w, name, targets, scan, live, res }: { g: Git; w: Wor
   const ahead = count.ok && /^\d+$/.test(count.out) ? Number(count.out) : null;
   const goneClean = a.mine && gone && ahead === 0;
   const state = a.ev?.state;
-  if (state !== 'ok' && !goneClean) {
+  const shipped = state !== 'ok' && !goneClean && scan.ctx.worktreesOnly && a.mine && !a.error ? shippedEvidence(g, ref, w.branch as string, a.tip as string, targets, scan) : null;
+  if (state !== 'ok' && !goneClean && !shipped) {
     const reason = (gone && ahead === null && `branch ${w.branch} is gone from origin and git could not count what is unpushed`)
       || (gone && `branch ${w.branch} is gone from origin but ${ahead} commit(s) are not pushed or merged`)
       || (a.error && `skipped: ${a.error.message}`);
@@ -638,9 +691,10 @@ function scanWorktree({ g, w, name, targets, scan, live, res }: { g: Git; w: Wor
     }
   }
   const blocker = checkWorktree(g, w, name, scan.ctx, live);
-  if (blocker) { res.excluded.push({ ...base, reason: blocker.reason }); if (state !== 'review') askToMoveEnvFiles(res, w, blocker, scan.ctx); return; }
+  if (blocker) { res.excluded.push({ ...base, reason: blocker.reason }); if (state !== 'review' || shipped) askToMoveEnvFiles(res, w, blocker, scan.ctx); return; }
   if (state === 'ok') res.items.push({ ...base, why: `branch ${w.branch}: ${why(a.ev as MergedEvidence)}`, prs: links(a.ev as MergedEvidence) });
   else if (goneClean) res.items.push({ ...base, why: `branch ${w.branch} deleted on origin, nothing unpushed`, prs: [] });
+  else if (shipped) res.items.push({ ...base, why: `branch ${w.branch}: shipped, ${shipped.how}`, prs: shipped.url ? [shipped.url] : [] });
   else if (state === 'review') res.review.push({ ...base, why: `branch ${w.branch}: ${why(a.ev as MergedEvidence)}`, prs: links(a.ev as MergedEvidence) });
 }
 
@@ -767,9 +821,12 @@ export function removeWorktree(path: string, item: { id: string; name: string; k
   // A symlink into the env store is removed with the worktree and the store file is untouched; any other env file may be the only copy.
   const storeLink = (l: string): boolean => isEnvFile(l.slice(3)) && isStoreLink(join(item.name, l.slice(3).replace(/\/+$/, '')), envStoreRoot);
   if (lines.some((l) => l.startsWith('!!') && isEnvFile(l.slice(3)) && !storeLink(l))) return refuse('holds an environment file (may be the only copy)');
-  const keeps = lines.filter((l) => !l.startsWith('!!') || !(storeLink(l) || l.slice(3).split('/').some((seg) => disposable.has(seg))));
+  const noise = lines.filter((l) => l.startsWith('??') && isUntrackedNoise(item.name, l.slice(3))).map((l) => l.slice(3));
+  const keeps = lines.filter((l) => !(l.startsWith('??') && noise.includes(l.slice(3))) && (!l.startsWith('!!') || !(storeLink(l) || l.slice(3).split('/').some((seg) => disposable.has(seg)))));
   if (keeps.length) return refuse('has uncommitted, untracked or non-disposable ignored files');
   if (item.detached && unpushedCount(wg, 'HEAD') !== 0) return refuse('is detached and not on origin');
+  // Every other check has passed. `git worktree remove` refuses untracked files without --force, so the noise goes first (a symlink is unlinked, never followed).
+  for (const p of noise) rmSync(join(item.name, p), { force: true });
   const r = run('git', ['-C', path, 'worktree', 'remove', item.name]);
   return { id, done: r.ok, message: r.ok ? `deleted ${item.kind} ${item.name}` : `failed: ${r.err}` };
 }
