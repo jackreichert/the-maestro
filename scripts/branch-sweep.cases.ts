@@ -773,6 +773,96 @@ test('sweepWorktrees keeps a worktree with unpushed commits, merged-looking or n
     assert.deepEqual([existsSync(ahead), existsSync(pushed)], [true, true]);
 });
 
+// ── sweepWorktrees: squash-merged and noise-only worktrees (MAESTRO-430) ──
+
+/** A squash merge of `branch` into develop whose content is changed on the way (so `git cherry` finds a unique patch), plus the worktree on it. */
+function squashedWithEdit(w: World, branch: string): string {
+    feature(w, branch);
+    sh(w.repo, 'checkout', '-q', 'develop'); sh(w.repo, 'merge', '-q', '--squash', branch);
+    writeFileSync(join(w.repo, `${branch.replace(/\W/g, '_')}.txt`), 'edited in review\n'); sh(w.repo, 'add', '-A');
+    sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'commit', '-q', '-m', 'squash'); sh(w.repo, 'push', '-q', 'origin', 'develop'); sh(w.repo, 'checkout', '-q', 'main');
+    const wt = join(w.root, branch.replace(/\W/g, '_')); sh(w.repo, 'worktree', 'add', '-q', wt, branch);
+    return wt;
+}
+
+test('sweepWorktrees removes a squash-merged worktree in a twin-flow repo (merged into develop only): merged PR at its tip, git cherry, or touched files identical', () => {
+    const w = world();
+    const viaPr = squashedWithEdit(w, 'feat/pr');
+    const tip = tipOf(w, 'feat/pr');
+    // cherry: one commit, squashed unchanged.
+    feature(w, 'feat/cherry'); mergeInto(w, 'develop', 'feat/cherry', true);
+    const viaCherry = join(w.root, 'cherry'); sh(w.repo, 'worktree', 'add', '-q', viaCherry, 'feat/cherry');
+    // identical files: two commits squashed into one, so no commit has a patch-equivalent, but every touched file matches.
+    feature(w, 'feat/files'); sh(w.repo, 'checkout', '-q', 'feat/files'); commit(w.repo, 'more.txt', 'second\n'); sh(w.repo, 'push', '-q', 'origin', 'feat/files'); sh(w.repo, 'checkout', '-q', 'main');
+    mergeInto(w, 'develop', 'feat/files', true);
+    const viaFiles = join(w.root, 'files'); sh(w.repo, 'worktree', 'add', '-q', viaFiles, 'feat/files');
+    const dry = sweep(w, { twin: ['proj'], gh: searchGh([pr(7, 'develop', 'feat/pr', tip)]) }, { dryRun: true });
+    assert.deepEqual(dry.removed.map((x) => x.path).sort(), [viaCherry, viaFiles, viaPr].sort());
+    assert.deepEqual([existsSync(viaPr), existsSync(viaCherry), existsSync(viaFiles)], [true, true, true], 'a dry run removes nothing');
+    const r = sweep(w, { twin: ['proj'], gh: searchGh([pr(7, 'develop', 'feat/pr', tip)]) });
+    const why = (p: string): string => must(r.removed.find((x) => x.path === p), `removed ${p}`).why;
+    assert.match(why(viaPr), /PR #7 merged/);
+    assert.match(why(viaCherry), /no unique patches against develop/);
+    assert.match(why(viaFiles), /every touched file is identical in develop/);
+    assert.deepEqual([existsSync(viaPr), existsSync(viaCherry), existsSync(viaFiles)], [false, false, false]);
+    assert.equal(sh(w.repo, 'branch', '--list', 'feat/pr', 'feat/cherry', 'feat/files').split('\n').length, 3, 'branches stay');
+});
+
+test('sweepWorktrees keeps a squash-merged worktree that has a unique unpushed commit, a PR for another tip, or a branch that is not the user\'s', () => {
+    const w = world();
+    const ahead = squashedWithEdit(w, 'feat/after'); const tip = tipOf(w, 'feat/after');
+    commit(ahead, 'late.txt', 'written after the merge\n');
+    feature(w, 'feat/theirs', { email: 'other@example.com' }); mergeInto(w, 'develop', 'feat/theirs', true);
+    const theirs = join(w.root, 'theirs'); sh(w.repo, 'worktree', 'add', '-q', theirs, 'feat/theirs');
+    const r = sweep(w, { twin: ['proj'], gh: searchGh([pr(8, 'develop', 'feat/after', tip)]) });
+    assert.deepEqual(r.removed, []);
+    assert.match(keptReason(r, ahead), /1 unpushed commit/);
+    assert.match(keptReason(r, theirs), /not yours/);
+    assert.deepEqual([existsSync(ahead), existsSync(theirs)], [true, true]);
+});
+
+test('sweepWorktrees removes a merged worktree whose only untracked files are noise, and unlinks a node_modules symlink without following it', () => {
+    const w = world(); feature(w, 'feat/noise'); mergeInto(w, 'develop', 'feat/noise');
+    const wt = join(w.root, 'noise'); sh(w.repo, 'worktree', 'add', '-q', wt, 'feat/noise');
+    const target = join(w.root, 'real-node-modules'); mkdirSync(target); writeFileSync(join(target, 'keep.txt'), 'x');
+    writeFileSync(join(wt, 'BODY.md'), 'pr body\n');
+    mkdirSync(join(wt, 'tools', 'scaffold'), { recursive: true }); writeFileSync(join(wt, 'tools', 'scaffold', 'index.js'), '//\n');
+    mkdirSync(join(wt, 'pkg', '__pycache__'), { recursive: true }); writeFileSync(join(wt, 'pkg', '__pycache__', 'a.pyc'), 'x');
+    symlinkSync(target, join(wt, 'node_modules'));
+    const dry = sweep(w, {}, { dryRun: true });
+    assert.deepEqual(dry.removed.map((x) => x.path), [wt]);
+    assert.equal(existsSync(join(wt, 'BODY.md')), true, 'a dry run deletes no noise');
+    const r = sweep(w);
+    assert.deepEqual(r.removed.map((x) => x.path), [wt]);
+    assert.equal(existsSync(wt), false);
+    assert.equal(readFileSync(join(target, 'keep.txt'), 'utf8'), 'x', 'the symlink target is untouched');
+});
+
+test('sweepWorktrees keeps a worktree with a real untracked or uncommitted change among noise, and deletes none of the noise', () => {
+    const w = world(); feature(w, 'feat/real'); feature(w, 'feat/edit');
+    for (const b of ['feat/real', 'feat/edit']) mergeInto(w, 'develop', b);
+    const real = join(w.root, 'real'); const edit = join(w.root, 'edit');
+    sh(w.repo, 'worktree', 'add', '-q', real, 'feat/real'); sh(w.repo, 'worktree', 'add', '-q', edit, 'feat/edit');
+    for (const d of [real, edit]) writeFileSync(join(d, 'BODY.md'), 'noise\n');
+    writeFileSync(join(real, 'notes.md'), 'real work\n');
+    writeFileSync(join(edit, 'feat_edit.txt'), 'changed\n');
+    const r = sweep(w);
+    assert.deepEqual(r.removed, []);
+    assert.match(keptReason(r, real), /1 untracked files/);
+    assert.match(keptReason(r, edit), /uncommitted changes/);
+    assert.deepEqual([existsSync(join(real, 'BODY.md')), existsSync(join(edit, 'BODY.md'))], [true, true]);
+});
+
+test('removeWorktree re-reads the worktree: a real untracked file added after the scan is refused, and noise is not deleted then', () => {
+    const w = world(); feature(w, 'feat/late'); mergeInto(w, 'develop', 'feat/late');
+    const wt = join(w.root, 'late'); sh(w.repo, 'worktree', 'add', '-q', wt, 'feat/late');
+    writeFileSync(join(wt, 'BODY.md'), 'noise\n'); writeFileSync(join(wt, 'precious.txt'), 'new work\n');
+    const res = removeWorktree(w.repo, { id: 'x', name: wt, kind: 'worktree', head: sh(wt, 'rev-parse', 'HEAD') });
+    assert.equal(res.done, false);
+    assert.match(res.message, /refused/);
+    assert.deepEqual([existsSync(join(wt, 'BODY.md')), existsSync(join(wt, 'precious.txt'))], [true, true]);
+});
+
 test('sweepWorktrees removes a clean detached worktree on origin, and keeps one holding commits that are not', () => {
     const w = world();
     const clean = join(w.root, 'clean'); const work = join(w.root, 'work');
