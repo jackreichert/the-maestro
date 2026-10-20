@@ -486,6 +486,12 @@ export const REVIEWER_CHECKLIST_PATH = ((v: string): string => {
   return existsSync(p) ? p : '';
 })(pick('MAESTRO_REVIEWER_CHECKLIST', 'reviewer_checklist').trim());
 
+/** Slack triage rules (slack-triage.ts): the org's JSON rule table, its user names and channel-to-playbook map. A relative path is read from the overlay's folder (else the user config's); `~/` expands. Empty when unset. */
+export const SLACK_TRIAGE_RULES = ((v: string): string => {
+  if (!v) return '';
+  return v.startsWith('~/') ? join(homedir(), v.slice(2)) : resolve(dirname(overlayPath || userPath), v);
+})(pick('MAESTRO_SLACK_TRIAGE_RULES', 'slack_triage_rules').trim());
+
 /**
  * One PR per ticket: the tracker-key pattern the rule uses. Read from the user config file only (an environment variable must not be able to
  * point it at a pattern that never matches), else the generic default, plus the local key prefixes (MAESTRO-N). Case-sensitive, so `utf-8` is not a key.
