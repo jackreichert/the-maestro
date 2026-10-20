@@ -16,7 +16,9 @@ import type { OthersOp, OthersOutcome } from './others-api.ts';
 export interface OthersDrafts { rows: DraftRow[] | null; queue(match: (d: DraftRow) => boolean, empty: string, quiet: boolean, authorOf: (d: DraftRow) => string | undefined): Node }
 
 /** What the row's buttons call: one write for one PR (see others-api.ts); null when it went through, else the words to show. The app reloads the list on success. */
-export interface OthersActions { run(op: OthersOp, p: OthersPrRow): Promise<OthersOutcome> }
+export interface OthersActions { run(op: OthersOp, p: OthersPrRow): Promise<OthersOutcome>;
+  /** Puts a PR on the list from text (owner/repo#number or its GitHub link) and refreshes the list; null when it went through. */
+  add(ref: string): Promise<OthersOutcome> }
 
 const CSS = `${BASE_CSS}${UI_CSS}${TACET_CSS}
   :host { display: block; }
@@ -36,6 +38,11 @@ const CSS = `${BASE_CSS}${UI_CSS}${TACET_CSS}
   [role=tabpanel]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   li.pr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  form.add { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: end; margin: 0 0 var(--space-3); }
+  form.add label { display: grid; gap: var(--space-1); font-size: var(--text-sm); color: var(--text-secondary); flex: 1 1 18rem; }
+  form.add input[type=text] { min-height: 32px; }
+  p.add-note { margin: 0 0 var(--space-4); font-size: var(--text-sm); color: var(--text-secondary); }
+  p.add-note.bad { color: var(--critical); }
   details.ignored { margin: var(--space-4) 0 0; }
   details.ignored summary { cursor: pointer; font-size: var(--text-sm); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
   h3.orphans { margin: var(--space-6) 0 var(--space-2); font-size: var(--text-md); font-weight: var(--weight-semibold); }
@@ -51,7 +58,7 @@ const REVIEW: Record<OthersPrRow['review'], { glyph: string; word: string; tone:
 };
 
 /**
- * <others-prs>: every open teammate PR, newest activity first, each with the facts a reviewer scans (who, where, how old, whether you were asked,
+ * <others-prs>: the teammate PRs on your list (see lib/teammate/others-list.ts), newest activity first, each with the facts a reviewer scans (who, where, how old, whether you were asked,
  * review state, threads) and its review-draft status. A PR with a waiting draft shows the existing draft card (Approve, Edit, Reject) under its row;
  * nothing here posts. Drafts on a PR that is no longer listed keep their cards below, so no draft is ever hidden. Everything is set as text.
  */
@@ -83,8 +90,36 @@ export class OthersPrs extends HTMLElement {
   /** A second hidden live region for what a write did, so the page-range text redrawing over it does not swallow the announcement. */
   readonly #said = h('p', { class: 'vh', role: 'status', 'data-said': '' });
   readonly #view = h('div', { class: 'view' });
+  /** What the Add PR form last said, kept outside the rows so a redraw does not erase it. */
+  readonly #addNote = h('p', { class: 'add-note', role: 'status', 'data-note': 'add' });
+  #adding = false;
 
-  constructor() { super(); this.#root = shadow(this, CSS); this.#root.append(this.#announce, this.#said, this.#view); }
+  constructor() { super(); this.#root = shadow(this, CSS); this.#root.append(this.#announce, this.#said, this.#addForm(), this.#addNote, this.#view); }
+
+  /**
+   * The Add PR form: the tab lists only PRs somebody asked about, so a PR that did not arrive by itself (a Slack post, a review request, an @-mention) is added here by
+   * `owner/repo#number` or its GitHub link. It sits outside the redrawn rows so typing is never lost. The server checks the text and the owner; nothing is posted to GitHub.
+   */
+  #addForm(): HTMLFormElement {
+    const input = h('input', { type: 'text', name: 'ref', autocomplete: 'off', spellcheck: 'false', maxlength: '200', placeholder: 'owner/repo#123 or a GitHub link' });
+    const button = h('button', { type: 'submit' }, 'Add PR');
+    const form = h('form', { class: 'add', 'aria-label': 'Add a PR to this list' }, h('label', {}, 'Add a PR to review', input), button);
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (this.#adding || !this.#actions) return;
+      const ref = input.value;
+      this.#adding = true;
+      button.disabled = true;
+      this.#say('Adding the PR.', false);
+      void this.#actions.add(ref).then((out) => {
+        if (out === null) { input.value = ''; this.#say('Added. The list was refreshed; a PR that is merged, approved or already picked up by another reviewer leaves it at once.', false); }
+        else this.#say(out, true);
+      }).finally(() => { this.#adding = false; button.disabled = false; });
+    });
+    return form;
+  }
+
+  #say(text: string, bad: boolean): void { this.#addNote.textContent = text; this.#addNote.classList.toggle('bad', bad); }
 
   set model(m: OthersPrsModel | null) { this.#model = m; if (this.isConnected) this.#render(); }
   set focusDraft(id: string | null) { this.#focusDraft = id; this.#sig = ''; if (this.isConnected) this.#render(); }
@@ -118,10 +153,10 @@ export class OthersPrs extends HTMLElement {
     const when = d.prData.fetchedAt ? `List read ${ago(d.prData.fetchedAt, d.generatedAt)} ago${d.prData.stale ? ' (older than expected)' : ''}.` : 'The list has not been read yet. It fills in when the next page refresh runs.';
     const hasOrphans = [...byPr].some(([k, rows]) => !listed.has(k) && rows.some(waiting));
     this.#view.replaceChildren(
-      this.#statusLine(`${d.total} open ${d.total === 1 ? 'PR' : 'PRs'} by teammates. ${when}${d.prData.failure ? ` The last read failed (${d.prData.failure}); this is the last good list.` : ''}`, !!d.prData.failure),
+      this.#statusLine(`${d.total} ${d.total === 1 ? 'PR' : 'PRs'} on your list. ${when}${d.prData.failure ? ` The last read failed (${d.prData.failure}); this is the last good list.` : ''}`, !!d.prData.failure),
       ...this.#waitingNote(d.prs, byPr),
       ...this.#orphanNote(byPr, listed),
-      ...(d.prs.length ? this.#tabbed(d.prs, byPr) : [tacet('No teammate PR is open.', 'tacet')]),
+      ...(d.prs.length ? this.#tabbed(d.prs, byPr) : [tacet('No PR is on your list. Add one above, or it joins when someone asks you for a review.', 'tacet')]),
       ...this.#ignoredList(d.prs),
       ...(this.#drafts ? [...(hasOrphans ? [h('h3', { class: 'orphans' }, 'Drafts on PRs not listed above')] : []), this.#drafts.queue((x) => !listed.has(key(x.repo, x.pr)), '', false, authorOf)] : []));
     this.#revealFocused();

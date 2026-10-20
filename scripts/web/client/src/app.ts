@@ -797,7 +797,11 @@ export class PodiumApp extends HTMLElement {
       el.model = this.#others.model;
       el.drafts = { rows: this.#drafts.model.data?.drafts.filter((d) => d.source === 'review') ?? null, queue: (match, empty, quiet, authorOf) => this.#queueView(match, empty, quiet, authorOf) };
     };
-    el.actions = { run: async (op, p) => { const out = await this.#othersActions.send(op, p); if (out === null) await this.#others.load(); return out; } };
+    el.actions = {
+      run: async (op, p) => { const out = await this.#othersActions.send(op, p); if (out === null) await this.#others.load(); return out; },
+      // Adding a PR changes the list file, not the cache, so the PR shows only after a refresh: ask for one, then reload the tab's data.
+      add: async (ref) => { const out = await this.#othersActions.add(ref); if (out !== null) return out; await this.#prs.refresh(); await this.#others.load(); return null; },
+    };
     draw();
     const stops: Array<() => void> = [];
     const redraw = (): void => { if (!el.isConnected) { for (const off of stops.splice(0)) off(); return; } draw(); };
