@@ -1617,6 +1617,11 @@ function sweepWorktreesForRoll() {
     const result = runWorktreeSweep(dryRun);
     if (!result) return;
     console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
+    afterSweep(result);
+}
+
+/** What follows a finished worktree sweep: the env and pile-up asks, then the standing-row record. */
+function afterSweep(result: NonNullable<ReturnType<typeof runWorktreeSweep>>): void {
     raiseEnvAsks(result.envAsks);
     raisePileupAsk(result.kept);
     recordBranchSweepRan(result);
@@ -1740,9 +1745,7 @@ function maintain(today: string): MaintainResult {
     const result = out.result;
     if (result) {
         console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
-        raiseEnvAsks(result.envAsks);
-        raisePileupAsk(result.kept);
-        recordBranchSweepRan(result);
+        afterSweep(result);
         problems.push(...result.failed.map((f) => `worktree sweep: ${f}`));
     }
     const sweep = result ? { removed: result.removed.length, pruned: result.pruned.length, kept: result.kept.length, skipped: result.skipped.length, failed: result.failed.length } : null;
