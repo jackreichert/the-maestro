@@ -47,19 +47,19 @@ test('a link is case-folded into the list key and the newest ask of a PR wins', 
 });
 
 test('a reply by someone else that takes it on is a claim on the thread\'s PRs', () => {
-  const s = scanNote(note(`- 2026-10-13 09:00 ET **Frodo**: PTAL ${PR}`, '- 2026-10-13 09:10 ET ↳ **Samwise**: I\'ll take it'), 'e', { owners: OWNERS, selfNames: ['jack fake'] });
+  const s = scanNote(note(`- 2026-10-13 09:00 ET **Frodo**: PTAL ${PR}`, '- 2026-10-13 09:10 ET ↳ **Samwise**: I\'ll take it'), 'e', { owners: OWNERS, selfNames: ['pip fake'] });
   assert.deepEqual(s.claims, [{ key: 'acme-fake/widgets#7', at: Date.parse('2026-10-13T13:10:00Z') }]);
 });
 
 test('with no self names no claim is read, so your own "I\'ll take it" cannot drop a PR', () => {
-  const t = note(`- 2026-10-13 09:00 ET **Frodo**: PTAL ${PR}`, '- 2026-10-13 09:10 ET ↳ **Jack Fake**: I\'ll take it');
+  const t = note(`- 2026-10-13 09:00 ET **Frodo**: PTAL ${PR}`, '- 2026-10-13 09:10 ET ↳ **Pip Fake**: I\'ll take it');
   assert.deepEqual(scanNote(t, 'e', { owners: OWNERS }).claims, []);
   assert.equal(scanNote(t, 'e', { owners: OWNERS }).asks.length, 1);
 });
 
 test('the poster replying "on it", or you replying, is not a claim; a claim outside a thread with an ask is not either', () => {
-  const t = note(`- 2026-10-13 09:00 ET **Frodo**: PTAL ${PR}`, '- 2026-10-13 09:10 ET ↳ **Frodo**: on it, rebasing', '- 2026-10-13 09:11 ET ↳ **Jack Fake**: I\'ll take it');
-  assert.deepEqual(scanNote(t, 'e', { owners: OWNERS, selfNames: ['jack fake'] }).claims, []);
+  const t = note(`- 2026-10-13 09:00 ET **Frodo**: PTAL ${PR}`, '- 2026-10-13 09:10 ET ↳ **Frodo**: on it, rebasing', '- 2026-10-13 09:11 ET ↳ **Pip Fake**: I\'ll take it');
+  assert.deepEqual(scanNote(t, 'e', { owners: OWNERS, selfNames: ['pip fake'] }).claims, []);
   assert.deepEqual(scanNote(note('- 2026-10-13 09:00 ET **Frodo**: lunch?', '- 2026-10-13 09:10 ET ↳ **Samwise**: I\'ll take it'), 'e', { owners: OWNERS }).claims, []);
 });
 

@@ -348,10 +348,10 @@ test('an old Slack ask is not listed; a new ask after a drop brings the PR back'
 test('a teammate claiming the PR in the thread drops it, unless you were asked and have not reviewed', () => {
   const sd = slackDir(`- 2026-10-21 09:00 ET **Frodo Fake**: PTAL ${URL1}`, '- 2026-10-21 09:20 ET ↳ **Samwise Fake**: I\'ll take it');
   const a = fresh();
-  refreshOthers(a.d, { ...SCOPE, slackDir: sd, selfNames: ['Jack Fake'] }, NOW, fakeGh({ byKey: { [KEY]: hit(1) } }).run);
+  refreshOthers(a.d, { ...SCOPE, slackDir: sd, selfNames: ['Pip Fake'] }, NOW, fakeGh({ byKey: { [KEY]: hit(1) } }).run);
   assert.equal(readList(a.file).dropped.get(KEY)?.why, 'a teammate claimed it in Slack');
   const b = fresh();
-  refreshOthers(b.d, { ...SCOPE, slackDir: sd, selfNames: ['Jack Fake'] }, NOW, fakeGh({ byKey: { [KEY]: hit(1, asked) } }).run);
+  refreshOthers(b.d, { ...SCOPE, slackDir: sd, selfNames: ['Pip Fake'] }, NOW, fakeGh({ byKey: { [KEY]: hit(1, asked) } }).run);
   assert.deepEqual(shown(b.d), [1]);
   const c = fresh();
   refreshOthers(c.d, { ...SCOPE, slackDir: sd, selfNames: ['Samwise Fake'] }, NOW, fakeGh({ byKey: { [KEY]: hit(1) } }).run);
