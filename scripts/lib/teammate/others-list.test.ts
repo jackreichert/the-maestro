@@ -5,7 +5,9 @@ import assert from 'node:assert/strict';
 import { appendFileSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addToList, compactList, dropFromList, listPath, mayRejoin, readList } from './others-list.ts';
+import { addDraft } from '../drafts/queue.ts';
+import type { NewDraft } from '../drafts/queue.ts';
+import { addToList, compactList, dropFromList, listPath, mayRejoin, pendingReviewKeys, readList } from './others-list.ts';
 
 const KEY = 'acme-fake/widgets#7';
 const file = (): string => listPath(mkdtempSync(join(tmpdir(), 'others-list-')));
@@ -86,4 +88,15 @@ test('keys compare case-insensitively: the same PR named two ways is one entry',
   assert.deepEqual([...readList(f).active.keys()], ['acme-fake/widgets#7']);
   assert.equal(dropFromList(f, 'ACME-FAKE/WIDGETS#7', 'merged', undefined, 3000), true);
   assert.equal(mayRejoin(readList(f), 'Acme-Fake/Widgets#7', { askedAt: 2500 }), false);
+});
+
+const review = (pr: number): NewDraft => ({ key: `acme-fake/widgets#${pr}@abcdef1:review`, source: 'review', repo: 'Acme-Fake/widgets', pr, severity: 'review', target: { kind: 'review', commitId: `abcdef1${'0'.repeat(33)}` },
+  text: 'The ID validation before anything goes into a URL is exactly right.', review: { compliment: 'The ID validation before anything goes into a URL is exactly right.', comments: [] } });
+
+test('the migration seed: the PRs with a pending review draft, in list form; nothing for a missing file', () => {
+  const root = mkdtempSync(join(tmpdir(), 'others-seed-'));
+  const drafts = join(root, 'drafts.jsonl');
+  assert.deepEqual(pendingReviewKeys(drafts), []);
+  addDraft(drafts, review(4133));
+  assert.deepEqual(pendingReviewKeys(drafts), ['acme-fake/widgets#4133']);
 });

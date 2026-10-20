@@ -12,6 +12,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { writeAtomic } from '../status-page/seen.ts';
+import { listDrafts } from '../drafts/queue.ts';
 import { isPrKey } from './others-actions.ts';
 
 /** A PR key whose owner is shaped like a GitHub login (never `.` or `..`): the key goes into a GraphQL query, so it is checked tighter than a plain key. */
@@ -130,4 +131,9 @@ export function compactList(file: string, now: number = Date.now()): boolean {
   ];
   writeAtomic(file, rows.map((r) => `${JSON.stringify(r)}\n`).join(''));
   return true;
+}
+
+/** The PRs that have a review draft waiting (the keys, in list form): what the migration puts on a list that does not exist yet, so a pending draft's PR does not vanish from the tab. */
+export function pendingReviewKeys(draftsFile: string): string[] {
+  try { return [...new Set(listDrafts(draftsFile).filter((d) => d.source === 'review' && d.state === 'pending').map((d) => listKey(`${d.repo}#${d.pr}`)))]; } catch { return []; }
 }

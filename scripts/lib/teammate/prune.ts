@@ -3,7 +3,9 @@
  * is merged or closed, or once a person other than you, the author and the bots has reviewed or commented on it (the rule in lib/teammate/settled.ts,
  * read live per PR by lib/drafts/settle.ts). A PR you were asked to review and have not reviewed stays: that is the one exception the rule already makes.
  *
- * What it drops is remembered (lib/teammate/pruned.ts), so the tab's rebuild does not add it back.
+ * What it drops leaves the opt-in list too (lib/teammate/others-list.ts), with the `updatedAt` it was judged at, so the tab's rebuild does not read it again and a discovery
+ * brings it back only when something has happened to it since. The rebuild reads reviews but not inline review comments, so a PR a person only commented on line by line
+ * looks unsettled there; the prune reads the full facts, so its verdict is the one that counts.
  *
  * Idempotent: a second run finds nothing left to prune. A PR GitHub cannot be read for stays on the tab, and never makes the run fail. It posts nothing.
  */
@@ -13,7 +15,7 @@ import { spawnRead } from '../drafts/reconcile.ts';
 import type { GhRead } from '../drafts/reconcile.ts';
 import { settledReason } from './settled.ts';
 import { readOthersCache, writeOthersCache } from './others.ts';
-import { recordPruned } from './pruned.ts';
+import { dropFromList, listPath } from './others-list.ts';
 
 export interface PrunedCard { repo: string; number: number; reason: string; url?: string; updatedAt?: string }
 export interface PruneResult { cards: PrunedCard[]; drafts: SettledDraft[]; /** Cards whose PR could not be read and so were left. */ unread: number }
@@ -34,8 +36,9 @@ export function pruneOthers(o: PruneOptions, log: (line: string) => void = () =>
       cards.push({ repo: p.repo, number: p.number, reason: why.text, url: p.url, updatedAt: p.updatedAt });
       return false;
     });
-    // Record first: a crash between the two writes then leaves a card hidden that the next prune drops, never a pruned card the rebuild brings back.
-    recordPruned(o.statusDir, cards.flatMap((c) => (c.url && c.updatedAt ? [{ url: c.url, updatedAt: c.updatedAt }] : [])));
+    // Drop from the list first: a crash between the two writes then leaves a card on the tab that the next prune drops, never a dropped card the rebuild brings back.
+    const file = listPath(o.statusDir);
+    for (const c of cards) { try { dropFromList(file, `${c.repo}#${c.number}`, c.reason, c.updatedAt); } catch { /* a card whose key is not a PR key was never on the list */ } }
     if (cards.length) writeOthersCache(o.statusDir, { ...cache, prs: keep });
   }
   const drafts = settleStaleDrafts(o.draftsFile, o.self, { run, ...(o.now ? { now: o.now } : {}) });
