@@ -1,7 +1,7 @@
 import './lib/hermetic-config.ts';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -94,24 +94,26 @@ function sleepingGh(): { env: NodeJS.ProcessEnv; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), 'gh-sleeper-'));
   symlinkSync(process.execPath, join(dir, 'gh'));
   const stub = join(dir, 'hold.cjs');
-  writeFileSync(stub, "if (process.argv0 === 'gh') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);\n");
-  return { dir, env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, NODE_OPTIONS: `--require ${stub}`, MAESTRO_EVENT_DIR: dir, MAESTRO_LOCAL_CONFIG: '' } };
+  writeFileSync(stub, "if (process.argv0 === 'gh') { require('node:fs').appendFileSync(process.env.GH_STARTED, process.pid + '\\n'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000); }\n");
+  return { dir, env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, NODE_OPTIONS: `--require ${stub}`, MAESTRO_EVENT_DIR: dir, MAESTRO_LOCAL_CONFIG: '', GH_STARTED: join(dir, 'started') } };
 }
 const childOf = (pid: number): number | null => { const r = spawnSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' }); return r.status === 0 ? Number(r.stdout.split('\n')[0]) : null; };
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
-async function waitForChild(pid: number): Promise<number> {
+/** Waits until the stubbed gh has announced itself (it appends its pid to GH_STARTED as it starts), so the signal is never sent while the guard is still starting up or running its own helpers (`ps` for the caller name), which pgrep would also report as children. */
+async function waitForChild(env: NodeJS.ProcessEnv): Promise<number> {
   const deadline = Date.now() + 8000;
-  let child = childOf(pid);
-  while (child === null && Date.now() < deadline) { await new Promise((r) => setTimeout(r, 50)); child = childOf(pid); }
-  assert.ok(child !== null, 'the guard started a gh');
-  return child as number;
+  const started = (): number | null => { try { const first = readFileSync(env.GH_STARTED as string, 'utf8').split('\n')[0]; return first ? Number(first) : null; } catch { return null; } };
+  let pid = started();
+  while (pid === null && Date.now() < deadline) { await new Promise((r) => setTimeout(r, 25)); pid = started(); }
+  assert.ok(pid !== null, 'the guard started a gh');
+  return pid as number;
 }
 const GUARD = new URL('./gh-guard.ts', import.meta.url).pathname;
 
 test('killing the guard kills the gh it started: no orphan outlives a caller timeout', async () => {
   const { env } = sleepingGh();
   const guard = spawn(process.execPath, [GUARD, '31.337'], { env, stdio: 'ignore' });   // not a GraphQL call, so no probe: this is the real call
-  const child = await waitForChild(guard.pid as number);
+  const child = await waitForChild(env);
   const exited = new Promise((r) => guard.on('exit', r));
   guard.kill('SIGTERM');
   await exited;
@@ -122,7 +124,7 @@ test('killing the guard kills the gh it started: no orphan outlives a caller tim
 test('a signal during the budget probe stops the guard: the real call is never started', async () => {
   const { env } = sleepingGh();
   const guard = spawn(process.execPath, [GUARD, 'pr', 'view', '1'], { env, stdio: 'ignore' });   // a GraphQL call: the first child is the probe
-  const probe = await waitForChild(guard.pid as number);
+  const probe = await waitForChild(env);
   const exited = new Promise<number | null>((r) => guard.on('exit', r));
   guard.kill('SIGTERM');
   const code = await Promise.race([exited, new Promise<string>((r) => setTimeout(() => r('still running'), 4000))]);
