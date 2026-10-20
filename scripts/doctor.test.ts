@@ -21,7 +21,9 @@ test('a settings file with every snippet hook registered passes the registration
   const before = digest(file);
   const r = run('--settings', file, '--json');
   const results = (JSON.parse(r.stdout) as { results: { name: string; status: string }[] }).results;
-  assert.equal(results.find((c) => c.name === 'hooks registered')?.status, 'ok');
+  const reg = results.find((c) => c.name === 'hooks registered');
+  assert.equal(reg?.status, 'ok');
+  assert.match(reg?.detail ?? '', /all [1-9]\d* hook scripts/, 'a non-empty expected list, so a broken extraction cannot pass');
   assert.equal(digest(file), before, 'doctor never writes the settings file');
   assert.deepEqual(readdirSync(home).sort(), ['full.json'], 'and creates nothing beside it');
 });

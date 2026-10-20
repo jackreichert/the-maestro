@@ -11,7 +11,7 @@ export interface HookCommand { event: string; matcher: string; command: string }
 
 /** The maestro hook script in a command (`.../scripts/hooks/git-guard.ts`): its path and file name, or undefined for any other command. */
 export function maestroHookScript(command: string): { path: string; file: string } | undefined {
-  const m = /'([^']*\/scripts\/hooks\/([\w-]+\.ts))'/.exec(command) ?? /(?:^|\s)((?:\/|~)[^\s'"]*\/scripts\/hooks\/([\w-]+\.ts))/.exec(command);
+  const m = /'([^'\s]*\/scripts\/hooks\/([\w-]+\.ts))'/.exec(command) ?? /(?:^|\s)((?:\/|~)[^\s'"]*\/scripts\/hooks\/([\w-]+\.ts))/.exec(command);
   return m ? { path: m[1], file: m[2] } : undefined;
 }
 

@@ -14,9 +14,16 @@ test('hookCommands reads only the hooks key and tolerates junk', () => {
 });
 
 test('maestroHookScript finds a quoted or bare hook path and ignores other commands', () => {
-  assert.deepEqual(maestroHookScript(`node '/x y/scripts/hooks/agent-return.ts' --project p`)?.file, 'agent-return.ts');
+  assert.deepEqual(maestroHookScript(`node '/xy/scripts/hooks/agent-return.ts' --project p`)?.file, 'agent-return.ts');
   assert.equal(maestroHookScript('node /x/scripts/hooks/git-guard.ts')?.path, '/x/scripts/hooks/git-guard.ts');
   assert.equal(maestroHookScript('node ~/.claude/hooks/secret-file-guard.mjs'), undefined);
+});
+
+test('maestroHookScript never captures other text from a quoted command, so an inline secret cannot reach the output', () => {
+  const r = maestroHookScript(`'TOKEN=sk-not-a-real-secret /x/scripts/hooks/a.ts'`);
+  assert.ok(!r || !r.path.includes('sk-not-a-real-secret'));
+  const detail = checkHookLocation(hookCommands(settings(`node 'TOKEN=sk-not-a-real-secret /x/scripts/hooks/a.ts'`)), '/rt', same).detail;
+  assert.doesNotMatch(detail, /sk-not-a-real-secret/);
 });
 
 test('expectedHookFiles is derived from the snippet shape, deduplicated and sorted', () => {

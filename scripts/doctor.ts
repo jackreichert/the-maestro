@@ -26,7 +26,11 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const claude = join(homedir(), '.claude');
 
+const READ_ONLY_GIT = new Set(['rev-parse', 'rev-list']);
+
+/** git in `cwd`, restricted to the two read-only subcommands the checks use. */
 const gitIn = (cwd: string) => (args: string[]) => {
+  if (!READ_ONLY_GIT.has(args[0])) throw new Error(`doctor is read-only: git ${args[0]} is not allowed`);
   const r = spawnSync('git', ['--no-optional-locks', ...args], { cwd, encoding: 'utf8', timeout: 30_000 });
   return { status: r.status ?? 1, stdout: r.stdout ?? '' };
 };
