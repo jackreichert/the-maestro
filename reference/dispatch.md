@@ -32,7 +32,7 @@ node <xenophon-skill>/scripts/ticket.mjs new \
   --done "<the observable result that closes this ticket>"
 ```
 
-Both `--problem` and `--done` are required, and `--done` may not be blank or `_TBD_`. File through the flags and do not hand-write a body; `--body-file` is a legacy path for content that does not fit the template, and xenophon's `SKILL.md` lists the other flags. The id prints on the last line. The subcommands are listed in xenophon's `SKILL.md`.
+Both `--problem` and `--done` are required, and `--done` must say what finished looks like (the helper only checks that it is present). File through the flags and do not hand-write a body; `--body-file` is a legacy path for content that does not fit the template, and xenophon's `SKILL.md` lists the other flags. The id prints on the last line. The subcommands are listed in xenophon's `SKILL.md`.
 
 **`--project` is mandatory here.** The script infers the project from `git rev-parse --show-toplevel`,
 and this container root is not a git repository — so from here the inference fails or picks the
