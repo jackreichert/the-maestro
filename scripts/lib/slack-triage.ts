@@ -82,7 +82,7 @@ export interface ChannelEntry { group: string; playbook: string }
 
 export interface TriageRules { me: string[]; channels: Record<string, ChannelEntry>; rules: TriageRule[]; baseDir: string }
 
-/** One message's decision. No message text: the reader opens `file` at `line`. */
+/** One message's decision. No message text: the reader opens the new-messages file at `line`. */
 export interface Decision {
   tag: string;
   group: string;
@@ -98,8 +98,8 @@ export interface Decision {
   reason: string;
 }
 
-const NAME = /^[a-z0-9][a-z0-9-]{0,60}$/;
-const ROUTE = /^[a-z0-9][a-z0-9-]{0,60}$/;
+/** Rule, group and route names: lower-case letters, digits and dashes. */
+const SLUG = /^[a-z0-9][a-z0-9-]{0,60}$/;
 const RULE_KEYS = new Set(['name', 'reason', 'verdict', 'label', 'route', 'channels', 'authors', 'match', 'flags', 'reply', 'self']);
 const strings = (v: unknown): boolean => Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === 'string' && s.trim() !== '');
 const compiles = (src: unknown, flags: unknown): boolean => { try { new RegExp(String(src), String(flags ?? '')); return true; } catch { return false; } };
@@ -107,12 +107,12 @@ const has = <T extends string>(list: readonly T[], v: unknown): v is T => typeof
 
 /** Checks one raw rule must pass, in order; the first that fails names the problem. */
 const RULE_CHECKS: { failsOn: (r: Record<string, unknown>) => boolean; message: string }[] = [
-  { failsOn: (r) => typeof r.name !== 'string' || !NAME.test(r.name), message: 'needs a name of lower-case letters, digits and dashes' },
+  { failsOn: (r) => typeof r.name !== 'string' || !SLUG.test(r.name), message: 'needs a name of lower-case letters, digits and dashes' },
   { failsOn: (r) => Object.keys(r).some((k) => !RULE_KEYS.has(k)), message: `has an unknown key (allowed: ${[...RULE_KEYS].join(', ')})` },
   { failsOn: (r) => typeof r.reason !== 'string' || !r.reason.trim() || /[\r\n]/.test(r.reason), message: 'needs a one-line reason' },
   { failsOn: (r) => !has(VERDICTS, r.verdict), message: `needs a verdict: ${VERDICTS.join(', ')}` },
   { failsOn: (r) => r.label !== undefined && !has(LABELS, r.label), message: `has a label outside ${LABELS.join(', ')}` },
-  { failsOn: (r) => r.route !== undefined && (typeof r.route !== 'string' || !ROUTE.test(r.route)), message: 'has a route that is not a lower-case dashed name' },
+  { failsOn: (r) => r.route !== undefined && (typeof r.route !== 'string' || !SLUG.test(r.route)), message: 'has a route that is not a lower-case dashed name' },
   { failsOn: (r) => r.channels !== undefined && !strings(r.channels), message: 'has channels that are not a list of tags' },
   { failsOn: (r) => r.authors !== undefined && !strings(r.authors), message: 'has authors that are not a list of names' },
   { failsOn: (r) => r.match !== undefined && (typeof r.match !== 'string' || !compiles(r.match, r.flags)), message: 'has a match that is not a valid regular expression' },
@@ -139,7 +139,7 @@ export function parseRules(json: string, baseDir: string): TriageRules {
   if (!channels) problems.push('`channels` must map each tag to { group, playbook }');
   for (const [tag, c] of Object.entries(channels ?? {})) {
     const e = c as Record<string, unknown> | null;
-    if (!e || typeof e.group !== 'string' || !NAME.test(e.group) || typeof e.playbook !== 'string' || !e.playbook.endsWith('.md')) problems.push(`channel ${tag} needs a group name and a .md playbook`);
+    if (!e || typeof e.group !== 'string' || !SLUG.test(e.group) || typeof e.playbook !== 'string' || !e.playbook.endsWith('.md')) problems.push(`channel ${tag} needs a group name and a .md playbook`);
   }
   const list = Array.isArray(raw.rules) ? raw.rules : null;
   if (!list) problems.push('`rules` must be a list');
@@ -204,9 +204,9 @@ export function decide(m: SlackMessage, tag: string, rules: TriageRules): Decisi
       : { verdict: 'model', rule: 'no-rule', reason: 'no rule covers this message' };
   let { verdict, label } = base;
   let { rule, reason } = base;
-  const how = own ? null : addressed(m.text, rules.me) ?? (m.parent && isMe(m.parent, rules.me) ? 'name' : null);
-  if (how === 'mention' && RANK[verdict] < RANK.surface) { verdict = 'surface'; label = label ?? 'ask'; rule = `${rule}+mention`; reason = `${reason}; it @-mentions the user`; }
-  else if ((how === 'name' || (!own && BROADCAST.test(m.text))) && verdict === 'drop') { verdict = 'model'; rule = `${rule}+addressed`; reason = `${reason}; it names the user, replies to the user or broadcasts, so it is never dropped unread`; }
+  const addressing = own ? null : addressed(m.text, rules.me) ?? (m.parent && isMe(m.parent, rules.me) ? 'name' : null);
+  if (addressing === 'mention' && RANK[verdict] < RANK.surface) { verdict = 'surface'; label = label ?? 'ask'; rule = `${rule}+mention`; reason = `${reason}; it @-mentions the user`; }
+  else if ((addressing === 'name' || (!own && BROADCAST.test(m.text))) && verdict === 'drop') { verdict = 'model'; rule = `${rule}+addressed`; reason = `${reason}; it names the user, replies to the user or broadcasts, so it is never dropped unread`; }
   if (!channel && verdict === 'model') { verdict = 'escalate'; rule = `${rule}+no-playbook`; reason = `${reason}; no playbook covers this conversation`; }
   return {
     tag, group: channel?.group ?? '', playbook: channel ? resolve(rules.baseDir, channel.playbook) : '',
