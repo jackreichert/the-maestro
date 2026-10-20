@@ -528,8 +528,10 @@ export const OTHERS_PRS_OPEN_HOURS = positiveInt(pick('MAESTRO_OTHERS_PRS_OPEN_H
  */
 const LEGACY_MAX_AGE_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_MAX_AGE_DAYS', 'others_prs_max_age_days'), 0);
 export const OTHERS_PRS_ACTIVE_HOURS = positiveInt(pick('MAESTRO_OTHERS_PRS_ACTIVE_HOURS', 'others_prs_active_hours'), LEGACY_MAX_AGE_DAYS > 0 ? LEGACY_MAX_AGE_DAYS * 24 : 48);
-/** Days without activity after which a teammate PR leaves the Others' PRs tab entirely (Stale included). Never below the stale gate. Default 3. */
-export const OTHERS_PRS_DROP_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_DROP_DAYS', 'others_prs_drop_days'), 3);
+/** Working days (Monday to Friday in `watch_tz`) without a push, comment, review or re-request after which a teammate PR leaves the Others' PRs list (Stale included). Never below the stale gate. Default 2. */
+export const OTHERS_PRS_DROP_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_DROP_DAYS', 'others_prs_drop_days'), 2);
+/** Your display names in Slack, comma-separated: a reply by you in a thread is never read as a teammate claiming the PR (Others' PRs list). Default none. */
+export const SLACK_SELF_NAMES = globList('MAESTRO_SLACK_SELF_NAMES', 'slack_self_names');
 
 /** Teammate PR helper: minutes a ready PR by someone else may wait with no review before pr-watch reports `REVIEW-WAIT` for it (the orchestrator then drafts review comments for your approval; see playbooks/teammate-review.md). Unset or 0 turns it off, the default. */
 export const TEAMMATE_REVIEW_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim()) ? Number(raw) : 0))(pick('MAESTRO_TEAMMATE_REVIEW_MINUTES', 'teammate_review_minutes'));

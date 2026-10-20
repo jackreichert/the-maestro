@@ -18,7 +18,7 @@ import type { ChangeHub } from './events.ts';
 import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildOpenPrs, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
-import { GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, OTHERS_PRS_ACTIVE_HOURS, OTHERS_PRS_DROP_DAYS, OTHERS_PRS_OPEN_HOURS } from '../../local-config.ts';
+import { WATCH_TZ, GH_LOGIN, HANDS_OFF_OWNER, HANDS_OFF_REPOS, OTHERS_PRS_ACTIVE_HOURS, OTHERS_PRS_DROP_DAYS, OTHERS_PRS_OPEN_HOURS } from '../../local-config.ts';
 import { buildOthersPrs } from './others-prs.ts';
 import type { OthersScopeOptions } from './others-prs.ts';
 import { buildEpics, buildHome } from './home.ts';
@@ -108,7 +108,7 @@ function decodeName(segment: string): string | null {
 
 /** What the Others' PRs tab is built from (its GET route and the checks its writes make against the rows it shows). */
 function othersOptions(o: WebServerOptions): OthersScopeOptions {
-  return { statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN, openHours: OTHERS_PRS_OPEN_HOURS, activeHours: OTHERS_PRS_ACTIVE_HOURS, dropDays: OTHERS_PRS_DROP_DAYS, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, actionsFile: actionsPath(o.web.vault, o.web.project), ...(o.web.vaultRoot ? { slackDir: join(o.web.vaultRoot, 'Projects', o.web.containerProject ?? o.web.project, 'Slack') } : {}) };
+  return { statusDir: o.web.statusDir, owners: o.web.page.reviewQueueOwners ?? [], selfRepos: o.web.page.selfReviewRepos ?? [], self: GH_LOGIN, openHours: OTHERS_PRS_OPEN_HOURS, activeHours: OTHERS_PRS_ACTIVE_HOURS, dropDays: OTHERS_PRS_DROP_DAYS, tz: WATCH_TZ, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER }, actionsFile: actionsPath(o.web.vault, o.web.project), ...(o.web.vaultRoot ? { slackDir: join(o.web.vaultRoot, 'Projects', o.web.containerProject ?? o.web.project, 'Slack') } : {}) };
 }
 
 /** The data routes. Handlers return the JSON value, or undefined for "no such thing" (404). */
