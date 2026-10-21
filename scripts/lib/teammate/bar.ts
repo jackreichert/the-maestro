@@ -64,16 +64,13 @@ export function complimentProblem(c: string | undefined): string | null {
 }
 
 /** True for a finding the smells pass reported: it can never block, however it is labelled. */
-/** True for a finding the smells pass reported: it can never block, however it is labelled. */
-/** A reuse finding names the existing code it duplicates or diverges from as `path:line`; without that it is an opinion, not a finding. */
-export const citesExistingCode = (text: string): boolean => /[\w./-]+\.\w+:\d+/.test(text);
-
 export const isSmell = (f: Finding): boolean => str(f.source).toLowerCase() === 'smell';
 
 /** True for a smell of kind reuse: the PR duplicates, or diverges from, code that already exists. */
 export const isReuse = (f: Finding): boolean => isSmell(f) && str(f.kind).toLowerCase() === 'reuse';
 
-
+/** A reuse finding names the existing code it duplicates or diverges from as `path:line`; without that it is an opinion, not a finding. */
+export const citesExistingCode = (text: string): boolean => /[\w./-]+\.\w+:\d+/.test(text);
 
 /** The severity this finding earns, and why it fell short when it claimed more. */
 export function classify(f: Finding): { severity: 'blocking' | 'suggestion'; downgraded?: string } {
