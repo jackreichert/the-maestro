@@ -8,6 +8,7 @@
  * Anything else, including a claim of one of those without its evidence, is a non-blocking suggestion, and at most MAX_SUGGESTIONS are kept.
  * A finding with `source: "smell"` (from the smells pass) is a suggestion whatever else it claims, must state its maintenance `cost`, is dropped when a
  * reviewer finding sits in the same file within SMELL_DEDUP_LINES lines, and counts against MAX_SMELL_SUGGESTIONS, never against MAX_SUGGESTIONS.
+ * A reuse finding is a smell with `kind: "reuse"` (the PR re-implements, or diverges from, code that already exists): it must cite that code as `path:line` in its text.
  * Naming, style, nice-to-have tests and refactors can never be blocking: no category outside the three can reach that severity. The code cannot
  * judge whether the evidence is true; it makes sure it was stated, and the person still approves the whole review before it is posted.
  *
@@ -63,6 +64,9 @@ export function complimentProblem(c: string | undefined): string | null {
 }
 
 /** True for a finding the smells pass reported: it can never block, however it is labelled. */
+/** A reuse finding names the existing code it duplicates or diverges from as `path:line`; without that it is an opinion, not a finding. */
+export const citesExistingCode = (text: string): boolean => /[\w./-]+\.\w+:\d+/.test(text);
+
 export const isSmell = (f: Finding): boolean => str(f.source).toLowerCase() === 'smell';
 
 /** The severity this finding earns, and why it fell short when it claimed more. */
@@ -178,6 +182,7 @@ export function planReview(ctx: PrContext, compliment: string | undefined, findi
     if (!path || !Number.isSafeInteger(f.line) || !diff.get(path)?.has(f.line as number)) { drop(index, f, 'not anchored to a line in the diff'); return; }
     if (isSmell(f)) {
       if (str(f.cost).length < MIN_EVIDENCE) { drop(index, f, 'a smell needs the concrete maintenance cost it causes'); return; }
+      if (str(f.kind).toLowerCase() === 'reuse' && !citesExistingCode(text)) { drop(index, f, 'a reuse finding must cite the existing code as path:line'); return; }
       if (reviewerAt(path).some((l) => Math.abs(l - (f.line as number)) <= SMELL_DEDUP_LINES)) { drop(index, f, 'the reviewer already raised this spot'); return; }
       if (smellSuggestions >= MAX_SMELL_SUGGESTIONS) { dropped.push({ index, reason: `over the ${MAX_SMELL_SUGGESTIONS}-smell limit for this PR` }); return; }
       smellSuggestions += 1;

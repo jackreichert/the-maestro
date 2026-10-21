@@ -161,6 +161,14 @@ test('a smell within 3 lines of a reviewer finding in the same file is the same 
   assert.equal(plan.dropped.length, 2);
 });
 
+test('a reuse finding is a smell that must cite the existing code as path:line, and never blocks', () => {
+  const reuse = (over: Partial<Finding> = {}) => smell({ kind: 'reuse', text: 'This re-implements the retry helper in lib/retry.ts:14; could we call that instead?', ...over });
+  const plan = planReview(CTX, NICE, [reuse(), reuse({ line: 22, text: 'This re-implements the retry helper; could we call that instead?' }), reuse({ line: 23, category: 'security' })], DIFF);
+  assert.deepEqual(plan.draft?.review?.comments.map((c) => `${c.line}:${c.severity}`), ['2:suggestion', '23:suggestion']);
+  assert.equal(plan.dropped.length, 1);
+  assert.match(plan.dropped[0]?.reason ?? '', /path:line/);
+});
+
 test('smells have their own cap and can never crowd out the reviewer, even when they are listed first', () => {
   const smells = [2, 3, 22, 23].map((line) => smell({ line }));
   const reviewers: Finding[] = Array.from({ length: MAX_SUGGESTIONS + 1 }, (_, i) => ({ category: 'other', path: 'a.ts', line: [1, 22, 23, 4][i], text: ok }));
