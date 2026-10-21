@@ -64,10 +64,16 @@ export function complimentProblem(c: string | undefined): string | null {
 }
 
 /** True for a finding the smells pass reported: it can never block, however it is labelled. */
+/** True for a finding the smells pass reported: it can never block, however it is labelled. */
 /** A reuse finding names the existing code it duplicates or diverges from as `path:line`; without that it is an opinion, not a finding. */
 export const citesExistingCode = (text: string): boolean => /[\w./-]+\.\w+:\d+/.test(text);
 
 export const isSmell = (f: Finding): boolean => str(f.source).toLowerCase() === 'smell';
+
+/** True for a smell of kind reuse: the PR duplicates, or diverges from, code that already exists. */
+export const isReuse = (f: Finding): boolean => isSmell(f) && str(f.kind).toLowerCase() === 'reuse';
+
+
 
 /** The severity this finding earns, and why it fell short when it claimed more. */
 export function classify(f: Finding): { severity: 'blocking' | 'suggestion'; downgraded?: string } {
@@ -182,7 +188,7 @@ export function planReview(ctx: PrContext, compliment: string | undefined, findi
     if (!path || !Number.isSafeInteger(f.line) || !diff.get(path)?.has(f.line as number)) { drop(index, f, 'not anchored to a line in the diff'); return; }
     if (isSmell(f)) {
       if (str(f.cost).length < MIN_EVIDENCE) { drop(index, f, 'a smell needs the concrete maintenance cost it causes'); return; }
-      if (str(f.kind).toLowerCase() === 'reuse' && !citesExistingCode(text)) { drop(index, f, 'a reuse finding must cite the existing code as path:line'); return; }
+      if (isReuse(f) && !citesExistingCode(text)) { drop(index, f, 'a reuse finding must cite the existing code as path:line'); return; }
       if (reviewerAt(path).some((l) => Math.abs(l - (f.line as number)) <= SMELL_DEDUP_LINES)) { drop(index, f, 'the reviewer already raised this spot'); return; }
       if (smellSuggestions >= MAX_SMELL_SUGGESTIONS) { dropped.push({ index, reason: `over the ${MAX_SMELL_SUGGESTIONS}-smell limit for this PR` }); return; }
       smellSuggestions += 1;
