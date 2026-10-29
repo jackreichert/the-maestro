@@ -60,6 +60,7 @@
  * (with the Podium configured, --footer ends with `**Podium:** <uri>`)
  *   journal.ts review-queue [--cap N] [--json]   the push gate: open non-draft PRs awaiting review against review_queue_cap (default 4). Exit 0 room, 1 full, 2 cannot answer or bad --cap (treat as full)
  *   journal.ts standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
+ *   journal.ts standup --days N              paste-ready Yesterday / Today / Blockers over the N whole days before today (1..14), no ids
  *   journal.ts roll [--date YYYY-MM-DD] [--strict] [--container <dir>] [--no-worktree-sweep]
  *                                             first runs triage: plain roll warns about its blockers, --strict refuses (exit 1) before changing anything
  *                                             archive finished work to a dated note, commit the ledger root if configured, and only THEN sweep: it removes
@@ -216,6 +217,7 @@ import type { QueryStatus } from './lib/journal/query.ts';
 import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, pidAlive, claimStaleness, describeClaim, acquireClaimLock, acquireRepoClaim, claimKey, claimKeysFor, claimScope, scopesConflict, splitClaimKey } from './lib/journal/claims.ts';
 import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.ts';
 import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, createExclusive, writeHandoffSeries, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
+import { MIN_DAYS, MAX_DAYS, parseDays, standupRange } from './lib/journal/standup-range.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import type { EnvAsk } from './branch-sweep.ts';
@@ -1566,7 +1568,12 @@ function footerLiveRead(): ReturnType<typeof fetchLive> {
 const footerReviewQueue = (): string | null => footerQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, footerLiveRead, REVIEW_QUEUE_ORGS);
 
 function cmdStandup() {
-    console.log(standupText(arg('date', today())));
+    const raw = arg('days');
+    if (raw === null) { console.log(standupText(arg('date', today()))); return; }
+    if (has('date')) die('--days and --date do not combine: --days counts back from today.');
+    const days = parseDays(raw);
+    if (days === null) die(`--days must be a whole number from ${MIN_DAYS} to ${MAX_DAYS}.`);
+    console.log(standupRange(groups(has('include-archived')), { today: localDate(new Date(), WATCH_TZ), days, tz: WATCH_TZ }).text);
 }
 
 /** With scripts_dir set, print the scratch triage table. Read-only: it proposes, the user decides. */
