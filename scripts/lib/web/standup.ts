@@ -2,7 +2,7 @@
 import { openStore } from '../journal/store.ts';
 import { boardContextFor } from '../journal/board-context.ts';
 import { groups } from '../journal/board.ts';
-import { defaultDays, parseDays, standupRange } from '../journal/standup-range.ts';
+import { MAX_DAYS, MIN_DAYS, defaultDays, parseDays, standupRange } from '../journal/standup-range.ts';
 import type { StandupRange } from '../journal/standup-range.ts';
 import { ledgerDay } from '../day-basis.ts';
 import { localDate } from '../status-page/priorities.ts';
@@ -17,7 +17,7 @@ export function buildStandup(cfg: WebConfig, query: URLSearchParams, now: Date):
   if (given.length > 1) throw new BadRequest('days given more than once');
   const today = localDate(now, cfg.page.tz);
   const days = given.length === 0 ? defaultDays(today) : parseDays(given[0]);
-  if (days === null) throw new BadRequest('days must be a whole number from 1 to 14');
+  if (days === null) throw new BadRequest(`days must be a whole number from ${MIN_DAYS} to ${MAX_DAYS}`);
   const store = openStore({ vault: cfg.vault, project: cfg.project, dryRun: false, warn: cfg.warn ?? (() => {}) });
   const ctx = boardContextFor(store, { has: () => false, today: () => ledgerDay(now), deferDay: () => today, dryRun: false });
   return standupRange(groups(ctx), { today, days, tz: cfg.page.tz });

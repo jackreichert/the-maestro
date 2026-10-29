@@ -75,9 +75,10 @@ export function standupWidget(deps: StandupDeps = realDeps()): HTMLElement {
     }
   };
 
-  refresh.addEventListener('click', () => { const n = days(); if (n !== null) void read(n); });
-  input.addEventListener('change', () => { const n = days(); if (n !== null) void read(n); });
-  input.addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') { const n = days(); if (n !== null) void read(n); } });
+  const readShown = (): void => { const n = days(); if (n !== null) void read(n); };
+  refresh.addEventListener('click', readShown);
+  input.addEventListener('change', readShown);
+  input.addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') readShown(); });
   copy.addEventListener('click', () => {
     deps.copy(pre.textContent ?? '').then(() => say('Copied. Paste it into Slack.'), () => say('Could not copy. Select the text and copy it.', true));
   });
