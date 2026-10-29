@@ -421,12 +421,13 @@ export function sanitizeCost(x: unknown): { data: CostData; dropped: number } | 
   };
 }
 
+const STANDUP_MAX_LINES = 400;
 const STANDUP_MAX_CHARS = 20_000;
 const dayOk: Check = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 const daysOk: Check = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 14;
 
-/** A StandupData from an untrusted `GET /api/standup` body, or null when any field is out of range (the days window is 1..14, the text is bounded). The text is only ever shown as text. */
+/** A StandupData from an untrusted `GET /api/standup` body, or null when any field is out of range (the days window is 1..14, the lines are bounded). The text is only ever shown as text. */
 export function sanitizeStandup(x: unknown): StandupData | null {
-  if (!isObj(x) || !daysOk(x.days) || !daysOk(x.defaultDays) || !dayOk(x.from) || !dayOk(x.to) || typeof x.text !== 'string' || x.text.length > STANDUP_MAX_CHARS) return null;
-  return { days: x.days as number, from: x.from as string, to: x.to as string, defaultDays: x.defaultDays as number, text: x.text };
+  if (!isObj(x) || !daysOk(x.days) || !daysOk(x.defaultDays) || !dayOk(x.from) || !dayOk(x.to) || !arrOf(str)(x.lines) || (x.lines as string[]).length > STANDUP_MAX_LINES || (x.lines as string[]).join('\n').length > STANDUP_MAX_CHARS) return null;
+  return { days: x.days as number, from: x.from as string, to: x.to as string, defaultDays: x.defaultDays as number, lines: x.lines as string[] };
 }

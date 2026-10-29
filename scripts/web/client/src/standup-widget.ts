@@ -44,7 +44,7 @@ export function standupWidget(deps: StandupDeps = realDeps()): HTMLElement {
 
   const say = (text: string, bad = false): void => { status.textContent = text; status.className = bad ? 'su-status bad' : 'su-status'; };
   const show = (d: StandupData): void => {
-    pre.textContent = d.text;
+    pre.textContent = d.lines.join('\n');
     input.value = String(d.days);
     hint.textContent = `${rangeLabel(d)}. Written from the ledger; no ids.`;
     copy.disabled = false;

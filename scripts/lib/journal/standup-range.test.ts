@@ -6,6 +6,7 @@ import type { LedgerRow } from '../ledger-core.ts';
 import { parseArgs } from './args.ts';
 import { groups } from './board.ts';
 import type { BoardContext } from './board.ts';
+import type { StandupRange } from './standup-range.ts';
 import { MAX_DAYS, defaultDays, parseDays, standupRange, teamSafe } from './standup-range.ts';
 
 const TODAY = '2026-10-26'; // a Monday
@@ -21,11 +22,12 @@ const rows: LedgerRow[] = [
     { id: 'ee11', kind: 'blocked', ts: at('2026-10-26', 8), date: TODAY, text: 'waiting on review of /Users/me/dev/x' },
     { id: 'ff11', kind: 'question', ts: at('2026-10-26', 8), date: TODAY, text: 'pick a date?' },
 ];
+const withText = (r: StandupRange) => ({ ...r, text: r.lines.join('\n') });
 const ctx = (): BoardContext => ({
     readLedger: () => rows, fold: (e) => fold(e, null), today: () => TODAY, rollPoint: () => undefined, has: parseArgs(['standup']).has,
     mapStream: (s) => s, loadRegistry: () => null, ensureDir: () => {}, dir: '/nowhere', dryRun: false,
 });
-const run = (days: number, tz?: string) => standupRange(groups(ctx()), { today: TODAY, days, ...(tz ? { tz } : {}) });
+const run = (days: number, tz?: string) => withText(standupRange(groups(ctx()), { today: TODAY, days, ...(tz ? { tz } : {}) }));
 
 test('defaultDays: Monday reaches Friday, Sunday reaches Friday, any other day is yesterday', () => {
     assert.deepEqual(['2026-10-26', '2026-10-25', '2026-10-24', '2026-10-27', '2026-10-30'].map(defaultDays), [3, 2, 1, 1, 1]);
@@ -46,7 +48,7 @@ test('a Monday default window covers Friday to Sunday and leaves earlier days ou
 
 test('one day back is just yesterday, and says so when nothing closed', () => {
     assert.match(run(1).text, /^\*Yesterday\*\n- Alpha\n  - cleanup done\n/);
-    const none = standupRange(groups({ ...ctx(), readLedger: () => [] }), { today: TODAY, days: 1 });
+    const none = withText(standupRange(groups({ ...ctx(), readLedger: () => [] }), { today: TODAY, days: 1 }));
     assert.match(none.text, /^\*Yesterday\*\nNothing closed in this window\.\n\n\*Today\*\nNothing in flight\.\n\n\*Blockers\*\nNone\.$/);
 });
 
@@ -54,8 +56,8 @@ test('range is whole days in the given zone: a close at 23:30 UTC is the next lo
     const late: LedgerRow[] = [{ id: 'zz11', kind: 'done', ts: '2026-10-24T23:30:00Z', date: '2026-10-24', text: 'late close' }];
     const c = { ...ctx(), readLedger: () => late };
     const g = groups(c);
-    assert.match(standupRange(g, { today: TODAY, days: 1, tz: 'Asia/Jerusalem' }).text, /late close/); // 2026-10-25 02:30 local
-    assert.doesNotMatch(standupRange(g, { today: TODAY, days: 1, tz: 'UTC' }).text, /late close/);
+    assert.match(withText(standupRange(g, { today: TODAY, days: 1, tz: 'Asia/Jerusalem' })).text, /late close/); // 2026-10-25 02:30 local
+    assert.doesNotMatch(withText(standupRange(g, { today: TODAY, days: 1, tz: 'UTC' })).text, /late close/);
 });
 
 test('Today and Blockers come from the board as it stands, and the text is team-safe', () => {
@@ -74,7 +76,7 @@ test('teamSafe keeps tracker keys and PR numbers and removes ids, links and path
 
 test('a stream is capped and each line clipped, so the standup stays short', () => {
     const many: LedgerRow[] = Array.from({ length: 8 }, (_, k) => ({ id: `m${k}00`, kind: 'done', ts: at('2026-10-25', k), date: '2026-10-25', text: `item ${k} ${'word '.repeat(60)}`, stream: 'alpha' }));
-    const t = standupRange(groups({ ...ctx(), readLedger: () => many }), { today: TODAY, days: 1 }).text;
+    const t = withText(standupRange(groups({ ...ctx(), readLedger: () => many }), { today: TODAY, days: 1 })).text;
     assert.equal((t.match(/^  - item/gm) ?? []).length, 5);
     assert.match(t, /  - and 3 more/);
     assert.ok(t.split('\n').every((l) => l.length <= 150));

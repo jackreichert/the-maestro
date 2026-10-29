@@ -1573,7 +1573,7 @@ function cmdStandup() {
     if (has('date')) die('--days and --date do not combine: --days counts back from today.');
     const days = parseDays(raw);
     if (days === null) die(`--days must be a whole number from ${MIN_DAYS} to ${MAX_DAYS}.`);
-    console.log(standupRange(groups(has('include-archived')), { today: localDate(new Date(), WATCH_TZ), days, tz: WATCH_TZ }).text);
+    console.log(standupRange(groups(has('include-archived')), { today: localDate(new Date(), WATCH_TZ), days, tz: WATCH_TZ }).lines.join('\n'));
 }
 
 /** With scripts_dir set, print the scratch triage table. Read-only: it proposes, the user decides. */

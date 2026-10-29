@@ -11,7 +11,11 @@ import { shiftDay } from './approvals.ts';
 export const MIN_DAYS = 1;
 export const MAX_DAYS = 14;
 
-export interface StandupRange { days: number; from: string; to: string; defaultDays: number; text: string }
+/**
+ * The standup as lines, not one string: the web route's secret withhold reads every JSON string as a whole, and a long multi-line text
+ * can match across item boundaries and be replaced entirely, so each line is scanned on its own and the reader joins them.
+ */
+export interface StandupRange { days: number; from: string; to: string; defaultDays: number; lines: string[] }
 
 /** A whole number in MIN_DAYS..MAX_DAYS from a raw query or flag value, or null for anything else (no clamping: a bad value is the caller's error). */
 export function parseDays(raw: string | null | undefined): number | null {
@@ -81,10 +85,10 @@ export function standupRange(g: Groups, o: { today: string; days: number; tz?: s
     const done = Array.from({ length: o.days }, (_, k) => g.doneOn(shiftDay(from, k), o.tz ? { tz: o.tz } : {})).flat();
     const title = o.days === 1 ? 'Yesterday' : `Yesterday (${weekday(from)} to ${weekday(to)})`;
     const section = (name: string, lines: string[], empty: string): string[] => [`*${name}*`, ...(lines.length ? lines : [empty]), ''];
-    const text = [
+    const lines = [
         ...section(title, bullets(done, finishedText, ids), 'Nothing closed in this window.'),
         ...section('Today', bullets([...g.inflight, ...g.queued], (i) => i.text ?? '', ids), 'Nothing in flight.'),
         ...section('Blockers', bullets([...g.blocked, ...g.awaiting], (i) => i.text ?? '', ids), 'None.'),
-    ].join('\n').trimEnd();
-    return { days: o.days, from, to, defaultDays: defaultDays(o.today), text };
+    ].slice(0, -1);   // the last section's trailing blank line
+    return { days: o.days, from, to, defaultDays: defaultDays(o.today), lines };
 }

@@ -292,5 +292,5 @@ export interface CostData {
   running: CostExperiment[]; recent: CostExperiment[]; today: CostExperiment | null;
 }
 
-/** `GET /api/standup?days=N`: the paste-ready standup over the N whole days before today (`from` to `to`, inclusive), and the window the server picks when `days` is left out. */
-export interface StandupData { days: number; from: string; to: string; defaultDays: number; text: string }
+/** `GET /api/standup?days=N`: the paste-ready standup over the N whole days before today (`from` to `to`, inclusive), and the window the server picks when `days` is left out. The text is sent as lines so the server's secret scan judges each line on its own; the widget joins them. */
+export interface StandupData { days: number; from: string; to: string; defaultDays: number; lines: string[] }

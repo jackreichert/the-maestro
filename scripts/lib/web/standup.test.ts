@@ -43,6 +43,8 @@ test('GET /api/standup with no days uses the Monday default (Friday to Sunday), 
   assert.equal(r.status, 200);
   assert.equal(r.headers['cache-control'], 'no-store');
   const d = JSON.parse(r.body);
+  d.text = d.lines.join('\n');
+  assert.ok(!('text' in JSON.parse(r.body)), 'the route sends lines: the secret scan reads a long joined text as one string and can withhold all of it on a cross-line false positive');
   assert.deepEqual([d.days, d.from, d.to, d.defaultDays], [3, '2026-10-23', '2026-10-25', 3]);
   assert.match(d.text, /thing shipped in #9/);
   assert.doesNotMatch(d.text, /older work|w001|d001/);
@@ -52,9 +54,9 @@ test('GET /api/standup with no days uses the Monday default (Friday to Sunday), 
 });
 
 test('days widens the window, and a refresh sees a row written after the last request', async () => {
-  assert.match(JSON.parse((await hit('/api/standup?days=5')).body).text, /older work done/);
+  assert.match(JSON.parse((await hit('/api/standup?days=5')).body).lines.join('\n'), /older work done/);
   row({ id: 'd003', kind: 'done', date: '2026-10-24', text: 'fresh close' });
-  assert.match(JSON.parse((await hit('/api/standup?days=3')).body).text, /fresh close/);
+  assert.match(JSON.parse((await hit('/api/standup?days=3')).body).lines.join('\n'), /fresh close/);
 });
 
 test('the default is yesterday on a Wednesday', async () => {
