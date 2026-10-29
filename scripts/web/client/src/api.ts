@@ -1,7 +1,7 @@
-import { sanitizeCharts, sanitizeCost, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeOpenPrs, sanitizeOthersPrs, sanitizeProjects, sanitizeRefreshStatus, sanitizeState } from './contract.ts';
+import { sanitizeCharts, sanitizeCost, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeOpenPrs, sanitizeOthersPrs, sanitizeProjects, sanitizeRefreshStatus, sanitizeStandup, sanitizeState } from './contract.ts';
 import { configureTrustedTenants } from './link-policy.ts';
 import { configureSeries } from './series.ts';
-import type { ChartsData, CostData, EpicsData, LocalReview, OpenPrsData, OthersPrsData, PodiumState, PrsRefreshStatus, ProjectsData, StreamHome } from './types.ts';
+import type { ChartsData, CostData, EpicsData, LocalReview, OpenPrsData, OthersPrsData, PodiumState, PrsRefreshStatus, ProjectsData, StandupData, StreamHome } from './types.ts';
 
 export type Source = 'server' | 'fixture';
 
@@ -102,6 +102,13 @@ export async function loadCost(): Promise<CostData | null> {
   } catch {
     return null;
   }
+}
+
+/** The standup text for `days` whole days back (the server's default window when omitted). Throws when the server refuses, is unreachable or answers with something unusable, so the widget can say so. */
+export async function loadStandup(days?: number): Promise<StandupData> {
+  const data = sanitizeStandup(await getJson(days === undefined ? '/api/standup' : `/api/standup?days=${encodeURIComponent(String(days))}`));
+  if (!data) throw new Error('the standup answer was not usable');
+  return data;
 }
 
 /** The local review queue, or null when the server has none to give (sample data, an old server, an unusable body). */
