@@ -33,12 +33,12 @@ export function defaultDays(today: string): number {
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const weekday = (d: string): string => WEEKDAY[new Date(`${d}T00:00:00Z`).getUTCDay()] ?? d;
 
-/** Words only a teammate can resolve are taken out: `[[wiki links]]`, lowercase vault ticket ids (`the-maestro-441`), home and vault paths, and ledger ids written as `id` or (id). Tracker keys (`ABC-123`) and PR numbers stay. */
+/** Words only a teammate can resolve are taken out: `[[wiki links]]`, lowercase vault ticket ids of two or more words and a number (`the-maestro-441`; `utf-8` and `step-1` stay), home and vault paths, and ledger ids written as `id` or (id). Tracker keys (`ABC-123`) and PR numbers stay. */
 export function teamSafe(text: string, ids: ReadonlySet<string>): string {
     const idToken = (m: string, id: string): string => (ids.has(id) ? '' : m);
     return text
         .replace(/\[\[[^\]]*\]\]/g, '')
-        .replace(/\b[a-z][a-z0-9]*(?:-[a-z0-9]+)*-\d+\b/g, '')
+        .replace(/\b[a-z]{2,}(?:-[a-z]{2,})+-\d+\b/g, '')
         .replace(/(?:~|\/Users\/[^\s/]+|\/home\/[^\s/]+)(?:\/[^\s)]*)?/g, '')
         .replace(/\bProjects\/[^\s)]+/g, '')
         .replace(/`([a-z0-9]{4})`/g, idToken)

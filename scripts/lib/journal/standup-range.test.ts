@@ -81,3 +81,9 @@ test('a stream is capped and each line clipped, so the standup stays short', () 
     assert.match(t, /  - and 3 more/);
     assert.ok(t.split('\n').every((l) => l.length <= 150));
 });
+
+test('teamSafe leaves ordinary hyphenated words with a number alone', () => {
+    const ids = new Set<string>();
+    assert.equal(teamSafe('utf-8 and e2e-2 and x86-64 in step-1 of phase-2', ids), 'utf-8 and e2e-2 and x86-64 in step-1 of phase-2');
+    assert.equal(teamSafe('see the-maestro-441 and my-proj-api-12', ids), 'see and');
+});

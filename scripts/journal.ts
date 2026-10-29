@@ -1569,7 +1569,7 @@ const footerReviewQueue = (): string | null => footerQueue(readSnapshotPrs(fresh
 
 function cmdStandup() {
     const raw = arg('days');
-    if (raw === null) { console.log(standupText(arg('date', today()))); return; }
+    if (raw === null && !has('days')) { console.log(standupText(arg('date', today()))); return; }
     if (has('date')) die('--days and --date do not combine: --days counts back from today.');
     const days = parseDays(raw);
     if (days === null) die(`--days must be a whole number from ${MIN_DAYS} to ${MAX_DAYS}.`);
