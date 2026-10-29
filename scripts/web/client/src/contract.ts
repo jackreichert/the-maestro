@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { DoneSource, SharedDoc, CostData, CostMetric, CostExperiment, Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalCleanup, LocalReview, LocalUnit, OpenPrsData, OpenPrsGroup, OthersPrRow, OthersPrsData, PrsRefreshStatus, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
+import type { StandupData, DoneSource, SharedDoc, CostData, CostMetric, CostExperiment, Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalCleanup, LocalReview, LocalUnit, OpenPrsData, OpenPrsGroup, OthersPrRow, OthersPrsData, PrsRefreshStatus, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -419,4 +419,14 @@ export function sanitizeCost(x: unknown): { data: CostData; dropped: number } | 
     },
     dropped,
   };
+}
+
+const STANDUP_MAX_CHARS = 20_000;
+const dayOk: Check = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const daysOk: Check = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 14;
+
+/** A StandupData from an untrusted `GET /api/standup` body, or null when any field is out of range (the days window is 1..14, the text is bounded). The text is only ever shown as text. */
+export function sanitizeStandup(x: unknown): StandupData | null {
+  if (!isObj(x) || !daysOk(x.days) || !daysOk(x.defaultDays) || !dayOk(x.from) || !dayOk(x.to) || typeof x.text !== 'string' || x.text.length > STANDUP_MAX_CHARS) return null;
+  return { days: x.days as number, from: x.from as string, to: x.to as string, defaultDays: x.defaultDays as number, text: x.text };
 }

@@ -291,3 +291,6 @@ export interface CostData {
   metrics: CostMetric[]; regressions: string[]; mix: CostMix | null;
   running: CostExperiment[]; recent: CostExperiment[]; today: CostExperiment | null;
 }
+
+/** `GET /api/standup?days=N`: the paste-ready standup over the N whole days before today (`from` to `to`, inclusive), and the window the server picks when `days` is left out. */
+export interface StandupData { days: number; from: string; to: string; defaultDays: number; text: string }
