@@ -203,22 +203,20 @@ export function standupText(ctx: BoardContext, d: string): string {
         out.push('');
     };
 
+    const sections = (pick: <T extends Streamed>(arr: T[]) => T[]): void => {
+        section('Shipped', pick(done), '_Nothing closed._');
+        section('In flight', pick(g.inflight), '_Nothing running._');
+        if (pick(g.queued).length) section('Queued', pick(g.queued), '');
+        section('Blocked', pick(g.blocked), '_Nothing blocked._');
+        section('Awaiting you', pick(g.awaiting), '_No open questions._');
+        if (pick(g.paste).length) section('Paste blocks for you', pick(g.paste), '');
+    };
     for (const s of activeStreams(done, g.inflight, g.queued, g.blocked, g.awaiting, g.paste)) {
         out.push(`# ${streamTitle(s)}`, '');
-        section('Shipped', inStream(done, s), '_Nothing closed._');
-        section('In flight', inStream(g.inflight, s), '_Nothing running._');
-        if (inStream(g.queued, s).length) section('Queued', inStream(g.queued, s), '');
-        section('Blocked', inStream(g.blocked, s), '_Nothing blocked._');
-        section('Awaiting you', inStream(g.awaiting, s), '_No open questions._');
-        if (inStream(g.paste, s).length) section('Paste blocks for you', inStream(g.paste, s), '');
+        sections((arr) => inStream(arr, s));
         out.push('# Everything else', '');
     }
-    section('Shipped', noStream(done), '_Nothing closed._');
-    section('In flight', noStream(g.inflight), '_Nothing running._');
-    if (noStream(g.queued).length) section('Queued', noStream(g.queued), '');
-    section('Blocked', noStream(g.blocked), '_Nothing blocked._');
-    section('Awaiting you', noStream(g.awaiting), '_No open questions._');
-    if (noStream(g.paste).length) section('Paste blocks for you', noStream(g.paste), '');
+    sections(noStream);
 
     const decided = g.decidedOn(d);
     if (decided.length) {
