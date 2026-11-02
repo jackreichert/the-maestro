@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
-import { ageText, connects, repairStandingWatches, sessionStart, STALE_MS } from './session-start.ts';
+import { ageText, connects, repairStandingWatches, sessionStart, SLIM_LINE, STALE_MS } from './session-start.ts';
 import { BUILTIN_TYPES } from './event-types/index.ts';
 import { listWatches } from './lib/watch-registry.ts';
 import type { StartDeps } from './session-start.ts';
@@ -252,4 +252,10 @@ test('spend-watch is registered only when a budget is set', () => {
   const off = world();
   sessionStart('/s', off.deps);
   assert.ok(!off.added.includes('spend-watch:spend-watch'));
+});
+
+test('slim mode puts the mode line first; full mode has no mode line', () => {
+  const slim = sessionStart('/s', world({ mode: 'slim' }).deps);
+  assert.equal(slim.lines[0], SLIM_LINE);
+  assert.ok(!sessionStart('/s', world().deps).lines.some((l) => l.startsWith('Mode:')));
 });
