@@ -229,7 +229,7 @@ import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
 import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summarizeLeases } from './lib/journal/leases.ts';
 import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
-import { spendFooter } from './lib/spend.ts';
+import { spendCacheFile, spendFooter } from './lib/spend.ts';
 import { githubFooter } from './lib/gh-budget.ts';
 import { gitBranches, queueFooter as hygieneFooter, queueHygiene } from './lib/queue-hygiene.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, footerQueue, staleSuffix } from './lib/review-queue.ts';
@@ -1538,7 +1538,7 @@ function cmdReviewQueue() {
 /** The `Spend:` footer segment (empty with no budget set); ccusage runs at most about every 15 minutes, with a bounded wait. */
 function spendLine(session: SessionStatus): string {
     const run = (cmd: string, args: string[]) => spawnSync(cmd, args, { encoding: 'utf8', timeout: 10_000, maxBuffer: 16 * 1024 * 1024 });
-    return spendFooter(BUDGET, join(EVENT_DIR, 'spend-cache.json'), run, WATCH_TZ, Date.now(), session.available ? session.ctxK : 0);
+    return spendFooter(BUDGET, spendCacheFile(EVENT_DIR), run, WATCH_TZ, Date.now(), session.available ? session.ctxK : 0);
 }
 
 /** The footer must never wait on a slow gh: the whole live read gets this long before the line falls back to `unknown`. */

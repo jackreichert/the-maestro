@@ -5,13 +5,12 @@
  * Every check reads the spend since the period start (lib/spend.ts: ccusage, cached 15 minutes; this machine's transcripts only) and judges it
  * (lib/budget.ts): today against the daily allowance (warn and hard fractions), the period against the pace, and any spend on a day that is not
  * a budget day. Each threshold is said once per day (State.announced); a new day starts clean. A figure that cannot be read for today raises one `cannot read spend` line a day (and the footer says so); old figures are never judged as today's. The event is actionable and notifies through notify_command like any other.
- * State { announced: { day, fired[] } | null, error }.
+ * State { announced: { day, fired[] } | null, fresh (this tick's lines), error }.
  */
 import { existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
 import { budgetOn, crossed, dedupe, evaluate } from '../lib/budget.ts';
 import type { Announced, BudgetConfig } from '../lib/budget.ts';
-import { spendSince } from '../lib/spend.ts';
+import { spendCacheFile, spendSince } from '../lib/spend.ts';
 import { localDate } from '../lib/status-page/priorities.ts';
 import { BUDGET, EVENT_DIR, WATCH_TZ } from '../local-config.ts';
 import type { CheckContext, WatchEvent } from '../lib/types.ts';
@@ -28,7 +27,7 @@ export const notifies = 'default' as const;
 const THREE_DAYS_MS = 3 * 24 * 3600 * 1000;
 export const defaultTtlMs = (): number => THREE_DAYS_MS;
 
-export const cacheFile = (): string => join(EVENT_DIR, 'spend-cache.json');
+export const cacheFile = (): string => spendCacheFile(EVENT_DIR);
 
 export function validate(target: string): void {
   if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error(`spend-watch target must be an existing directory (use the status directory), got "${target}"`);

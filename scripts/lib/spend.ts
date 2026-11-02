@@ -4,12 +4,14 @@
  * A failed read is cached too (for RETRY_MS) so a missing ccusage is not retried on every reply; the last good figures are kept beside the error.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { budgetOn, evaluate, spendText } from './budget.ts';
 import type { BudgetConfig } from './budget.ts';
 import { localDate } from './status-page/priorities.ts';
 import type { Run } from './types.ts';
 
+/** The one cache file, in the event directory; the footer and spend-watch must share it or ccusage runs twice as often. */
+export const spendCacheFile = (eventDir: string): string => join(eventDir, 'spend-cache.json');
 export const CACHE_MS = 15 * 60_000;
 export const RETRY_MS = 5 * 60_000;
 
