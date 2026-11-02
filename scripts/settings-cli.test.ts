@@ -1,4 +1,4 @@
-// Run: node --test scripts/settings.test.ts
+// Run: node --test scripts/settings-cli.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
