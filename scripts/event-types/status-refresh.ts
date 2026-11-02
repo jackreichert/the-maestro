@@ -18,6 +18,7 @@
  * stored board is more than 10 minutes old, one GitHub search rewrites it (never prs-snapshot.json, the greeting's --diff baseline), with no per-PR calls (the greeting's `prs-snapshot.ts` run still does the
  * after-merge mergeable re-asks). Never in quiet hours. A failed search is retried after another 10 minutes and reported once, as a
  * non-actionable event; the 30 s check never waits on it longer than the search's own 60 s timeout.
+ * In `mode: slim` every check also rewrites the focused Podium (podium-slim.ts) from local files only; an unchanged page is not rewritten.
  * State { sig, firstChange, lastChange, lastRun, markerSeen, prDirty, retryAt, error, snapshotTry, snapshotError } is the whole memory; times are epoch ms.
  * Scheduling follows status-watch: a local 30 s check, no idle back-off, singleton, never notifies.
  */
@@ -26,11 +27,12 @@ import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { nextInterval } from '../lib/cadence.ts';
 import { stampAll } from '../lib/stamp.ts';
-import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT, WATCH_QUIET_HOURS, WATCH_QUIET_WEEKENDS, WATCH_TZ } from '../local-config.ts';
+import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, MODE, VAULT_ROOT, WATCH_QUIET_HOURS, WATCH_QUIET_WEEKENDS, WATCH_TZ } from '../local-config.ts';
 import { prsDirtyAt } from '../lib/status-page/dirty.ts';
 import { readPrCache } from '../lib/status-page/prcache.ts';
 import { LEGACY_FILE, PODIUM_FILE, readPodium, readSeenMeta, sha, writeAtomic } from '../lib/status-page/seen.ts';
 import { currentPath, fetchLive, freshestSnapshotAt } from '../prs-snapshot.ts';
+import { defaultOptions as podiumSlimOptions, generate as generatePodiumSlim } from '../podium-slim.ts';
 import { regenerate } from '../status-page.ts';
 import type { CheckContext, Run, WatchEvent } from '../lib/types.ts';
 import { toolCommand } from '../lib/tool-bin.ts';
@@ -85,6 +87,8 @@ export interface RefreshIo {
   snapshotAt(): number;
   /** One GitHub search, written over the stored snapshot; returns why it failed, else undefined. Never throws. */
   refreshSnapshot(): string | undefined;
+  /** In `mode: slim`, rewrites the focused Podium (podium-slim.ts) from local files; a no-op in full mode. Never throws. */
+  slimPage?(statusDir: string): void;
 }
 
 const mtime = (path: string): number => { try { return statSync(path).mtimeMs; } catch { return 0; } };
@@ -113,6 +117,10 @@ export const realIo: RefreshIo = {
   },
   snapshotAt: () => {
     try { return freshestSnapshotAt(LEDGER_ROOT || VAULT_ROOT); } catch { return 0; }
+  },
+  slimPage: (statusDir) => {
+    if (MODE !== 'slim') return;
+    try { generatePodiumSlim(podiumSlimOptions({ statusDir })); } catch { /* the page is advisory; the next check retries */ }
   },
   refreshSnapshot: () => {
     try {
@@ -157,7 +165,9 @@ export function check(target: string, ctx: Pick<CheckContext, 'now' | 'prev'>, i
   let state = prev;
   try {
     state = observe(prev, target, now, io);
-    return refreshSnapshot(now, attempt(target, now, state, io), io);
+    const next = refreshSnapshot(now, attempt(target, now, state, io), io);
+    io.slimPage?.(target);
+    return next;
   } catch (e) {
     // Any failure, even a page that cannot be read, is retried later and reported as information: a throw would count towards the loop's "check keeps failing" event, which is actionable.
     const base = state ?? { sig: '', firstChange: 0, lastChange: 0, lastRun: now, markerSeen: 0, prDirty: false, retryAt: 0, error: '' };
