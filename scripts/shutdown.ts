@@ -71,19 +71,22 @@ export function shutdown({ apply, roll }: { apply: boolean; roll: boolean }, env
       if (!r.ok) return { lines: [...lines, 'Stopped before stopping anything: fix the step above and rerun.'], failed: true };
     }
   }
-  const stopJob = (label: string, what: string): void => {
-    if (!isLoaded(env.launchctl, env.uid, label)) { lines.push(`${what}: not loaded in launchd, nothing to stop`); return; }
-    if (!apply) { lines.push(`would run: launchctl bootout gui/${env.uid}/${label}  (stops ${what}; the plist stays installed)`); return; }
+  /** Returns false when the job was loaded and could not be booted out. */
+  const stopJob = (label: string, what: string): boolean => {
+    if (!isLoaded(env.launchctl, env.uid, label)) { lines.push(`${what}: not loaded in launchd, nothing to stop`); return true; }
+    if (!apply) { lines.push(`would run: launchctl bootout gui/${env.uid}/${label}  (stops ${what}; the plist stays installed)`); return true; }
     const r = bootout(env.launchctl, env.uid, label);
     failed ||= !r.ok;
     lines.push(r.ok ? `${what}: stopped (launchctl bootout gui/${env.uid}/${label})` : `${what}: bootout FAILED (${r.output || 'no output'})`);
+    return r.ok;
   };
   stopJob(LABEL, 'loop supervisor');
   const webLoaded = isLoaded(env.launchctl, env.uid, WEB_LABEL);
-  stopJob(WEB_LABEL, 'Podium (launchd)');
+  const webStopped = stopJob(WEB_LABEL, 'Podium (launchd)');
   // After a bootout the launchd-run server is gone, so whatever still serves the port is a detached one. In a dry run a launchd-run server would show here too, so it is only listed when the job is not loaded.
-  const pids = !apply && webLoaded ? [] : detachedServers(env);
-  if (!apply && webLoaded) lines.push(`Podium (detached): the launchd job above owns port ${env.port}`);
+  const pids = (!apply && webLoaded) || !webStopped ? [] : detachedServers(env);
+  if (!webStopped) lines.push(`Podium (detached): skipped, the launchd job still owns port ${env.port} and a SIGTERM would only make launchd restart it`);
+  else if (!apply && webLoaded) lines.push(`Podium (detached): the launchd job above owns port ${env.port}`);
   else if (!pids.length) lines.push(`Podium (detached): nothing of ours listens on port ${env.port}`);
   else if (!apply) pids.forEach((pid) => lines.push(`would run: kill -TERM ${pid}  (the detached Podium on port ${env.port}: ${env.commandOf(pid)})`));
   else {

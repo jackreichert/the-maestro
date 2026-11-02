@@ -182,7 +182,7 @@ function spawnDetachedWeb(port: number): void {
   const log = join(LEDGER_ROOT, 'Projects', CONTAINER_PROJECT, 'Journal', 'Supervisor', 'podium-web.log');
   mkdirSync(dirname(log), { recursive: true });
   const fd = openSync(log, 'a');
-  try { spawn(process.execPath, [join(SCRIPTS, 'web.ts'), '--port', String(port), '--vault', LEDGER_ROOT, '--project', CONTAINER_PROJECT], { detached: true, stdio: ['ignore', fd, fd] }).unref(); } finally { closeSync(fd); }
+  try { const child = spawn(process.execPath, [join(SCRIPTS, 'web.ts'), '--port', String(port), '--vault', LEDGER_ROOT, '--project', CONTAINER_PROJECT], { detached: true, stdio: ['ignore', fd, fd] }); child.on('error', () => {}); child.unref(); } finally { closeSync(fd); }
 }
 
 const realHealWeb = (url: string): Heal => healPodium({

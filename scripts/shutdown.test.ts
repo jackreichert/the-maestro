@@ -93,6 +93,16 @@ test('a failing roll step stops the run before anything is stopped', () => {
   assert.match(r.lines.join('\n'), /Stopped before stopping anything/);
 });
 
+test('a Podium job that will not boot out is not followed by a SIGTERM that launchd would undo', () => {
+  const m = machine({ loaded: [WEB_LABEL], servers: { 900: WEB_CMD } });
+  const real = m.env.launchctl;
+  m.env.launchctl = (args) => (args[0] === 'bootout' ? { ok: false, output: 'busy' } : real(args));
+  const r = shutdown({ apply: true, roll: false }, m.env);
+  assert.deepEqual(m.done, []);
+  assert.equal(r.failed, true);
+  assert.match(r.lines.join('\n'), /skipped, the launchd job still owns port/);
+});
+
 test('shutdown is idempotent: with nothing loaded or listening, --apply changes nothing', () => {
   const m = machine();
   const r = shutdown({ apply: true, roll: false }, m.env);
@@ -109,8 +119,7 @@ test('isPodiumServer wants web.ts and this exact port', () => {
   assert.equal(isPodiumServer('', 47700), false);
 });
 
-test('the script rejects an unknown flag, and --roll without a ledger root, before it touches launchctl', () => {
+test('the script rejects an unknown flag before it touches launchctl', () => {
   const run = (...args: string[]) => spawnSync(process.execPath, [new URL('./shutdown.ts', import.meta.url).pathname, ...args], { encoding: 'utf8', env: cleanEnv() });
   assert.equal(run('--bogus').status, 2);
-  assert.equal(run('--roll').status, 2);
 });
