@@ -172,3 +172,19 @@ test('full profile: no sweep hook, so the check never runs the sweep', () => {
   const io: MaintenanceIo = { localDay: () => '2026-11-02', maintain: () => OK, carry: () => ({ written: [], problems: [] }) };
   assert.equal(maint.check('box', { now: 1, prev: null, run: noRun }, io).error, '');
 });
+
+test('leanSweep: exit 0, 1 and 3 are findings, not failures, and record the standing row; exit 2 fails and records nothing', () => {
+  const rig2 = (status: number) => {
+    const cmds: string[][] = [];
+    const run: Run = (_c, a) => { cmds.push(a); return { status: a[0].endsWith('merge-sweep.ts') ? status : 0, stdout: '', stderr: status === 2 ? 'merge-sweep: no ledger' : '' } as ReturnType<Run>; };
+    return { cmds, run };
+  };
+  for (const code of [0, 1, 3]) {
+    const { cmds, run } = rig2(code);
+    assert.equal(maint.leanSweep(run), '');
+    assert.deepEqual(cmds.map((a) => a.slice(1, 4)), [['--close-ledger'], ['standing', 'done', 'merge-sweep']]);
+  }
+  const { cmds, run } = rig2(2);
+  assert.match(maint.leanSweep(run), /merge sweep exit 2: merge-sweep: no ledger/);
+  assert.equal(cmds.length, 1);
+});

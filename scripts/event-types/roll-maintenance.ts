@@ -56,9 +56,20 @@ export interface MaintenanceIo {
 const JOURNAL = fileURLToPath(new URL('../journal.ts', import.meta.url));
 const MERGE_SWEEP = fileURLToPath(new URL('../merge-sweep.ts', import.meta.url));
 
+/**
+ * merge-sweep exits 0 clean, 1 or 3 with rows to report (merged, stale, unknown PR, blind: findings, not a failure), 2 when it could not run. A clean run records the
+ * `merge-sweep` standing row (the same row the agent pickup records), so the orchestrator is not prompted to start an agent for it.
+ */
+export function leanSweep(run: Run): string {
+  const r = run(process.execPath, [MERGE_SWEEP, '--close-ledger']);
+  if (r.status === null || r.status > 3 || r.status === 2) return `merge sweep exit ${r.status}: ${(r.stderr || r.stdout).trim().split('\n').pop()?.slice(0, 160) ?? ''}`;
+  const rec = run(process.execPath, [JOURNAL, 'standing', 'done', 'merge-sweep', '--evidence', `roll-maintenance ran merge-sweep.ts --close-ledger (exit ${r.status}); no agent`]);
+  return rec.status === 0 ? '' : `merge sweep ran but its standing row was not recorded: ${(rec.stderr || rec.stdout).trim().split('\n').pop()?.slice(0, 120) ?? ''}`;
+}
+
 export const realIo: MaintenanceIo = {
   // merge-sweep exits 1 when it found rows to report (not a failure) and 2 when it could not run.
-  ...(COST_PROFILE === 'lean' ? { sweep: (run: Run) => { const r = run(process.execPath, [MERGE_SWEEP, '--close-ledger', '--json']); return r.status === 0 || r.status === 1 ? '' : `merge sweep exit ${r.status}: ${(r.stderr || r.stdout).trim().split('\n').pop()?.slice(0, 160) ?? ''}`; } } : {}),
+  ...(COST_PROFILE === 'lean' ? { sweep: leanSweep } : {}),
   localDay: (now) => localDate(new Date(now), WATCH_TZ),
   maintain: (target, today, run) => {
     const r = run(process.execPath, [JOURNAL, 'maintain', '--today', today, '--container', target, '--budget', String(SWEEP_BUDGET_SECONDS)]);
