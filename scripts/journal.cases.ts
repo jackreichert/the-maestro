@@ -827,7 +827,7 @@ test('handoff --delta: first roll is the full handoff; later rolls write b, c wi
     const until = Date.now() + 5; while (Date.now() < until) { /* spin past the marker ms */ }
     const late = idOf(run('start', 'late work after the roll, PR #456', '--stream', 'Launch', ...MARK).out);
     run('done', wip, '--unverified', ...MARK);
-    run('log', 'direct done after the roll', '--kind', 'done', '--stream', 'Launch', ...MARK);
+    run('log', 'direct done after the roll', '--kind', 'done', '--unverified', '--stream', 'Launch', ...MARK);
     const asked = run('ask', 'merge order after the roll?', '--stream', 'Launch', '--searched', 'test fixture', ...ASK_TEMPLATE, ...MARK);
     assert.equal(asked.code, 0, asked.err);
     assert.equal(run('handoff', '--stream', 'launch', '--delta').code, 0);
@@ -1318,7 +1318,7 @@ test('approve-tag marks an existing decision without rewriting the ledger', () =
 
 test('approve-tag only accepts decision, resolved and question rows', () => {
     const wip = idOf(run('log', 'building', '--kind', 'wip', ...MARK).out);
-    const done = idOf(run('log', 'shipped', '--kind', 'done', ...MARK).out);
+    const done = idOf(run('log', 'shipped', '--kind', 'done', '--unverified', ...MARK).out);
     const dropped = idOf(run('log', 'gave up', '--kind', 'dropped', ...MARK).out);
     const q = idOf(run('ask', 'retarget?', '--searched', 'test fixture', ...ASK_TEMPLATE, ...MARK).out);
     const decision = idOf(run('log', 'use sqlite', '--kind', 'decision', ...MARK).out);
@@ -1335,7 +1335,7 @@ test('approve-tag only accepts decision, resolved and question rows', () => {
 });
 
 test('verify flags an approval-tag that points at a kind that cannot be approved', () => {
-    const done = idOf(run('log', 'shipped', '--kind', 'done', ...MARK).out);
+    const done = idOf(run('log', 'shipped', '--kind', 'done', '--unverified', ...MARK).out);
     const path = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
     writeFileSync(path, `${readFileSync(path, 'utf8')}${JSON.stringify({ id: 'bad3', kind: 'approval-tag', approves: done, approval: 'standing' })}\n`);
     const v = run('verify');
@@ -1668,7 +1668,7 @@ const rolledRows = () => ledger().filter((e) => e.kind === 'rolled');
 test('maintain archives a past day and sweeps clean worktrees, records branch-sweep, and a second run does nothing', () => {
     const w = sweepWorld();
     const env = { MAESTRO_CONTAINER_ROOT: w.container };
-    run('log', 'shipped yesterday', '--kind', 'done', '--date', daysAgo(1), ...MARK);
+    run('log', 'shipped yesterday', '--kind', 'done', '--unverified', '--date', daysAgo(1), ...MARK);
     const first = runEnvIn(w.container, env, 'maintain', '--today', todayUtc());
     assert.equal(first.code, 0, first.err);
     assert.deepEqual(maintainResult(first.out), { ok: true, archivedDays: [daysAgo(1)], sweep: { removed: 1, pruned: 0, kept: 1, skipped: 0, failed: 0 }, problems: [] });
@@ -1684,8 +1684,8 @@ test('maintain archives a past day and sweeps clean worktrees, records branch-sw
 test('maintain leaves today alone, skips a day a roll already covered, and archives work finished after that roll', () => {
     const w = sweepWorld();
     const env = { MAESTRO_CONTAINER_ROOT: w.container };
-    run('log', 'finished today', '--kind', 'done', ...MARK);
-    run('log', 'rolled by hand', '--kind', 'done', '--date', daysAgo(2), ...MARK);
+    run('log', 'finished today', '--kind', 'done', '--unverified', ...MARK);
+    run('log', 'rolled by hand', '--kind', 'done', '--unverified', '--date', daysAgo(2), ...MARK);
     run('roll', '--date', daysAgo(2), '--fast');
     run('log', 'a note from three days ago', '--kind', 'note', '--date', daysAgo(3), ...MARK);
     run('roll', '--date', daysAgo(3), '--fast');
@@ -1693,7 +1693,7 @@ test('maintain leaves today alone, skips a day a roll already covered, and archi
     const r = runEnvIn(w.container, env, 'maintain', '--today', todayUtc());
     assert.deepEqual(maintainResult(r.out).archivedDays, [], 'today is not past, and days -2 and -3 (a note only) were rolled');
     assert.equal(rolledRows().length, before);
-    run('log', 'finished after the roll', '--kind', 'done', '--date', daysAgo(2), ...MARK);
+    run('log', 'finished after the roll', '--kind', 'done', '--unverified', '--date', daysAgo(2), ...MARK);
     assert.deepEqual(maintainResult(runEnvIn(w.container, env, 'maintain', '--today', todayUtc()).out).archivedDays, [daysAgo(2)]);
 });
 
@@ -1712,7 +1712,7 @@ test('maintain reports a sweep that failed: exit 1, problem named, branch-sweep 
 
 test('maintain from outside the container root still archives, and reports the refused sweep as a failure', () => {
     const w = sweepWorld();
-    run('log', 'shipped yesterday', '--kind', 'done', '--date', daysAgo(1), ...MARK);
+    run('log', 'shipped yesterday', '--kind', 'done', '--unverified', '--date', daysAgo(1), ...MARK);
     const r = runEnvIn(emptyCwd, { MAESTRO_CONTAINER_ROOT: w.container }, 'maintain', '--today', todayUtc());
     assert.equal(r.code, 1);
     const res = maintainResult(r.out);

@@ -151,3 +151,13 @@ test('queue --machine skips the headline limit for a generated fix line whose ke
     assert.equal(run(['start', text, '--machine', ...MARK]).code, 1, '--machine is for queue only');
     assert.equal(ledger().filter((x) => x.text === text).length, 1);
 });
+
+test('log --kind done is refused without --verify or --unverified, and takes either', () => {
+    const bare = run(['log', 'shipped it', '--kind', 'done', ...MARK]);
+    assert.equal(bare.code, 1);
+    assert.match(bare.err, /done needs --verify/);
+    assert.equal(ledger().length, 0);
+    assert.equal(run(['log', 'shipped it', '--kind', 'done', '--verify', 'gh pr view 3', ...MARK]).code, 0);
+    assert.equal(run(['log', 'shipped too', '--kind', 'done', '--unverified', ...MARK]).code, 0);
+    assert.equal(ledger().length, 2);
+});

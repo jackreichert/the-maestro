@@ -692,6 +692,8 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     // --machine: a script's generated queue line (the supervisor's fix lines carry a url a parser reads back), so its length is not a person's headline.
     if (has('machine') && !queued) die('--machine is for queue only: a started item is a person\'s headline and keeps the limit.');
     if (kind === 'wip' && !has('machine')) { const long = headlineProblem(text, queued ? 'queue' : 'start'); if (long) die(long); }
+    const logDoneProof = kind === 'done' ? parseDoneProof({ verify: { given: has('verify'), value: arg('verify') }, unverified: has('unverified') }) : undefined;
+    if (logDoneProof && !logDoneProof.proof) die(`log --kind done: refused, nothing written.\n${logDoneProof.errors.map((e) => `  - ${e}`).join('\n')}`);
     const reworked = kind === 'rework' ? reworkTarget(text) : undefined;
     const refs = rule ? ruleRefs() : refsFromArgs();
     const askGate = askGateFromArgs(ask, tplFlags.file);   // before anything that reads the filesystem, so a missing --searched is always the first refusal
@@ -751,6 +753,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         gate,
         transitioned: transitionedFlag(),
         ...(routed.acted === null ? { ...askFields, ...askGate, ...template } : { searched: askGate.searched }),
+        ...(logDoneProof?.proof ?? {}),
         ...ruleScopeFor(kind),
         ...approvalFor(kind),
         ...usageFromArgs(),
