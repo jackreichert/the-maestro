@@ -244,3 +244,12 @@ test('without retireTypes (the full profile) every needed watch is registered', 
   sessionStart('/s', deps);
   assert.deepEqual(added.sort(), ['repost-nudge:repost-nudge', 'retro-due:retro-due', 'status-refresh:status-refresh', 'status-watch:status-watch', 'whats-next:whats-next']);
 });
+
+test('spend-watch is registered only when a budget is set', () => {
+  const on = world({ budgetOn: true });
+  sessionStart('/s', on.deps);
+  assert.ok(on.added.includes('spend-watch:spend-watch'));
+  const off = world();
+  sessionStart('/s', off.deps);
+  assert.ok(!off.added.includes('spend-watch:spend-watch'));
+});

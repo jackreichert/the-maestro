@@ -25,7 +25,7 @@ import { closeSync, existsSync, mkdirSync, openSync, realpathSync, statSync } fr
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CONTAINER_PROJECT, COST_PROFILE, EVENT_DIR, LEDGER_ROOT, REPOST_NUDGE_ENABLED, STATUS_PAGE_URI_SETTING, statusDirFor, WATCH_TZ } from './local-config.ts';
+import { BUDGET_ON, CONTAINER_PROJECT, COST_PROFILE, EVENT_DIR, LEDGER_ROOT, REPOST_NUDGE_ENABLED, STATUS_PAGE_URI_SETTING, statusDirFor, WATCH_TZ } from './local-config.ts';
 import { podiumWebUrl } from './lib/status-page/links.ts';
 import { PODIUM_FILE } from './lib/status-page/seen.ts';
 import { listWatches, lockHolder, markStanding, removeWatch } from './lib/watch-registry.ts';
@@ -45,6 +45,8 @@ const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 export const NEEDED = [{ id: 'status-watch', type: 'status-watch' }, { id: 'status-refresh', type: 'status-refresh' }, { id: 'retro-due', type: 'retro-due' }, { id: 'repost-nudge', type: 'repost-nudge' }, { id: 'whats-next', type: 'whats-next' }] as const;
 /** Event types the lean cost profile never registers: each exists to make the orchestrator start an LLM agent. */
 export const LEAN_OFF: readonly string[] = ['retro-due', 'repost-nudge', 'library-due'];
+/** Registered only when a budget is set. */
+export const SPEND_WATCH = { id: 'spend-watch', type: 'spend-watch' } as const;
 /** The refresh ticks every 10 minutes; a page this old has had at least one missed tick. */
 export const STALE_MS = 15 * 60_000;
 
@@ -60,6 +62,8 @@ export interface StartDeps {
   disabledTypes?: readonly string[];
   /** Watch types a registered watch of which is removed (the lean cost profile: events that only wake an LLM agent). Absent means none. */
   retireTypes?: readonly string[];
+  /** The spend guardrail is set up (`budget_monthly_usd`): spend-watch is registered too. */
+  budgetOn?: boolean;
   lockHolder: () => number | null;
   /** When the page was last written, or null when there is none. */
   pageWrittenAt: (statusDir: string) => number | null;
@@ -106,7 +110,7 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
     live.forEach((w) => deps.removeWatch(w.id));
     lines.push(`${type}: off (cost_profile lean)${live.length ? `, removed ${live.length} registered` : ''}`);
   }
-  for (const need of NEEDED) {
+  for (const need of [...NEEDED, ...(deps.budgetOn ? [SPEND_WATCH] : [])]) {
     if (deps.retireTypes?.includes(need.type)) continue;
     if (deps.disabledTypes?.includes(need.type)) { lines.push(`${need.id}: off in the settings, not registered`); continue; }
     const live = deps.watches().filter((w) => w.type === need.type);
@@ -210,6 +214,7 @@ export function realDeps(now: number = Date.now()): StartDeps {
     now,
     tz: WATCH_TZ,
     disabledTypes: REPOST_NUDGE_ENABLED ? [] : ['repost-nudge'],
+    budgetOn: BUDGET_ON,
     retireTypes: COST_PROFILE === 'lean' ? LEAN_OFF : [],
     watches: () => listWatches(EVENT_DIR),
     removeWatch: (id) => { removeWatch(EVENT_DIR, id, 'expired, replaced at session start', now); },

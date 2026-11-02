@@ -161,7 +161,7 @@ import { importTracker, writeTracker } from './lib/whats-next/tracker.ts';
 import { gatherRankInput } from './lib/whats-next/gather.ts';
 import { nextLines, rankNext, whyOf } from './lib/whats-next/rank.ts';
 import type { Ranking } from './lib/whats-next/rank.ts';
-import { CLAUDE_SETTINGS_PATH, CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS, NEXT_FROZEN_LABELS, NEXT_BLOCKED_LABELS } from './local-config.ts';
+import { BUDGET, CLAUDE_SETTINGS_PATH, CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS, NEXT_FROZEN_LABELS, NEXT_BLOCKED_LABELS } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -229,6 +229,7 @@ import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
 import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summarizeLeases } from './lib/journal/leases.ts';
 import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
+import { spendCacheFile, spendFooter } from './lib/spend.ts';
 import { githubFooter } from './lib/gh-budget.ts';
 import { gitBranches, queueFooter as hygieneFooter, queueHygiene } from './lib/queue-hygiene.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, footerQueue, staleSuffix } from './lib/review-queue.ts';
@@ -1475,8 +1476,8 @@ function cmdStatus() {
         // The window is named only when the session is pinned (--session, or a status line's stdin): the newest transcript may belong to
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
-        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window), doneLabel: live.doneLabel, drift: ledgerDrift() })); return; }
-        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, ledgerDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...[githubFooter(EVENT_DIR, Date.now(), WATCH_TZ)].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), ...[ledgerDrift()].filter(Boolean).map((l) => `**${l.replace(': ', ':** ')}`), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window), doneLabel: live.doneLabel, drift: ledgerDrift(), spend: spendLine(session) })); return; }
+        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, ledgerDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...[spendLine(session)].filter(Boolean), ...[githubFooter(EVENT_DIR, Date.now(), WATCH_TZ)].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), ...[ledgerDrift()].filter(Boolean).map((l) => `**${l.replace(': ', ':** ')}`), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
@@ -1532,6 +1533,12 @@ function cmdReviewQueue() {
     if (asJson) printJson(reading); else queueText(reading).forEach((l) => console.log(l));
     // Not process.exit: it drops output a pipe has not yet taken, so a slow reader would see a cut answer.
     process.exitCode = queueExitCode(reading);
+}
+
+/** The `Spend:` footer segment (empty with no budget set); ccusage runs at most about every 15 minutes, with a bounded wait. */
+function spendLine(session: SessionStatus): string {
+    const run = (cmd: string, args: string[]) => spawnSync(cmd, args, { encoding: 'utf8', timeout: 10_000, maxBuffer: 16 * 1024 * 1024 });
+    return spendFooter(BUDGET, spendCacheFile(EVENT_DIR), run, WATCH_TZ, Date.now(), session.available ? session.ctxK : 0);
 }
 
 /** The footer must never wait on a slow gh: the whole live read gets this long before the line falls back to `unknown`. */

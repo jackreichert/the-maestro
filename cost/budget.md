@@ -245,3 +245,12 @@ Most spend is cache reads: turns times context size. Every actionable event wake
 | Merge sweep as an agent job | `roll-maintenance` already runs once a day with no model; in lean it also runs `merge-sweep.ts --close-ledger`. It records the `merge-sweep` standing row, so no agent pickup is prompted. A failed sweep retries in an hour and raises the same `roll maintenance failed` event. Only the ledger close runs: the Others' PRs prune and the daemon resync (`--prune-others`, `--resync-runtime`) are not run, so settled teammate cards stay until you run them. Stale and unmerged lists are not produced: run `merge-sweep.ts --json` when you want them. |
 
 Kept: `status-watch`, `status-refresh`, `whats-next`, the self-heal, and everything else that costs no tokens until an event is actionable. Why a flag and not a deletion: these events are right for an install with budget to spare, and the flag extends the two existing mechanisms (`disabledTypes` in session-start, config `pick` in local-config) instead of adding a new one.
+
+## Spend guardrail
+
+A tight budget (for example $500 a month, weekdays only) needs a watcher. `budget_monthly_usd` (with `budget_period_start_day`, `budget_days`, the two fractions and `budget_cost_multiplier`) turns on a zero-token guardrail: no model runs to measure or announce it.
+
+- **Allowance.** Monthly budget divided by the budget days in the period (start day to the day before the next start day). Today is judged against it; the period against allowance times budget days elapsed. Spend on a non-budget day has no allowance, so it is over.
+- **Source.** `npx ccusage daily --since <period start> --json`, cached 15 minutes in the event directory. It reads this machine's transcripts only.
+- **Estimate.** ccusage under-counts the real bill (turns over 200k input tokens bill at a premium; some days are used elsewhere), so `budget_cost_multiplier` scales it (one install measured about 1.47 against its Console bill). The footer then reads `~$` and `x1.47 est.`, and adds `ctx >200k: premium pricing` when this session's context is over 200k. **The authoritative number is the Console cost for the API key.** Follow-up, not built: read the org `cost_report` Admin API instead of ccusage.
+- **Surfaces.** The `Spend:` footer segment, and the `spend-watch` event type ([playbook](../playbooks/event-types/spend-watch.md)): WARN, HARD, PACE and non-budget-day lines, once per threshold per day, notified through `notify_command`. At WARN stop dispatching agents; at HARD do only what the user asks.
