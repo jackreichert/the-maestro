@@ -9,8 +9,8 @@ enough to just do.
 Run `npx ccusage daily --since <today YYYYMMDD>` once, and put one line at the end of the standup:
 total $, the split by model, and cache-read tokens against fresh input. Compare it with the
 previous working day if that day's standup has a cost line. This is the only `ccusage` call of the
-day — don't repeat it per reply, and don't add it to the per-reply status footer (that would cut
-against the batching habit in [loop.md](loop.md), for a marginal visibility gain over once/day).
+day — don't repeat it per reply, and don't add it to the per-reply status footer by hand. The one exception is the budget guardrail: with `budget_monthly_usd` set,
+the footer's `Spend:` segment reads a copy cached for 15 minutes, so it costs one ccusage run per quarter hour, not one per reply.
 
 That comparison is the whole point of running the line daily rather than trusting a gut feel: a
 change tracks the day's actual work volume or a habit change, and the loop below is what checks
