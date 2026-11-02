@@ -39,12 +39,12 @@ test('scheduled launches: wake command, a claude crontab line and a claude plist
   assert.equal(status({ ...good(), crontab: '0 9 * * * /usr/local/bin/claude -p "go"\n' }, checkNoScheduledLaunches), 'fail');
   assert.equal(status({ ...good(), crontab: '# 0 9 * * * claude -p go\n' }, checkNoScheduledLaunches), 'ok');
   const plist = (args: string[]) => `<dict><key>ProgramArguments</key><array>${args.map((a) => `<string>${a}</string>`).join('')}</array></dict>`;
-  const node = { file: '/L/com.maestro.loop.plist', text: plist(['/usr/bin/node', '/Users/x/.claude/skills/the-maestro/scripts/loop.ts']) };
+  const node = { file: '/L/com.maestro.loop.plist', text: plist(['/usr/bin/node', '~/.claude/skills/the-maestro/scripts/loop.ts']) };
   assert.equal(status({ ...good(), plists: [node] }, checkNoScheduledLaunches), 'ok');
   const llm = { file: '/L/com.x.plist', text: plist(['/opt/homebrew/bin/claude', '-p', 'hi']) };
   assert.equal(status({ ...good(), plists: [node, llm] }, checkNoScheduledLaunches), 'fail');
   assert.equal(launchesClaude('sh -c "cd x && claude -p y"'), true);
-  assert.equal(launchesClaude('node /Users/x/.claude/skills/y.ts'), false);
+  assert.equal(launchesClaude('node ~/.claude/skills/y.ts'), false);
 });
 
 test('notifications: empty passes, set warns', () => {
