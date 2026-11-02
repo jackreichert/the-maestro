@@ -539,8 +539,16 @@ export const OTHERS_PRS_DROP_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_DROP_DA
 /** Your display names in Slack, comma-separated: a reply by you in a thread is never read as a teammate claiming the PR (Others' PRs list). Default none. */
 export const SLACK_SELF_NAMES = globList('MAESTRO_SLACK_SELF_NAMES', 'slack_self_names');
 
+/**
+ * Cost profile: `full` (default) or `lean`. Lean keeps the loop's zero-token watches and drops every event whose only job is to make the orchestrator start an LLM agent:
+ * session-start leaves `retro-due`, `repost-nudge` and `library-due` unregistered (and removes registered ones), teammate reviews are on demand only (`teammate_review_minutes` is ignored),
+ * and roll-maintenance runs the merge sweep as a plain script. An unknown value is `full`.
+ */
+export const COST_PROFILE: 'full' | 'lean' = pick('MAESTRO_COST_PROFILE', 'cost_profile').trim().toLowerCase() === 'lean' ? 'lean' : 'full';
+const COST_LEAN = COST_PROFILE === 'lean';
+
 /** Teammate PR helper: minutes a ready PR by someone else may wait with no review before pr-watch reports `REVIEW-WAIT` for it (the orchestrator then drafts review comments for your approval; see playbooks/teammate-review.md). Unset or 0 turns it off, the default. */
-export const TEAMMATE_REVIEW_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim()) ? Number(raw) : 0))(pick('MAESTRO_TEAMMATE_REVIEW_MINUTES', 'teammate_review_minutes'));
+export const TEAMMATE_REVIEW_MINUTES = COST_LEAN ? 0 : ((raw: string) => (/^\d+$/.test(raw.trim()) ? Number(raw) : 0))(pick('MAESTRO_TEAMMATE_REVIEW_MINUTES', 'teammate_review_minutes'));
 
 /**
  * Repost nudge (event-types/repost-nudge.ts). Every key is parsed by lib/repost-nudge-config.ts: a bad value falls back to its default and

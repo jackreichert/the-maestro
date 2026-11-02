@@ -233,3 +233,15 @@ days that used to run several watchers. Measure wake-ups per day and the count o
 against the 7-day median over a few days with the loop in use; adopt it if wake-ups do not exceed the
 median and no actionable event was missed, revert it if an event was missed or the loop's own runner
 costs more than the wakes it saves.
+
+## Lean cost profile
+
+Most spend is cache reads: turns times context size. Every actionable event wakes the orchestrator, which then starts or feeds an agent. `cost_profile: lean` (default `full`, so other installs are unchanged) removes the events that exist only to cause that:
+
+| Off in lean | How |
+|---|---|
+| `retro-due`, `repost-nudge`, `library-due` | `session-start.ts` does not register them and removes any registered watch of those types (`LEAN_OFF`). A watch added by hand is removed at the next session start; use `full` to keep them. |
+| Teammate review wake (`REVIEW-WAIT`) | `TEAMMATE_REVIEW_MINUTES` reads as 0, so `pr-watch` never reports one, whatever `teammate_review_minutes` says. Review a teammate PR by asking for it; the [playbook](../playbooks/teammate-review.md) is unchanged. |
+| Merge sweep as an agent job | `roll-maintenance` already runs once a day with no model; in lean it also runs `merge-sweep.ts --close-ledger`. It records the `merge-sweep` standing row, so no agent pickup is prompted. A failed sweep retries in an hour and raises the same `roll maintenance failed` event. Only the ledger close runs: the Others' PRs prune and the daemon resync (`--prune-others`, `--resync-runtime`) are not run, so settled teammate cards stay until you run them. Stale and unmerged lists are not produced: run `merge-sweep.ts --json` when you want them. |
+
+Kept: `status-watch`, `status-refresh`, `whats-next`, the self-heal, and everything else that costs no tokens until an event is actionable. Why a flag and not a deletion: these events are right for an install with budget to spare, and the flag extends the two existing mechanisms (`disabledTypes` in session-start, config `pick` in local-config) instead of adding a new one.

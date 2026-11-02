@@ -153,3 +153,38 @@ test('a carry problem schedules the hourly retry and raises one event, and a fai
   r.at(T0 + 25 * HOUR);
   assert.equal(r.carried.length, 2, 'a maintain that failed did not carry');
 });
+
+test('lean profile: a clean run is followed by the merge sweep script; a failed sweep retries and is reported', () => {
+  const sweeps: string[] = [];
+  const results = ['', 'merge sweep exit 2: no ledger'];
+  const io: MaintenanceIo = { localDay: () => '2026-11-02', maintain: () => OK, carry: () => ({ written: [], problems: [] }), sweep: () => { sweeps.push('x'); return results.shift() ?? ''; } };
+  const first = maint.check('box', { now: 1, prev: null, run: noRun }, io);
+  assert.equal(first.ranDay, '2026-11-02');
+  assert.equal(sweeps.length, 1);
+  const io2 = { ...io, localDay: () => '2026-11-03' };
+  const failed = maint.check('box', { now: 2, prev: first, run: noRun }, io2);
+  assert.match(failed.error, /merge sweep exit 2/);
+  assert.equal(failed.ranDay, '2026-11-02');
+  assert.deepEqual(maint.diff(first, failed).map((e) => e.summary), ['roll maintenance failed: merge sweep exit 2: no ledger']);
+});
+
+test('full profile: no sweep hook, so the check never runs the sweep', () => {
+  const io: MaintenanceIo = { localDay: () => '2026-11-02', maintain: () => OK, carry: () => ({ written: [], problems: [] }) };
+  assert.equal(maint.check('box', { now: 1, prev: null, run: noRun }, io).error, '');
+});
+
+test('leanSweep: exit 0, 1 and 3 are findings, not failures, and record the standing row; exit 2 fails and records nothing', () => {
+  const rig2 = (status: number) => {
+    const cmds: string[][] = [];
+    const run: Run = (_c, a) => { cmds.push(a); return { status: a[0].endsWith('merge-sweep.ts') ? status : 0, stdout: '', stderr: status === 2 ? 'merge-sweep: no ledger' : '' } as ReturnType<Run>; };
+    return { cmds, run };
+  };
+  for (const code of [0, 1, 3]) {
+    const { cmds, run } = rig2(code);
+    assert.equal(maint.leanSweep(run), '');
+    assert.deepEqual(cmds.map((a) => a.slice(1, 4)), [['--close-ledger'], ['standing', 'done', 'merge-sweep']]);
+  }
+  const { cmds, run } = rig2(2);
+  assert.match(maint.leanSweep(run), /merge sweep exit 2: merge-sweep: no ledger/);
+  assert.equal(cmds.length, 1);
+});

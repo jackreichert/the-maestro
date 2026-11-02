@@ -9,6 +9,7 @@
  * a crash or a timeout) is retried after an hour and raised as one actionable event per new message; the event is the alert.
  * maintain is idempotent and takes its own lock, so a retry, a manual roll or a second machine cannot double-archive.
  * State { ranDay, retryAt, error, last } is the whole memory (last: counts of the newest clean run, for the playbook, never an event).
+ * Lean cost profile: after a clean run the same check runs `merge-sweep.ts --close-ledger` as a script (the merge-sweep standing pickup without an agent); a failed sweep retries like a failed run.
  * Scheduling: a 15 minute check, singleton, renews, no idle back-off; it never notifies unless the watch is added with --notify.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -19,7 +20,7 @@ import { readHomes } from '../lib/home/config.ts';
 import { openStore } from '../lib/journal/store.ts';
 import { localDate, parsePriorities, PRIORITIES_FILE } from '../lib/status-page/priorities.ts';
 import { carryPriorities } from '../lib/status-page/project-priorities.ts';
-import { CONTAINER_PROJECT, LEDGER_ROOT, STATUS_REPO_STREAMS, statusDirFor, VAULT_ROOT, WATCH_TZ } from '../local-config.ts';
+import { CONTAINER_PROJECT, COST_PROFILE, LEDGER_ROOT, STATUS_REPO_STREAMS, statusDirFor, VAULT_ROOT, WATCH_TZ } from '../local-config.ts';
 import type { MaintainResult } from '../lib/journal/maintain.ts';
 import type { CheckContext, Run, WatchEvent } from '../lib/types.ts';
 
@@ -48,11 +49,26 @@ export interface MaintenanceIo {
   maintain(target: string, today: string, run: Run): MaintainResult;
   /** Starts today's per-project priorities file from yesterday's list; throws when it could not read what it needs. */
   carry(today: string): { written: string[]; problems: string[] };
+  /** The lean cost profile's merge sweep: `merge-sweep.ts --close-ledger` as a plain script. Absent in the full profile (a cheap agent runs the sweep then). Returns a problem, or '' when it ran. */
+  sweep?(run: Run): string;
 }
 
 const JOURNAL = fileURLToPath(new URL('../journal.ts', import.meta.url));
+const MERGE_SWEEP = fileURLToPath(new URL('../merge-sweep.ts', import.meta.url));
+
+/**
+ * merge-sweep exits 0 clean, 1 or 3 with rows to report (merged, stale, unknown PR, blind: findings, not a failure), 2 when it could not run. A clean run records the
+ * `merge-sweep` standing row (the same row the agent pickup records), so the orchestrator is not prompted to start an agent for it.
+ */
+export function leanSweep(run: Run): string {
+  const r = run(process.execPath, [MERGE_SWEEP, '--close-ledger']);
+  if (r.status === null || r.status > 3 || r.status === 2) return `merge sweep exit ${r.status}: ${(r.stderr || r.stdout).trim().split('\n').pop()?.slice(0, 160) ?? ''}`;
+  const rec = run(process.execPath, [JOURNAL, 'standing', 'done', 'merge-sweep', '--evidence', `roll-maintenance ran merge-sweep.ts --close-ledger (exit ${r.status}); no agent`]);
+  return rec.status === 0 ? '' : `merge sweep ran but its standing row was not recorded: ${(rec.stderr || rec.stdout).trim().split('\n').pop()?.slice(0, 120) ?? ''}`;
+}
 
 export const realIo: MaintenanceIo = {
+  ...(COST_PROFILE === 'lean' ? { sweep: leanSweep } : {}),
   localDay: (now) => localDate(new Date(now), WATCH_TZ),
   maintain: (target, today, run) => {
     const r = run(process.execPath, [JOURNAL, 'maintain', '--today', today, '--container', target, '--budget', String(SWEEP_BUDGET_SECONDS)]);
@@ -86,6 +102,8 @@ export function check(target: string, ctx: Pick<CheckContext, 'now' | 'prev' | '
     if (r.ok) {
       const carried = io.carry(today);
       if (carried.problems.length) return { ...prev, retryAt: ctx.now + RETRY_MS, error: `carry: ${carried.problems.join('; ')}`.slice(0, 300) };
+      const swept = io.sweep?.(ctx.run as Run) ?? '';
+      if (swept) return { ...prev, retryAt: ctx.now + RETRY_MS, error: swept.slice(0, 300) };
       return { ranDay: today, retryAt: 0, error: '', last: describe(r, carried.written) };
     }
     return { ...prev, retryAt: ctx.now + RETRY_MS, error: r.problems.join('; ').slice(0, 300) || 'maintain reported a failure' };
