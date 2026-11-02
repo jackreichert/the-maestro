@@ -74,6 +74,7 @@ budget_days: weekdays         # weekdays or all (default): which days carry an a
 budget_warn_fraction: 0.8     # fraction of the daily allowance for WARN; default 0.8
 budget_hard_fraction: 1.0     # fraction for HARD; default 1.0
 budget_cost_multiplier: 1.47  # scales ccusage toward the real bill; default 1.0 (the Console cost for the key is authoritative)
+mode: slim                    # full (default) or slim: slim/SKILL.md only, single-threaded (README `mode`)
 cost_profile: lean            # full (default) or lean: lean skips the retro-due, repost-nudge and library-due watches, on-demand teammate reviews only, merge sweep run as a script by roll-maintenance (cost/budget.md)
 teammate_review_minutes: 15   # minutes a teammate's ready PR may wait with no human review before pr-watch reports REVIEW-WAIT (the teammate review playbook); scope is gh_org plus the owners in review_pool_owners; default 0, off
 repost_nudge_enabled: on      # master switch for the repost nudge; off: the watch is not registered at session start and a registered one never fires; default on

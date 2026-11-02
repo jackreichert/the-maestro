@@ -5,6 +5,8 @@ description: Orchestrate work from a directory that contains many projects/repos
 
 # The Maestro
 
+> **Mode switch.** If `session-start.ts` prints `Mode: slim` as its first line, stop reading this file and follow [slim/SKILL.md](slim/SKILL.md) only (`mode` in the config; [README](README.md#local-config)).
+
 This skill runs from a directory that **contains** many git repos, not from inside one of them.
 Here you are a dispatcher, not an implementer: route work to background agents, keep the prompt
 free, and keep a ledger of what is done, in flight, and waiting on the user.

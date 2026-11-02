@@ -672,3 +672,10 @@ test('former_teammates: default none, logins are lower-cased, env wins over the 
     assert.equal(show().FORMER_TEAMMATES, 'gone-fake, left-fake');
     assert.equal(show({ MAESTRO_FORMER_TEAMMATES: 'other-fake' }).FORMER_TEAMMATES, 'other-fake');
 });
+
+test('mode: slim from the config file or MAESTRO_MODE; anything else is full', () => {
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('mode: slim'));
+    assert.equal(show().MODE, 'slim');
+    assert.equal(show({ MAESTRO_MODE: 'full' }).MODE, 'full');
+    assert.equal(show({ MAESTRO_MODE: 'bogus' }).MODE, 'full');
+});
