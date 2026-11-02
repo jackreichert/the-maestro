@@ -142,3 +142,12 @@ test('start and queue refuse a headline over 80 characters, say how to shorten i
     assert.equal(run(['start', 'x'.repeat(80), ...MARK]).code, 0);
     assert.equal(run(['queue', 'y'.repeat(80), ...MARK]).code, 0);
 });
+
+test('queue --machine skips the headline limit for a generated fix line whose key stays parseable; start never does', () => {
+    const text = `fix some-long-organisation/a-realistically-long-repository-name#1234 CHECKS-FAILING https://github.com/some-long-organisation/a-realistically-long-repository-name/pull/1234#discussion_r1234567890`;
+    assert.ok(text.length > 80);
+    assert.equal(run(['queue', text, ...MARK]).code, 1, 'a person-typed queue still refuses');
+    assert.equal(run(['queue', text, '--machine', ...MARK]).code, 0);
+    assert.equal(run(['start', text, '--machine', ...MARK]).code, 1, '--machine is for queue only');
+    assert.equal(ledger().filter((x) => x.text === text).length, 1);
+});
