@@ -9,15 +9,19 @@
  *    `expires` that the loop has not retired yet is removed first and registered again.
  * 2. Marks live watches of a standing type that lack the `renew` flag (see `repairStandingWatches`).
  * 3. Reports the status page's age (the mtime of The-Podium.md). A page older than 15 minutes means nothing is refreshing it.
- * 4. Reports `Podium web: down` when the footer link (`status_page_uri`, when it is an http loopback URL) does not answer a short local connect. Silent when the link is up or not an http URL.
+ * 4. Reports `Podium web: down` when the footer link (`status_page_uri`, when it is an http URL) does not answer a short local connect, and brings it back when the link is a loopback URL:
+ *    through launchd when `com.jackreichert.the-maestro-web` is installed (bootstrap, or kickstart when loaded), else a detached `web.ts --port <port>` logging to the Podium log. It says it is up only once it answers. Silent when the link is up or not an http URL.
  * 5. Reports the loop's heartbeat verdict (`Loop:`, silent when no loop is set up or required) and whether an event loop holds the lock. It never starts the loop: the launchd
  *    supervisor is the only runner (an in-session `run` is refused while it is installed). It prints one command to run with run_in_background, `events wait`, which blocks until
  *    an event for this window is in the inbox, so the session is woken by it. With no loop running it also says how the supervisor is restarted or installed.
  *
+ * `MAESTRO_SESSION_HEAL=off` turns the repairs in 4 and 5 off (the report stays). A repair that fails is reported and does not change the exit code.
+ * Rollback: `node scripts/shutdown.ts --apply` stops what this started; nothing here deletes or rewrites a plist.
+ *
  * Exit 0 when nothing failed, 1 when a watch could not be registered (or the registry could not be read), 2 on a usage or configuration error (no status directory).
  */
-import { spawnSync } from 'node:child_process';
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { closeSync, existsSync, mkdirSync, openSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -30,7 +34,11 @@ import type { TypeRegistry } from './event-types/index.ts';
 import type { Watch } from './lib/types.ts';
 import { digestDir, drainDigests } from './lib/digest-store.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
-import { LABEL } from './lib/supervisor-state.ts';
+import { LABEL, launchAgentsDir, plistPath } from './lib/supervisor-state.ts';
+import { currentUid, realLaunchctl } from './lib/launchd.ts';
+import { healPodium, healSupervisor } from './lib/self-heal.ts';
+import type { Heal } from './lib/self-heal.ts';
+import { WEB_LABEL } from './install-podium-web.ts';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 /** The watches a session needs, keyed by the id used when one is missing. retro-due and repost-nudge are here so the periodic retro review and the repost nudge never depend on someone remembering to register it. */
@@ -61,6 +69,10 @@ export interface StartDeps {
   loopHealth?: () => string;
   /** The Podium web link and whether a connect to it succeeded; absent (or an empty url) where the footer link is not an http URL. */
   webProbe?: () => { url: string; up: boolean };
+  /** Brings the loop supervisor back (the lock is free); absent where nothing repairs. */
+  healLoop?: () => Heal;
+  /** Brings the Podium back at `url` (it did not answer); absent where nothing repairs. */
+  healWeb?: (url: string) => Heal;
 }
 
 export interface StartReport { lines: string[]; failed: boolean }
@@ -112,21 +124,29 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
   return { lines, failed };
 }
 
-/** The `Podium web:` line when the footer link does not answer; none when it answers or is not an http URL. */
+/** The `Podium web:` lines when the footer link does not answer (after trying to bring it back); none when it answers or is not an http URL. */
 function podiumLines(deps: StartDeps): string[] {
   const web = deps.webProbe?.();
-  return web?.url && !web.up ? [`Podium web: down (nothing answers at ${web.url}); the page link in the footer will not open. Restart it: \`journal.ts web\``] : [];
+  if (!web?.url || web.up) return [];
+  const healed = deps.healWeb?.(web.url);
+  if (healed?.action === 'started') return [`Podium web: was down; ${healed.message}`];
+  const reason = healed ? ` Self-heal ${healed.action === 'failed' ? 'failed' : 'did not start it'}: ${healed.message}.` : '';
+  return [`Podium web: down (nothing answers at ${web.url}); the page link in the footer will not open.${reason} Restart it: \`journal.ts web --port <port>\``];
 }
 
-/** The `Loop:` verdict (when there is one) and the line about who holds the loop lock. */
+/** The `Loop:` verdict (when there is one) and the line about who holds the loop lock, after trying to bring the supervisor back when nothing holds it. */
 function loopLines(deps: StartDeps): string[] {
   const lines: string[] = [];
+  const holder = deps.lockHolder();
+  const healed = holder === null ? deps.healLoop?.() : undefined;
   const health = deps.loopHealth?.().replace(/\*\*/g, '');
   if (health) lines.push(health);
-  const holder = deps.lockHolder();
-  lines.push(holder === null
-    ? `Event loop: NOT RUNNING. No session starts it: the launchd supervisor is the only runner (restart: ${restartCommand()}; not installed yet: node scripts/install-loop-supervisor.ts). Events already in the inbox still reach you: wait on it with run_in_background: ${deps.waitCommand}`
-    : `Event loop: running (pid ${holder}), the launchd supervisor's. Wait on the inbox with run_in_background: ${deps.waitCommand}`);
+  if (holder !== null) lines.push(`Event loop: running (pid ${holder}), the launchd supervisor's. Wait on the inbox with run_in_background: ${deps.waitCommand}`);
+  else if (healed?.action === 'started') lines.push(`Event loop: was NOT RUNNING; ${healed.message}. It takes the lock within a minute. Events already in the inbox still reach you: wait on it with run_in_background: ${deps.waitCommand}`);
+  else {
+    const note = healed?.action === 'failed' ? ` Self-heal failed: ${healed.message}.` : '';
+    lines.push(`Event loop: NOT RUNNING.${note} No session runs it: the launchd supervisor is the only runner (restart: ${restartCommand()}; not installed yet: node scripts/install-loop-supervisor.ts). Events already in the inbox still reach you: wait on it with run_in_background: ${deps.waitCommand}`);
+  }
   return lines;
 }
 
@@ -150,6 +170,26 @@ export function connects(url: string, timeoutMs = 1500): boolean {
 
 /** The launchctl line that restarts the supervisor (printed, never run). */
 const restartCommand = (): string => `launchctl kickstart -k gui/${process.getuid?.() ?? 501}/${LABEL}`;
+
+/** MAESTRO_SESSION_HEAL=off keeps the report and skips the repairs. */
+const HEAL_ON = (process.env.MAESTRO_SESSION_HEAL ?? 'on').toLowerCase() !== 'off';
+
+const realHealLoop = (): Heal => healSupervisor({ launchctl: realLaunchctl, uid: currentUid(), label: LABEL, plist: plistPath() });
+
+/** Starts `web.ts --port` detached (it outlives this process), output to the Podium log under the ledger. */
+function spawnDetachedWeb(port: number): void {
+  if (!LEDGER_ROOT) throw new Error('no ledger root; set LEDGER_ROOT');
+  const log = join(LEDGER_ROOT, 'Projects', CONTAINER_PROJECT, 'Journal', 'Supervisor', 'podium-web.log');
+  mkdirSync(dirname(log), { recursive: true });
+  const fd = openSync(log, 'a');
+  try { spawn(process.execPath, [join(SCRIPTS, 'web.ts'), '--port', String(port), '--vault', LEDGER_ROOT, '--project', CONTAINER_PROJECT], { detached: true, stdio: ['ignore', fd, fd] }).unref(); } finally { closeSync(fd); }
+}
+
+const realHealWeb = (url: string): Heal => healPodium({
+  launchctl: realLaunchctl, uid: currentUid(), label: WEB_LABEL, plist: join(launchAgentsDir(), `${WEB_LABEL}.plist`), url,
+  spawnWeb: spawnDetachedWeb, probe: (u) => connects(u),
+  sleep: (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); },
+});
 
 const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
 
@@ -179,6 +219,7 @@ export function realDeps(now: number = Date.now()): StartDeps {
     },
     loopHealth: () => liveLoopHealth(now).line,
     webProbe: () => { const url = podiumWebUrl(STATUS_PAGE_URI_SETTING); return { url, up: !url || connects(url) }; },
+    ...(HEAL_ON ? { healLoop: realHealLoop, healWeb: realHealWeb } : {}),
   };
 }
 
