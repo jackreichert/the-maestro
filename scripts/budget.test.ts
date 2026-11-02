@@ -110,6 +110,12 @@ test('ccusage output: the daily list is summed by date; junk throws', () => {
   assert.throws(() => parseCcusage('{"nope":1}'));
 });
 
+test('ccusage output: current ccusage keys the day as period, and an agent "all" row is the day total', () => {
+  assert.deepEqual(parseCcusage('{"daily":[{"agent":"all","period":"2026-11-02","totalCost":32.7}],"totals":{}}'), { '2026-11-02': 32.7 });
+  const split = '{"daily":[{"agent":"all","period":"2026-11-02","totalCost":10},{"agent":"main","period":"2026-11-02","totalCost":6},{"agent":"sub","period":"2026-11-02","totalCost":4},{"agent":"main","period":"2026-11-03","totalCost":2}]}';
+  assert.deepEqual(parseCcusage(split), { '2026-11-02': 10, '2026-11-03': 2 });
+});
+
 test('spend cache: ccusage runs once within 15 minutes, a failure is cached and keeps the last good figures', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'spend-')), 'c.json');
   let calls = 0;
