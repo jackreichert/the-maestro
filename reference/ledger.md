@@ -404,6 +404,8 @@ the regression threshold, and the weekly review — all cost material now lives 
 [cost/SKILL.md](../cost/SKILL.md). Put its output (the cost line, plus any proposed adjustments) at
 the end of the standup.
 
+**Powering off or travelling.** After `roll`, `node scripts/shutdown.ts` prints what it would stop (the loop supervisor, the Podium web server). `--apply` stops them; `--roll` runs `triage`, `roll` and `handoff --all --delta` first, as one step. It never deletes plists, the lock or the ledger, and the next `session-start.ts` brings both back ([README](../README.md#shutdownts)).
+
 ### PR pass
 
 Run `node scripts/prs-snapshot.ts --diff --vault "$LEDGER_ROOT"`

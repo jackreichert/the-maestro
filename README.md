@@ -343,7 +343,8 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [status-page.ts](#status-pagets) | The Podium, the always-current status page, with today's priorities and inline answers |
 | [podium-gate.ts](#podium-gatets) | The Podium v1 gate: checks a running Podium against the design, Home, handover and library bar |
 | [event-loop.ts](#event-loopts) | One loop for every "wake me when X" watch |
-| [session-start.ts](#session-startts) | First command of a session: registers the status, retro-due and repost-nudge watches, reports the page age and whether a loop is running |
+| [session-start.ts](#session-startts) | First command of a session: registers the status, retro-due and repost-nudge watches, reports the page age, and brings the loop supervisor and the Podium back when they are down |
+| [shutdown.ts](#shutdownts) | Stops the loop supervisor and the Podium for travel or a power-off; dry run by default, `--roll` runs the end-of-day roll first |
 | [stale-wip-triage.ts](#stale-wip-triagets) | One-time triage of open in-progress rows: evidence per row, hard-evidence closes proposed |
 | [weekly-retro.ts](#weekly-retrots) | Ten-minute weekly retro draft: stale, blocked, dropped, last experiment |
 | [flow-report.ts](#flow-reportts) | Cycle time, throughput, WIP and open-item age from the ledger |
@@ -1015,9 +1016,32 @@ Event loop: NOT RUNNING. No session starts it: the launchd supervisor is the onl
 - **Watches.** For each of `status-watch`, `status-refresh`, `retro-due`, `repost-nudge` and `whats-next`, a live, unexpired watch of that type is left alone; otherwise one is registered through `event-loop.ts add` with the status directory as target, so each type's own validation, singleton rule and default TTL apply. A watch past its expiry that the loop has not retired yet is removed and registered again. A refused registration is printed as `NOT registered (<reason>)` and the exit code is 1, unless another session registered that type in the meantime, which counts as success. An existing watch whose target differs from the resolved status directory is kept but flagged with a `WARNING` line.
 - **Standing watches.** A live watch of a standing type that lacks the `renew` flag is marked as renewing, with a `Standing watches:` line saying which.
 - **Page age.** The age is the modification time of `The-Podium.md`. Past 15 minutes the line ends `STALE`: the refresh ticks every 10 minutes, so nothing is refreshing it.
-- **Podium web.** When `status_page_uri` (the footer link) is an http URL, a connect to its host and port is tried with a 1.5 second cap (a killed child, so it cannot hang); when nothing answers, `Podium web: down (nothing answers at <url>)` is printed, since the page link is useless then. Silent when the link answers or is not an http URL (an `obsidian://` note link is not a server).
+- **Podium web.** When `status_page_uri` (the footer link) is an http URL, a connect to its host and port is tried with a 1.5 second cap (a killed child, so it cannot hang); when nothing answers, `Podium web: down (nothing answers at <url>)` is printed, since the page link is useless then, after an attempt to bring it back (see **Self-heal**). Silent when the link answers or is not an http URL (an `obsidian://` note link is not a server).
+- **Self-heal.** A loop or Podium that is down is brought back, never installed. With the loop lock free and the supervisor's plist installed, the plist is loaded (`launchctl bootstrap`), or the job kickstarted when it is already loaded; the line says `was NOT RUNNING; loaded ...` and that the loop takes the lock within a minute. With the Podium link a loopback http URL that does not answer, the Podium goes back up through launchd when `com.jackreichert.the-maestro-web` is installed (`bootstrap`, or `kickstart -k` when loaded), else `web.ts --port <port from the link>` is started detached, logging to `Journal/Supervisor/podium-web.log` under the ledger. It says `Podium web: was down; started ...` only once the link answers; otherwise the `down` line stays, with the reason. No plist installed means the old report plus the install command, nothing is installed, and a repair that fails is reported without failing the run. When both are healthy nothing changes. `MAESTRO_SESSION_HEAL=off` keeps the report and skips the repairs. Every launchctl call, spawn and probe is injected, so the tests never reach launchd.
 - **Loop.** The `Loop:` verdict line first ([loop health](#loop-health-is-it-actually-running); silent when no loop is set up or required), then the loop lock state. The script never starts the loop: the launchd supervisor ([loop-supervisor.ts](#loop-supervisorts-keep-the-loop-alive-without-a-session)) is the only runner, so a session only waits. Either way the line prints the `event-loop.ts events wait` command to launch with `run_in_background`; with no loop it also says how to restart the supervisor, or to install it when it is not installed yet.
 - Exit codes: 0 done, 1 a watch could not be registered or the registry could not be read, 2 no status directory (set `status_dir` or `vault_root`, or pass `--status-dir`).
+
+### shutdown.ts
+
+Stops the loop supervisor and the Podium before travel or a power-off. A dry run by default: it prints exactly what it would stop and changes nothing.
+
+```bash
+node scripts/shutdown.ts [--apply] [--roll]
+```
+
+```mermaid
+flowchart LR
+  D[shutdown, dry run] -->|prints| P[would bootout loop, would bootout Podium, would kill detached Podium]
+  A[shutdown --apply] --> L[launchctl bootout loop supervisor]
+  A --> W[launchctl bootout Podium job]
+  A --> K[SIGTERM a detached Podium on its port]
+  S[session-start] -->|plists still installed| B[loads them again]
+```
+
+- **`--apply`** runs `launchctl bootout` for the supervisor and, when it runs under launchd, the Podium, then sends SIGTERM to a detached Podium: a process listening on the Podium port whose command is `.../scripts/web.ts --port <port>`. Nothing else is signalled, and a server that ignores SIGTERM is reported, not killed harder. Plists, the loop lock and the ledger are never deleted; a job that is not loaded is skipped, so a second run changes nothing.
+- **`--roll`** runs the end-of-day sequence first ([reference/ledger.md](reference/ledger.md#end-of-day)): `journal.ts triage`, `roll`, `handoff --all --delta`. A step that fails stops the run before anything is stopped.
+- **Coming back.** `node scripts/session-start.ts` loads the installed plists again (and starts a detached Podium when it has no plist), so a stop is undone by the next session.
+- Exit codes: 0 done (or dry run), 1 a step failed, 2 a usage or configuration error.
 
 ### notion-watch (tagged Notion pages)
 

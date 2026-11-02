@@ -108,7 +108,7 @@ test('end to end: registers through event-loop.ts add, then a second run changes
   writeFileSync(page, '# page\n');
   const old = new Date(Date.now() - 20 * 60_000);
   utimesSync(page, old, old);
-  const run = () => spawnSync(process.execPath, [new URL('./session-start.ts', import.meta.url).pathname, '--status-dir', status], { encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: events } });
+  const run = () => spawnSync(process.execPath, [new URL('./session-start.ts', import.meta.url).pathname, '--status-dir', status], { encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: events, MAESTRO_SESSION_HEAL: 'off' } });
   const first = run();
   assert.equal(first.status, 0, first.stderr);
   assert.match(first.stdout, /status-watch: registered/);
@@ -134,7 +134,7 @@ test('end to end: registers through event-loop.ts add, then a second run changes
 
 test('a status directory that does not exist fails the registration with the type\'s own message', () => {
   const events = mkdtempSync(join(tmpdir(), 'session-start-events-'));
-  const r = spawnSync(process.execPath, [new URL('./session-start.ts', import.meta.url).pathname, '--status-dir', join(events, 'nope')], { encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: events } });
+  const r = spawnSync(process.execPath, [new URL('./session-start.ts', import.meta.url).pathname, '--status-dir', join(events, 'nope')], { encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: events, MAESTRO_SESSION_HEAL: 'off' } });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /NOT registered.*must be the status directory/);
 });
@@ -173,6 +173,39 @@ test('a Podium web link that does not answer prints the down line; an answering 
   for (const probe of [() => ({ url: 'http://127.0.0.1:47700/', up: true }), () => ({ url: '', up: true })]) {
     assert.equal(sessionStart('/s', world({ webProbe: probe }).deps).lines.some((l) => l.startsWith('Podium web:')), false);
   }
+});
+
+test('with the lock free, session start asks the heal to bring the supervisor back and says so; with the lock held it does not call it', () => {
+  let calls = 0;
+  const healLoop = () => { calls++; return { action: 'started' as const, message: 'loaded /p/loop.plist into launchd' }; };
+  const healed = sessionStart('/s', world({ healLoop }).deps);
+  assert.equal(calls, 1);
+  assert.match(lineOf(healed, 'Event loop'), /^Event loop: was NOT RUNNING; loaded \/p\/loop\.plist into launchd\. It takes the lock within a minute.*node loop events wait$/);
+  assert.equal(healed.failed, false);
+  sessionStart('/s', world({ healLoop, lockHolder: () => 4242 }).deps);
+  assert.equal(calls, 1, 'a running loop is left alone');
+});
+
+test('a supervisor heal that fails or finds nothing installed keeps the NOT RUNNING line, and a failure says why without failing the run', () => {
+  const failed = sessionStart('/s', world({ healLoop: () => ({ action: 'failed', message: 'launchctl bootstrap failed: Input/output error' }) }).deps);
+  assert.match(lineOf(failed, 'Event loop'), /^Event loop: NOT RUNNING\. Self-heal failed: launchctl bootstrap failed: Input\/output error\./);
+  assert.equal(failed.failed, false);
+  const none = sessionStart('/s', world({ healLoop: () => ({ action: 'not-installed', message: 'no plist' }) }).deps);
+  assert.match(lineOf(none, 'Event loop'), /^Event loop: NOT RUNNING\. No session runs it.*install-loop-supervisor\.ts/);
+});
+
+test('a Podium that does not answer is healed and reported as brought back; one that cannot be started keeps the down line with the reason', () => {
+  const down = { webProbe: () => ({ url: 'http://127.0.0.1:47700/', up: false }) };
+  const seen: string[] = [];
+  const up = sessionStart('/s', world({ ...down, healWeb: (url) => { seen.push(url); return { action: 'started', message: 'started as a detached server on port 47700, answering at http://127.0.0.1:47700/' }; } }).deps);
+  assert.deepEqual(seen, ['http://127.0.0.1:47700/']);
+  assert.match(lineOf(up, 'Podium web:'), /^Podium web: was down; started as a detached server on port 47700/);
+  assert.equal(up.lines.some((l) => /Podium web: down/.test(l)), false);
+  const bad = sessionStart('/s', world({ ...down, healWeb: () => ({ action: 'failed', message: 'nothing answered' }) }).deps);
+  assert.match(lineOf(bad, 'Podium web:'), /^Podium web: down \(nothing answers at http:\/\/127\.0\.0\.1:47700\/\).*Self-heal failed: nothing answered\./);
+  let healed = 0;
+  sessionStart('/s', world({ webProbe: () => ({ url: 'http://127.0.0.1:47700/', up: true }), healWeb: () => { healed++; return { action: 'started', message: '' }; } }).deps);
+  assert.equal(healed, 0, 'an answering Podium is left alone');
 });
 
 test('connects is true for a listening port, false for a closed one and a bad URL, and never waits long', async () => {
