@@ -33,7 +33,7 @@ export interface QuietDeps {
 
 export type QuietVerdict =
   | { action: 'suppress'; rule: string; reason: string }
-  | { action: 'wake'; rule: string; reason: string; summary?: string };
+  | { action: 'wake'; rule: string; reason: string; summary?: string; /** What gh said about the PR, when the rule asked (LEFT-OPEN-SET). */ prState?: PrState };
 
 type Ev = Pick<DigestEvent, 'watch' | 'type' | 'summary'>;
 const LEFT_OPEN = /^(?:\[self-review\] )?LEFT-OPEN-SET ([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)#(\d+)\b/;
@@ -69,7 +69,7 @@ function leftOpenSet(e: Ev, deps: QuietDeps): QuietVerdict | null {
     return suppressWithNote(deps, 'left-open-set-merged', `${repo}#${number} merged`, `${repo}#${number} left the open set: gh reports it merged (auto-handled by the event loop)${closed.length ? `; closed on merge: ${closed.join(', ')}` : ''}`);
   }
   const why = state === undefined ? 'gh could not read its state' : state === 'CLOSED' ? 'it closed without merging' : 'it is still open';
-  return { action: 'wake', rule: 'left-open-set-unmerged', reason: `${repo}#${number}: ${why}` };
+  return { action: 'wake', rule: 'left-open-set-unmerged', reason: `${repo}#${number}: ${why}`, prState: state };
 }
 
 /** The first rule that has an opinion on this event, or null. `deps` undefined leaves only the rule that needs none (continuity). */

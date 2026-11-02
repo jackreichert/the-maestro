@@ -52,7 +52,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
   EVENT_DIR, INBOX_COMMAND, NOTIFY_COMMAND, STATUS_REPO_STREAMS, VAULT_ROOT, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
-  WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ, LEDGER_ROOT, CONTAINER_PROJECT,
+  WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ, LEDGER_ROOT, CONTAINER_PROJECT, MODE,
 } from './local-config.ts';
 import { adoptLine, clearAdopt, readAdopt, writeAdopt } from './lib/adopt.ts';
 import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
@@ -94,6 +94,8 @@ export interface TickDeps {
   triage?: Triage;
   /** The outside world for the quiet-wake rules (merge-sweep, gh, the ledger note); without it only the continuity rule applies. */
   quiet?: QuietDeps;
+  /** `slim` demotes pr-watch lines that need no action to info (lib/slim-wake.ts). Defaults to the configured mode. */
+  mode?: 'full' | 'slim';
   /** Called after each watch is checked: a tick runs its watches one after another, so this is how a long tick keeps its heartbeat fresh. Never throws into the tick. */
   progress?: () => void;
 }
@@ -174,7 +176,7 @@ function renewed(dir: string, watch: Watch, type: EventType | undefined, now: nu
  * during quiet hours only `notify_overnight` watches are checked or notified.
  */
 export function tick(deps: TickDeps): TickResult {
-  const { dir, types, ctx = {} as LoopContext, config = cadenceConfig(), now = Date.now(), notifyCommand = [], notifyRun, triage, quiet: quietDeps, progress } = deps;
+  const { dir, types, ctx = {} as LoopContext, config = cadenceConfig(), now = Date.now(), notifyCommand = [], notifyRun, triage, quiet: quietDeps, mode = MODE, progress } = deps;
   const state = loadState(dir);
   // Quiet means the clock says so, whatever quietMode does to the pace (`slow` never returns stop).
   const quiet = 'stop' in nextInterval({ now, recentEvents: state.events, config: { ...config, quietMode: 'stop' } });
@@ -216,7 +218,7 @@ export function tick(deps: TickDeps): TickResult {
     if (state.watches[watch.id]) state.watches[watch.id].nextDue = now + (quiet && slowOnly(watch, types, config) ? Math.max(seconds, SLOW_QUIET_SECONDS) : seconds) * 1000;
   }
   // Rules classify the pr lines (and the quiet-wake events) and log each decision before anything wakes the orchestrator.
-  triageEvents(out.events, { dir, triage, quiet: quietDeps });
+  triageEvents(out.events, { dir, triage, quiet: quietDeps, slim: mode === 'slim' });
   // Digest first: a crash between the two repeats an event on the next tick instead of losing it.
   appendDigest(dir, out.events.map(({ mayNotify, ...e }) => e));
   saveState(dir, state);

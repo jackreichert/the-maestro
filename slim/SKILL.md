@@ -15,6 +15,8 @@ Commands below are `node scripts/<name>.ts`, run from the skill root. Ledger com
 2. `journal.ts status --footer`. This is the front page. The handoff is already in the ledger, so there is nothing to reconstruct from memory.
 3. On a greeting: greet back briefly, then give the board (in flight, asks, shipped today). A standup only when the user's instructions ask for one at this hour.
 
+`events wait` only ends for events that need action. In slim mode the loop demotes these pr-watch lines to Podium-only info (they stay in the digest and the Podium's PR data, and the hourly triage sweep lists them): READY, APPROVED, APPROVED-UNMERGED, DECISION, bot and Copilot threads, replies and reviews, COPILOT-REVIEW and COPILOT-LATE, REVIEW-WAIT, and LEFT-OPEN-SET for a PR closed without merging. Red checks, CHANGES_REQUESTED, human threads, replies, comments and reviews, status-watch answers, the budget hard line and the standup reminder still wake, and so does any line the table does not know. The table is `SLIM_WAKE_TABLE` in `scripts/lib/slim-wake.ts`; full mode ignores it. Read the Podium for the demoted lines.
+
 ## The thread works; agents only help
 
 | Kind | Model | Limit | Use | Returns |
