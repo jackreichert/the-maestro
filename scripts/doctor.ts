@@ -14,8 +14,10 @@ import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from '
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { overlayPath } from './local-config.ts';
+import { CLAUDE_SETTINGS_PATH, COST_PROFILE, EVENT_DIR, MODE, NOTIFY_COMMAND, WAKE_LAUNCH_COMMAND, overlayPath } from './local-config.ts';
 import { snippet } from './hooks/print-settings-snippet.ts';
+import { budgetChecks, type BudgetFacts } from './lib/budget-doctor.ts';
+import { spendCacheFile } from './lib/spend.ts';
 import { printJson } from './lib/json-out.ts';
 import { runtimeBehind, runtimeWorktree } from './lib/runtime-resync.ts';
 import {
@@ -69,6 +71,30 @@ function installFacts(): InstallFacts {
   return { plugins, loose, nestedClones };
 }
 
+const readJson = (file: string): any => { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; } };
+
+/** `crontab -l` text; '' when there is no crontab or the command is missing. */
+function crontabText(): string {
+  const r = spawnSync('crontab', ['-l'], { encoding: 'utf8', timeout: 10_000 });
+  return r.status === 0 ? r.stdout : '';
+}
+
+/** Every plist under ~/Library/LaunchAgents, text only. */
+function launchAgents(dir = join(homedir(), 'Library', 'LaunchAgents')): BudgetFacts['plists'] {
+  return names(dir).filter((n) => n.endsWith('.plist')).flatMap((n) => { try { return [{ file: join(dir, n), text: readFileSync(join(dir, n), 'utf8') }]; } catch { return []; } });
+}
+
+/** What the budget checks need, read from this machine. Only the env and enabledPlugins keys of the settings file are kept. */
+function budgetFacts(expectedHooks: string[], registeredHooks: HookCommand[], now = new Date()): BudgetFacts {
+  const raw = readJson(CLAUDE_SETTINGS_PATH);
+  const settings = raw && typeof raw === 'object' ? { env: raw.env, enabledPlugins: raw.enabledPlugins } : null;
+  return {
+    today: now.toISOString().slice(0, 10), now: now.getTime(), mode: MODE, costProfile: COST_PROFILE, settings,
+    wakeLaunchCommand: WAKE_LAUNCH_COMMAND, notifyCommand: NOTIFY_COMMAND, crontab: crontabText(), plists: launchAgents(),
+    expectedHooks, registeredHooks, settingsFile: CLAUDE_SETTINGS_PATH, spendCache: readJson(spendCacheFile(EVENT_DIR)),
+  };
+}
+
 function main(): void {
   const args = process.argv.slice(2);
   const json = args.includes('--json');
@@ -88,9 +114,10 @@ function main(): void {
     checkBehind('runtime worktree current', runtime, behindMain(runtime)),
     checkBehind('overlay checkout current', overlayDir, behindMain(overlayDir)),
     checkDuplicateInstalls(installFacts()),
+    ...budgetChecks(budgetFacts(expectedHookFiles(snippet([])), commands)),
   ];
   if (json) printJson({ results }); else console.log(render(results));
-  process.exit(results.some((r) => r.status === 'warn') ? 1 : 0);
+  process.exit(results.some((r) => r.status === 'warn' || r.status === 'fail') ? 1 : 0);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();

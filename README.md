@@ -920,8 +920,9 @@ Stop any hand-started server on the port first, or launchd's copy exits on `EADD
 - each registered maestro hook, and the installed `the-maestro` skill path, resolves into the runtime worktree rather than a checkout where a branch can move;
 - the runtime worktree and the overlay checkout are not behind the local `origin/main` ref (it does not fetch, so run `git fetch` first for the latest);
 - no plugin is also installed as loose skill, command or agent files under `~/.claude`, and no git clone is nested inside this checkout.
+- `budget:` rows prove the spend guardrails are live (PASS, WARN or FAIL, each with a fix hint): mode and `cost_profile` (WARN for `full` from 2026-11-05), autocompact (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` times `CLAUDE_CODE_AUTO_COMPACT_WINDOW` at most 150000 tokens, else FAIL), no scheduled LLM launch (`wake_launch_command` empty, no crontab line or LaunchAgent running `claude`), `notify_command` empty, every snippet hook installed (FAIL when missing), the spend cache refreshed within 3 hours, and the enabled plugin count. These read the `claude_settings` file (only `env` and `enabledPlugins`) and print no env value but the two autocompact ones. Any FAIL exits 1.
 
-A check that cannot run (no runtime worktree known, no overlay, no readable settings file) prints `skip` with the reason. Exit 0 when nothing warns, 1 when any check warns, 2 on a usage error. Fixing is yours: merge the snippet into your settings, fast-forward the runtime with `merge-sweep.ts --resync-runtime`, and remove the duplicate installs by hand.
+A check that cannot run (no runtime worktree known, no overlay, no readable settings file) prints `skip` with the reason. Exit 0 when nothing warns, 1 when any check warns or fails, 2 on a usage error. Fixing is yours: merge the snippet into your settings, fast-forward the runtime with `merge-sweep.ts --resync-runtime`, and remove the duplicate installs by hand.
 
 ### loop-supervisor.ts (keep the loop alive without a session)
 
