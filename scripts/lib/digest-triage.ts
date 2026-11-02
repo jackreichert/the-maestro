@@ -106,7 +106,7 @@ function ask(triage: Triage, input: TriageInput): TriageAnswer {
 /**
  * Triage for the actionable lines of a tick (the seam gets `budgetMs` of it in total). Each is classified by the rules and the decision logged with its reason. An ambiguous line goes to
  * the seam: noise (with a reason) turns the event into an info line that does not wake; anything else keeps it actionable. Returns the same events.
- * With `slim`, the slim wake table (lib/slim-wake.ts) runs first on pr-watch lines and demotes the ones that need no action to info (logged as noise); full mode never reads it.
+ * With `slim`, the slim wake table (lib/slim-wake.ts) runs on pr-watch lines right after the quiet-wake rules and before the classifier, and demotes the ones that need no action to info (logged as noise); full mode never reads it.
  */
 export function triageEvents<T extends DigestEvent>(events: T[], opts: { dir: string; triage?: Triage; quiet?: QuietDeps; budgetMs?: number; now?: () => number; slim?: boolean }): T[] {
   const triage = opts.triage ?? rulesOnlyTriage;
@@ -138,8 +138,9 @@ export function triageEvents<T extends DigestEvent>(events: T[], opts: { dir: st
 }
 
 /**
- * The quiet-wake rules (lib/quiet-wakes.ts) for one actionable event. True when a rule decided it: a suppress turns the event into an info
+ * The quiet-wake rules (lib/quiet-wakes.ts) for one actionable event. `decided` is true when a rule decided it: a suppress turns the event into an info
  * line logged as noise (so the hourly sweep lists it); a wake keeps it actionable, logs why, and may replace its summary. False leaves it to the normal triage.
+ * `prState` is the PR state the rule read from gh, when it read one (the slim table uses it for LEFT-OPEN-SET).
  */
 function applyQuietRule(e: DigestEvent, kind: string, opts: { dir: string; quiet?: QuietDeps }): { decided: boolean; prState?: PrState } {
   const q = quietVerdict(e, opts.quiet);
