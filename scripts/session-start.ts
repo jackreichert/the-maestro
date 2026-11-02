@@ -105,17 +105,29 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
     const age = deps.now - written;
     lines.push(`Status page: updated ${ageText(age)} ago (${clock(written, deps.tz)})${age > STALE_MS ? '; STALE, nothing is refreshing it until the loop runs' : ''}`);
   }
-  const web = deps.webProbe?.();
-  if (web?.url && !web.up) lines.push(`Podium web: down (nothing answers at ${web.url}); the page link in the footer will not open. Restart it: \`journal.ts web\``);
+  lines.push(...podiumLines(deps));
   const drained = deps.drainDigests?.() ?? [];
   if (drained.length) lines.push(`Unread digests (${drained.length}), shown once and now marked seen:`, ...drained);
+  lines.push(...loopLines(deps));
+  return { lines, failed };
+}
+
+/** The `Podium web:` line when the footer link does not answer; none when it answers or is not an http URL. */
+function podiumLines(deps: StartDeps): string[] {
+  const web = deps.webProbe?.();
+  return web?.url && !web.up ? [`Podium web: down (nothing answers at ${web.url}); the page link in the footer will not open. Restart it: \`journal.ts web\``] : [];
+}
+
+/** The `Loop:` verdict (when there is one) and the line about who holds the loop lock. */
+function loopLines(deps: StartDeps): string[] {
+  const lines: string[] = [];
   const health = deps.loopHealth?.().replace(/\*\*/g, '');
   if (health) lines.push(health);
   const holder = deps.lockHolder();
   lines.push(holder === null
     ? `Event loop: NOT RUNNING. No session starts it: the launchd supervisor is the only runner (restart: ${restartCommand()}; not installed yet: node scripts/install-loop-supervisor.ts). Events already in the inbox still reach you: wait on it with run_in_background: ${deps.waitCommand}`
     : `Event loop: running (pid ${holder}), the launchd supervisor's. Wait on the inbox with run_in_background: ${deps.waitCommand}`);
-  return { lines, failed };
+  return lines;
 }
 
 /**
