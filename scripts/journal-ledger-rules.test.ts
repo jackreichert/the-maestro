@@ -5,6 +5,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { ASK_TEMPLATE } from './lib/ask-template-fixture.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -108,4 +109,23 @@ test('learned --page with an existing page, and --no-page with a reason, both wr
     const rows = ledger().filter((x) => x.kind === 'learned') as (Row & { page?: string; noPage?: string })[];
     assert.equal(rows[0]?.page, 'Library/the-maestro/api.md');
     assert.equal(rows[1]?.noPage, 'a one-off, no page covers it');
+});
+
+test('decide without --why is refused and writes neither a file nor a row (already enforced; pinned with the other writing rules)', () => {
+    const r = run(['decide', 'Ship the Podium on Fridays', ...MARK]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /why/i);
+    assert.equal(ledger().length, 0);
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'DECISIONS.md')), false);
+});
+
+test('ask without --recommend is refused and names the flag (already enforced); a --default on a one-way ask is refused', () => {
+    const noRecommend = ASK_TEMPLATE.slice(0, ASK_TEMPLATE.indexOf('--recommend'));
+    const r = run(['ask', 'Ship Friday or Monday?', '--searched', 'the README', ...noRecommend, ...MARK]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /--recommend/);
+    const oneWay = run(['ask', 'Ship Friday or Monday?', '--searched', 'the README', '--door', 'one-way', '--default', 'Friday', ...ASK_TEMPLATE, ...MARK]);
+    assert.equal(oneWay.code, 1);
+    assert.match(oneWay.err, /one-way ask can never carry a default/);
+    assert.equal(ledger().length, 0);
 });
