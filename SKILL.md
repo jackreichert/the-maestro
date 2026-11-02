@@ -119,6 +119,8 @@ The Session line already says `roll now`. Log work done after the roll as usual
 ([cost/budget.md#session-hygiene](cost/budget.md#session-hygiene)). Full formatting rules (more
 than two agents, killed/failed states, elapsed time): `reference/dispatch.md#status-footer`.
 
+**Lean cost profile.** With `cost_profile: lean` the loop registers no `retro-due`, `repost-nudge` or `library-due`, teammate reviews run on demand only, and the merge sweep is a script in roll-maintenance, never an agent ([cost/budget.md#lean-cost-profile](cost/budget.md#lean-cost-profile)).
+
 ## Managing running agents
 
 | User asks | Do this |

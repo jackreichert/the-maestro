@@ -68,6 +68,7 @@ one_pr_per_ticket: on         # on (default) or off: pr-open.ts refuses a second
 one_pr_exempt_heads: release/*  # head-branch globs (comma-separated) the one-PR-per-ticket rule skips; default release/*; file-only
 review_pool_owners: example-org # GitHub owners (or owner/name globs, comma-separated) whose PRs other people review; every repo outside the pool counts as self-review, so personal repos never fill review_queue_cap; default none
 self_review_repos: example-owner/tool # GitHub owners (or owner/name globs, comma-separated) whose PRs only you review: not counted toward review_queue_cap, listed apart from the rest on the PR board; a bare owner means owner/*; default none, so every PR is counted and listed together
+cost_profile: lean            # full (default) or lean: lean skips the retro-due, repost-nudge and library-due watches, on-demand teammate reviews only, merge sweep run as a script by roll-maintenance (cost/budget.md)
 teammate_review_minutes: 15   # minutes a teammate's ready PR may wait with no human review before pr-watch reports REVIEW-WAIT (the teammate review playbook); scope is gh_org plus the owners in review_pool_owners; default 0, off
 repost_nudge_enabled: on      # master switch for the repost nudge; off: the watch is not registered at session start and a registered one never fires; default on
 repost_nudge_triggers: approval,teammate-review  # what starts a nudge, comma-separated: approval (after the latest approval on your open PRs), teammate-review (a review draft queued or posted); default both
