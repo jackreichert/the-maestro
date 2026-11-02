@@ -19,17 +19,24 @@ export interface SpendCache { at: number; since: string; daily: Record<string, n
   /** When `daily` was last read successfully; set only while `error` is, since `at` then marks the failed attempt. */
   goodAt?: number }
 
-/** `{ daily: [{ date, totalCost }] }` (or the bare array) to a date-to-dollars map; throws on anything else. */
+/**
+ * `{ daily: [{ period | date, totalCost, agent? }] }` (or the bare array) to a date-to-dollars map; throws on anything else.
+ * Current ccusage keys the day as `period` (older releases used `date`). When a day has an `agent: "all"` row, that row is the day's
+ * total and the per-agent rows beside it are not added again; a day without one sums its rows.
+ */
 export function parseCcusage(stdout: string): Record<string, number> {
   const data: unknown = JSON.parse(stdout);
   const rows = Array.isArray(data) ? data : (data as { daily?: unknown })?.daily;
   if (!Array.isArray(rows)) throw new Error('ccusage output has no daily list');
-  const out: Record<string, number> = {};
-  for (const r of rows as { date?: unknown; totalCost?: unknown }[]) {
-    if (typeof r?.date !== 'string' || typeof r.totalCost !== 'number') continue;
-    out[r.date] = (out[r.date] ?? 0) + r.totalCost;
+  const sums: Record<string, number> = {};
+  const totals: Record<string, number> = {};
+  for (const r of rows as { period?: unknown; date?: unknown; totalCost?: unknown; agent?: unknown }[]) {
+    const day = typeof r?.period === 'string' ? r.period : r?.date;
+    if (typeof day !== 'string' || typeof r.totalCost !== 'number') continue;
+    if (r.agent === 'all') totals[day] = (totals[day] ?? 0) + r.totalCost;
+    else sums[day] = (sums[day] ?? 0) + r.totalCost;
   }
-  return out;
+  return { ...sums, ...totals };
 }
 
 /** Runs ccusage for the days since `since` (YYYY-MM-DD) in `tz`; returns the daily map or the reason it could not. */
