@@ -28,3 +28,6 @@ export const bootstrap = (launchctl: Launchctl, uid: number, plist: string): Lau
 export const bootout = (launchctl: Launchctl, uid: number, label: string): LaunchctlResult => launchctl(['bootout', target(uid, label)]);
 /** Starts a loaded job; with `restart` kills a running one first (`-k`). Without it, a job that is already running is left alone. */
 export const kickstart = (launchctl: Launchctl, uid: number, label: string, restart = false): LaunchctlResult => launchctl(['kickstart', ...(restart ? ['-k'] : []), target(uid, label)]);
+
+/** Blocks the thread for `ms` (the callers are synchronous scripts that poll). */
+export const sleepSync = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };

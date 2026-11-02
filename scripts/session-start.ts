@@ -35,8 +35,8 @@ import type { Watch } from './lib/types.ts';
 import { digestDir, drainDigests } from './lib/digest-store.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { LABEL, launchAgentsDir, plistPath } from './lib/supervisor-state.ts';
-import { currentUid, realLaunchctl } from './lib/launchd.ts';
-import { healPodium, healSupervisor } from './lib/self-heal.ts';
+import { currentUid, realLaunchctl, sleepSync } from './lib/launchd.ts';
+import { healPodium, healSupervisor, loopbackPort } from './lib/self-heal.ts';
 import type { Heal } from './lib/self-heal.ts';
 import { WEB_LABEL } from './install-podium-web.ts';
 
@@ -131,7 +131,7 @@ function podiumLines(deps: StartDeps): string[] {
   const healed = deps.healWeb?.(web.url);
   if (healed?.action === 'started') return [`Podium web: was down; ${healed.message}`];
   const reason = healed ? ` Self-heal ${healed.action === 'failed' ? 'failed' : 'did not start it'}: ${healed.message}.` : '';
-  return [`Podium web: down (nothing answers at ${web.url}); the page link in the footer will not open.${reason} Restart it: \`journal.ts web --port <port>\``];
+  return [`Podium web: down (nothing answers at ${web.url}); the page link in the footer will not open.${reason} Restart it: \`journal.ts web --port ${loopbackPort(web.url) ?? '<port>'}\``];
 }
 
 /** The `Loop:` verdict (when there is one) and the line about who holds the loop lock, after trying to bring the supervisor back when nothing holds it. */
@@ -188,7 +188,7 @@ function spawnDetachedWeb(port: number): void {
 const realHealWeb = (url: string): Heal => healPodium({
   launchctl: realLaunchctl, uid: currentUid(), label: WEB_LABEL, plist: join(launchAgentsDir(), `${WEB_LABEL}.plist`), url,
   spawnWeb: spawnDetachedWeb, probe: (u) => connects(u),
-  sleep: (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); },
+  sleep: sleepSync,
 });
 
 const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;

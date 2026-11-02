@@ -22,7 +22,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { WEB_LABEL, portFromUri } from './install-podium-web.ts';
-import { bootout, currentUid, isLoaded, realLaunchctl } from './lib/launchd.ts';
+import { bootout, currentUid, isLoaded, realLaunchctl, sleepSync } from './lib/launchd.ts';
 import type { Launchctl } from './lib/launchd.ts';
 import { LABEL } from './lib/supervisor-state.ts';
 import { CONTAINER_PROJECT, LEDGER_ROOT, STATUS_PAGE_URI_SETTING } from './local-config.ts';
@@ -115,7 +115,7 @@ function realEnv(): ShutdownEnv {
       const r = spawnSync(process.execPath, [join(SCRIPTS, 'journal.ts'), ...args, '--vault', LEDGER_ROOT, '--project', CONTAINER_PROJECT], { encoding: 'utf8', timeout: 10 * 60_000 });
       return { ok: r.status === 0, output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
     },
-    sleep: (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); },
+    sleep: sleepSync,
   };
 }
 
