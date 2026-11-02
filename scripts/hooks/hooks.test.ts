@@ -78,6 +78,21 @@ test('precompact reports a missing transcript_path and an unset scripts_dir inst
   assert.match(precompact({}, d), /^precompact incomplete: decisions: no transcript_path in the hook input; snapshot: scripts_dir is not set/);
 });
 
+test('session-start context in slim mode: only the front-page footer and the slim pointer, no board or cold start', () => {
+  const seen: string[][] = [];
+  const run = (a: string[]) => { seen.push(a); return a[0] === 'status' ? { ok: true, out: 'Footer x' } : { ok: true, out: 'Board x' }; };
+  let coldRan = false;
+  const out = context('compact', run, () => { coldRan = true; return { ok: true, out: 'cold' }; }, ['too low'], 'slim');
+  assert.match(out, /== Autocompact ==\n!! too low/);
+  assert.match(out, /== Front page \(journal\.ts status --footer\) ==\nFooter x/);
+  assert.match(out, /Mode: slim/);
+  assert.ok(!out.includes('Board x') && !out.includes('== Cold start =='), 'slim skips the board and the cold-start page');
+  assert.equal(coldRan, false);
+  assert.deepEqual(seen, [['status', '--footer']]);
+  assert.equal(context('other', run, undefined, [], 'slim'), '');
+  assert.match(context('compact', run, undefined, [], 'full'), /== Board \(journal\.ts prime\) ==/);
+});
+
 test('session-start context: every start reason prints the board and cold start; Start here is only the fallback', () => {
   const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: 'Board x' } : a[0] === 'start-here' ? { ok: true, out: 'start page' } : { ok: false, out: 'unknown' });
   assert.equal(context('other', run, () => ({ ok: true, out: 'cold' })), '');
