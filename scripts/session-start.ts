@@ -25,7 +25,7 @@ import { closeSync, existsSync, mkdirSync, openSync, realpathSync, statSync } fr
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CONTAINER_PROJECT, EVENT_DIR, LEDGER_ROOT, REPOST_NUDGE_ENABLED, STATUS_PAGE_URI_SETTING, statusDirFor, WATCH_TZ } from './local-config.ts';
+import { CONTAINER_PROJECT, COST_PROFILE, EVENT_DIR, LEDGER_ROOT, REPOST_NUDGE_ENABLED, STATUS_PAGE_URI_SETTING, statusDirFor, WATCH_TZ } from './local-config.ts';
 import { podiumWebUrl } from './lib/status-page/links.ts';
 import { PODIUM_FILE } from './lib/status-page/seen.ts';
 import { listWatches, lockHolder, markStanding, removeWatch } from './lib/watch-registry.ts';
@@ -43,6 +43,8 @@ import { WEB_LABEL } from './install-podium-web.ts';
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 /** The watches a session needs, keyed by the id used when one is missing. retro-due and repost-nudge are here so the periodic retro review and the repost nudge never depend on someone remembering to register it. */
 export const NEEDED = [{ id: 'status-watch', type: 'status-watch' }, { id: 'status-refresh', type: 'status-refresh' }, { id: 'retro-due', type: 'retro-due' }, { id: 'repost-nudge', type: 'repost-nudge' }, { id: 'whats-next', type: 'whats-next' }] as const;
+/** Event types the lean cost profile never registers: each exists to make the orchestrator start an LLM agent. */
+export const LEAN_OFF: readonly string[] = ['retro-due', 'repost-nudge', 'library-due'];
 /** The refresh ticks every 10 minutes; a page this old has had at least one missed tick. */
 export const STALE_MS = 15 * 60_000;
 
@@ -56,6 +58,8 @@ export interface StartDeps {
   addWatch: (id: string, type: string, statusDir: string) => { ok: boolean; message: string };
   /** Watch types that are switched off in the settings: not registered, and said so. Absent means none. */
   disabledTypes?: readonly string[];
+  /** Watch types a registered watch of which is removed (the lean cost profile: events that only wake an LLM agent). Absent means none. */
+  retireTypes?: readonly string[];
   lockHolder: () => number | null;
   /** When the page was last written, or null when there is none. */
   pageWrittenAt: (statusDir: string) => number | null;
@@ -97,7 +101,13 @@ const existing = (id: string, w: Watch, statusDir: string): string =>
 export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
   const lines: string[] = [];
   let failed = false;
+  for (const type of deps.retireTypes ?? []) {
+    const live = deps.watches().filter((w) => w.type === type);
+    live.forEach((w) => deps.removeWatch(w.id));
+    lines.push(`${type}: off (cost_profile lean)${live.length ? `, removed ${live.length} registered` : ''}`);
+  }
   for (const need of NEEDED) {
+    if (deps.retireTypes?.includes(need.type)) continue;
     if (deps.disabledTypes?.includes(need.type)) { lines.push(`${need.id}: off in the settings, not registered`); continue; }
     const live = deps.watches().filter((w) => w.type === need.type);
     const current = live.find((w) => Date.parse(w.expires) > deps.now);
@@ -200,6 +210,7 @@ export function realDeps(now: number = Date.now()): StartDeps {
     now,
     tz: WATCH_TZ,
     disabledTypes: REPOST_NUDGE_ENABLED ? [] : ['repost-nudge'],
+    retireTypes: COST_PROFILE === 'lean' ? LEAN_OFF : [],
     watches: () => listWatches(EVENT_DIR),
     removeWatch: (id) => { removeWatch(EVENT_DIR, id, 'expired, replaced at session start', now); },
     addWatch: (id, type, statusDir) => {

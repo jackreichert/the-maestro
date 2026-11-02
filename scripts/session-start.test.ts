@@ -228,3 +228,19 @@ test('unread digests are drained into the report once, ahead of the loop line', 
   assert.deepEqual(r.lines.slice(i + 1, i + 3), ['ACTION pr merged', 'ACTION loop down']);
   assert.equal(sessionStart('/s', world().deps).lines.some((l) => l.startsWith('Unread digests')), false);
 });
+
+test('lean cost profile: the LLM-waking types are not registered and registered ones are removed; the zero-token watches stay', () => {
+  const held = [watch('retro-due', 'retro-due'), watch('library-due', 'library-due')];
+  const { deps, added, removed } = world({ held, retireTypes: ['retro-due', 'repost-nudge', 'library-due'] });
+  const r = sessionStart('/s', deps);
+  assert.deepEqual(added.sort(), ['status-refresh:status-refresh', 'status-watch:status-watch', 'whats-next:whats-next']);
+  assert.deepEqual(removed.sort(), ['library-due', 'retro-due']);
+  assert.match(lineOf(r, 'retro-due:'), /off \(cost_profile lean\), removed 1 registered/);
+  assert.match(lineOf(r, 'repost-nudge:'), /off \(cost_profile lean\)$/);
+});
+
+test('without retireTypes (the full profile) every needed watch is registered', () => {
+  const { deps, added } = world();
+  sessionStart('/s', deps);
+  assert.deepEqual(added.sort(), ['repost-nudge:repost-nudge', 'retro-due:retro-due', 'status-refresh:status-refresh', 'status-watch:status-watch', 'whats-next:whats-next']);
+});
