@@ -109,7 +109,7 @@ export function spendText(cfg: BudgetConfig, v: BudgetView, ctxK = 0): string {
   return `Spend: ${today} · period ${m(usdWhole(v.periodSpend))} of ${usdWhole(cfg.monthlyUsd)} (${v.overPace ? 'OVER pace' : 'on pace'}) · ${tail}`;
 }
 
-export type AlertKey = 'warn' | 'hard' | 'pace' | 'offday';
+export type AlertKey = 'warn' | 'hard' | 'pace' | 'offday' | 'unreadable';
 export interface Alert { key: AlertKey; text: string }
 
 /** The thresholds crossed right now, in the order of how bad they are. Spend of a cent or less on a non-budget day is rounding, not spend. */

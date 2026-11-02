@@ -167,3 +167,21 @@ test('spendFooter: empty with no budget, never runs ccusage; with one it reads t
   const bad = () => ({ status: 1, stdout: '', stderr: 'no npx' });
   assert.match(spendFooter(WEEKDAYS, join(tmpdir(), 'nope-spend', 'x.json'), bad, 'UTC', Date.parse('2026-11-05T15:00:00Z')), /^Spend: unavailable \(ccusage exit 1: no npx\)/);
 });
+
+test('a failed read after a good one is never shown as current: unavailable on a new day, STALE with the age on the same day, and the watch says so once', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'spend-')), 'c.json');
+  const good = () => ({ status: 0, stdout: '{"daily":[{"date":"2026-11-05","totalCost":14.2}]}', stderr: '' });
+  const bad = () => ({ status: 1, stdout: '', stderr: 'offline' });
+  const t0 = Date.parse('2026-11-05T15:00:00Z');
+  spendFooter(WEEKDAYS, file, good, 'UTC', t0);
+  const same = spendFooter(WEEKDAYS, file, bad, 'UTC', t0 + 20 * 60_000);
+  assert.match(same, /\$14\.20 today/);
+  assert.match(same, /STALE, last good 15:00 UTC \(ccusage exit 1: offline\)/);
+  const nextDay = spendFooter(WEEKDAYS, file, bad, 'UTC', t0 + 18 * 3600_000);
+  assert.match(nextDay, /^Spend: unavailable \(ccusage exit 1: offline\)/);
+  assert.doesNotMatch(nextDay, /\$0\.00/);
+  const s1 = spendWatch.check('x', { now: t0 + 18 * 3600_000, prev: null, run: bad }, WEEKDAYS, 'UTC', file);
+  assert.match(spendWatch.diff(null, s1)[0].summary, /cannot read spend/);
+  const s2 = spendWatch.check('x', { now: t0 + 18 * 3600_000 + 6 * 60_000, prev: s1, run: bad }, WEEKDAYS, 'UTC', file);
+  assert.deepEqual(spendWatch.diff(s1, s2), []);
+});

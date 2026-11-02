@@ -4,8 +4,7 @@
  *
  * Every check reads the spend since the period start (lib/spend.ts: ccusage, cached 15 minutes; this machine's transcripts only) and judges it
  * (lib/budget.ts): today against the daily allowance (warn and hard fractions), the period against the pace, and any spend on a day that is not
- * a budget day. Each threshold is said once per day (State.announced); a new day starts clean. A figure that cannot be read is silent (the
- * footer says so); it never invents an alert. The event is actionable and notifies through notify_command like any other.
+ * a budget day. Each threshold is said once per day (State.announced); a new day starts clean. A figure that cannot be read for today raises one `cannot read spend` line a day (and the footer says so); old figures are never judged as today's. The event is actionable and notifies through notify_command like any other.
  * State { announced: { day, fired[] } | null, error }.
  */
 import { existsSync, statSync } from 'node:fs';
@@ -42,8 +41,11 @@ export function check(_target: string, ctx: Pick<CheckContext, 'now' | 'prev' | 
   const today = localDate(new Date(ctx.now), tz);
   const view0 = evaluate(cfg, today, {});
   const spend = spendSince(file, ctx.run, view0.periodStart, tz, ctx.now);
-  if (spend.error && !Object.keys(spend.daily).length) return { ...base, error: spend.error };
-  const { fresh, next } = dedupe(today, crossed(cfg, evaluate(cfg, today, spend.daily)), base.announced);
+  const view = evaluate(cfg, today, spend.daily);
+  // A failed read must not leave the guardrail silently off: with no figure for today, say so once a day instead of judging stale numbers.
+  const blind = !!spend.error && !(today in spend.daily);
+  const alerts = blind ? [{ key: 'unreadable' as const, text: `spend-watch: cannot read spend (${spend.error}); the budget is not being enforced until ccusage works. This machine only.` }] : crossed(cfg, view);
+  const { fresh, next } = dedupe(today, alerts, base.announced);
   return { announced: next, fresh: fresh.map((a) => a.text), error: spend.error ?? '' };
 }
 

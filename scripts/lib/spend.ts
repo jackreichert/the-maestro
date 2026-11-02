@@ -13,7 +13,9 @@ import type { Run } from './types.ts';
 export const CACHE_MS = 15 * 60_000;
 export const RETRY_MS = 5 * 60_000;
 
-export interface SpendCache { at: number; since: string; daily: Record<string, number>; error?: string }
+export interface SpendCache { at: number; since: string; daily: Record<string, number>; error?: string;
+  /** When `daily` was last read successfully; set only while `error` is, since `at` then marks the failed attempt. */
+  goodAt?: number }
 
 /** `{ daily: [{ date, totalCost }] }` (or the bare array) to a date-to-dollars map; throws on anything else. */
 export function parseCcusage(stdout: string): Record<string, number> {
@@ -61,7 +63,7 @@ export function spendSince(file: string, run: Run, since: string, tz: string, no
   if (cached && fresh(cached, since, now)) return cached;
   const got = runCcusage(run, since, tz);
   const keep = cached && cached.since === since ? cached.daily : {};
-  const next: SpendCache = 'daily' in got ? { at: now, since, daily: got.daily } : { at: now, since, daily: keep, error: got.error };
+  const next: SpendCache = 'daily' in got ? { at: now, since, daily: got.daily } : { at: now, since, daily: keep, error: got.error, ...(cached && cached.since === since ? { goodAt: cached.goodAt ?? (cached.error ? undefined : cached.at) } : {}) };
   try { writeCache(file, next); } catch { /* an unwritable cache only costs the next call a ccusage run */ }
   return next;
 }
@@ -73,7 +75,9 @@ export function spendFooter(cfg: BudgetConfig, file: string, run: Run, tz: strin
     const today = localDate(new Date(now), tz);
     const since = evaluate(cfg, today, {}).periodStart;
     const got = spendSince(file, run, since, tz, now);
-    if (got.error && !Object.keys(got.daily).length) return `Spend: unavailable (${got.error}) · this machine`;
-    return spendText(cfg, evaluate(cfg, today, got.daily), ctxK);
+    // A failed read never passes stale figures off as current: with no figure for today it says unavailable; with an old one it says how old.
+    if (got.error && !(today in got.daily)) return `Spend: unavailable (${got.error}) · this machine`;
+    const text = spendText(cfg, evaluate(cfg, today, got.daily), ctxK);
+    return got.error ? `${text} · STALE, last good ${new Date(got.goodAt ?? got.at).toISOString().slice(11, 16)} UTC (${got.error})` : text;
   } catch (e) { return `Spend: unavailable (${(e instanceof Error ? e.message : String(e)).slice(0, 100)})`; }
 }
