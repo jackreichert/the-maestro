@@ -68,7 +68,6 @@ export function leanSweep(run: Run): string {
 }
 
 export const realIo: MaintenanceIo = {
-  // merge-sweep exits 1 when it found rows to report (not a failure) and 2 when it could not run.
   ...(COST_PROFILE === 'lean' ? { sweep: leanSweep } : {}),
   localDay: (now) => localDate(new Date(now), WATCH_TZ),
   maintain: (target, today, run) => {
