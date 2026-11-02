@@ -34,6 +34,6 @@ export function staleRollLines(stale: LedgerItem[], today: string, staleDays: nu
     return [
         `Stale in flight: ${stale.length} row(s) with no lease for ${staleDays}d or more. Close, drop or refresh each:`,
         ...oldest.map((i) => `  ${i.id}  ${ageDays(i.date, today)}d${i.stream ? `  [${i.stream}]` : ''}  ${clip(i.text, 100)}`),
-        '  finished: `journal.ts done <id>`   abandoned: `journal.ts drop <id>`   still going: `journal.ts lease <id>`',
+        '  finished: `journal.ts done <id> --verify "<cmd or url>"`   abandoned: `journal.ts drop <id>`   still going: `journal.ts lease <id>`',
     ];
 }

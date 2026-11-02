@@ -142,7 +142,7 @@ test('--json reports the same lists and still does not close', () => {
     const body = JSON.parse(r.stdout) as { merged: { id: string; done?: string; allMerged: boolean }[]; stale: { id: string; done?: string; prs: { idleDays: number }[] }[]; unknown: unknown[]; closed: unknown[] };
     assert.equal(body.merged[0]?.id, 'aaaa');
     assert.equal(body.merged[0]?.allMerged, true);
-    assert.equal(body.merged[0]?.done, 'journal.ts done aaaa');
+    assert.equal(body.merged[0]?.done, 'journal.ts done aaaa --verify "<cmd or url>"');
     assert.equal(body.stale[0]?.id, 'bbbb');
     assert.equal(body.stale[0]?.prs[0]?.idleDays, 41);
     assert.equal(body.stale[0]?.done, undefined);

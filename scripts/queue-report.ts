@@ -56,7 +56,7 @@ export function main(argv: string[]): number {
     const built = queueHygiene(items.filter(isQueued), new Date().toISOString().slice(0, 10), TRACKER_KEY_PATTERN, branchesOf).built;
     if (has('json')) { printJson({ merged, built }); return 0; }
     console.log(`Open rows naming a merged PR (${merged.length}); nothing was closed:`);
-    for (const m of merged) console.log(`  ${m.id}  ${m.text}\n      ${m.prs.map((p) => `${p.ref.repo}#${p.ref.number} ${p.state}`).join(', ')}${m.allMerged ? '' : '  (other PRs on this row are not merged)'}\n      close if you agree: journal.ts done ${m.id}`);
+    for (const m of merged) console.log(`  ${m.id}  ${m.text}\n      ${m.prs.map((p) => `${p.ref.repo}#${p.ref.number} ${p.state}`).join(', ')}${m.allMerged ? '' : '  (other PRs on this row are not merged)'}\n      close if you agree: journal.ts done ${m.id} --verify "<cmd or url>"`);
     console.log(`\nQueued rows with a built branch (${built.length}):`);
     for (const b of built) console.log(`  ${b.id}  ${b.branch}`);
     return 0;

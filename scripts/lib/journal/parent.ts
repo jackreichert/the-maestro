@@ -24,4 +24,4 @@ export function orphanedParent(items: LedgerItem[], closed: LedgerItem): LedgerI
 
 /** The line shown after a close that leaves its parent with no open child. */
 export const parentPromptLine = (parent: LedgerItem): string =>
-    `parent ${parent.id} has no other open child: close it? \`journal.ts done ${parent.id}\`, or \`journal.ts drop ${parent.id}\`   ${parent.text ?? ''}`.trimEnd();
+    `parent ${parent.id} has no other open child: close it? \`journal.ts done ${parent.id} --verify "<cmd or url>"\`, or \`journal.ts drop ${parent.id}\`   ${parent.text ?? ''}`.trimEnd();

@@ -84,7 +84,7 @@ test('start with model and used shows the marks in status', () => {
 
 test('standup hides the usage suffix', () => {
     const id = idOf(run('start', 'team item', ...MARK).out);
-    run('done', id, ...MARK);
+    run('done', id, '--unverified', ...MARK);
     const s = run('standup');
     assert.match(s.out, /- team item/);
     assert.doesNotMatch(s.out, /model:/);
@@ -111,7 +111,7 @@ test('fold does not duplicate a stamped item', () => {
 
 test('roll appends a marked row without needing --model', () => {
     const id = idOf(run('start', 'finished', ...MARK).out);
-    run('done', id, ...MARK);
+    run('done', id, '--unverified', ...MARK);
     const r = run('roll');
     assert.equal(r.code, 0, r.err);
     const rolled = must(ledger().find((e) => e.kind === 'rolled'));
@@ -126,7 +126,7 @@ test('roll and scratch list <scripts_dir>/scratch with proposals when scripts_di
     const old = new Date(Date.now() - 20 * 86400000);
     utimesSync(f, old, old);
     const id = idOf(run('start', 'finished', ...MARK).out);
-    run('done', id, ...MARK);
+    run('done', id, '--unverified', ...MARK);
     const on = (...a: string[]) => runEnv({ MAESTRO_SCRIPTS_DIR: shelfDir }, ...a);
     for (const cmd of ['roll', 'scratch']) {
         const r = on(cmd);
@@ -339,7 +339,7 @@ test('carry re-homes an item', () => {
 function finishedStream(name = 'Launch') {
     seedRegistry();
     const id = idOf(run('start', 'ship the widget', '--stream', name, '--ticket', 'p1-001', ...MARK).out);
-    run('done', id, '--why', 'merged PR #1234 and released', ...MARK);
+    run('done', id, '--why', 'merged PR #1234 and released', '--unverified', ...MARK);
     run('log', 'learned the cause was a stale cache', '--stream', name, ...MARK);
     run('fact', 'visits_min=79', '--stream', name, ...MARK);
     return id;
@@ -384,7 +384,7 @@ test('archive refuses on open items, a draft retro and unfilled promotions, then
     assert.match(r.err, new RegExp(`open item ${openId}`));
     assert.match(r.err, /no retro doc found/);
 
-    run('done', openId, ...MARK);
+    run('done', openId, '--unverified', ...MARK);
     runT('retro', 'Launch');
     r = runT('archive', 'Launch', ...MARK);
     assert.equal(r.code, 1);
@@ -467,7 +467,7 @@ test('status --footer prints one Ledger line per active stream, registry names, 
     seedRegistry();
     const a = idOf(run('start', 'launch one', '--stream', 'launch', ...MARK).out);
     run('start', 'launch two', '--stream', 'launch-v2', ...MARK);
-    run('done', a, ...MARK);
+    run('done', a, '--unverified', ...MARK);
     run('ask', 'which way?', '--stream', 'Maestro', '--searched', 'test fixture', ...ASK_TEMPLATE, ...MARK);
     run('log', 'stuck on x', '--kind', 'blocked', '--stream', 'Maestro', ...MARK);
     run('start', 'loose end', ...MARK);
@@ -531,7 +531,7 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
 test('status --json carries the footer numbers, and they match what status --footer prints', () => {
     seedRegistry();
     const a = idOf(run('start', 'launch one', '--stream', 'launch', ...MARK).out);
-    run('done', a, ...MARK);
+    run('done', a, '--unverified', ...MARK);
     run('ask', 'which way?', '--stream', 'Maestro', '--searched', 'test fixture', ...ASK_TEMPLATE, ...MARK);
     run('log', 'stuck on x', '--kind', 'blocked', '--stream', 'Maestro', ...MARK);
     run('start', 'loose end', ...MARK);
@@ -592,7 +592,7 @@ test('queue <id> moves an in-flight item to queued, keeps its history, and is id
 
 test('queue refuses a closed or non-wip item, an unknown id-shaped token, and --kind; --text queues such a word', () => {
     const done = idOf(run('start', 'finished', ...MARK).out);
-    run('done', done, ...MARK);
+    run('done', done, '--unverified', ...MARK);
     const ask = idOf(run('ask', 'which way?', '--searched', 'test fixture', ...ASK_TEMPLATE, ...MARK).out);
     const before = ledger().length;
     assert.equal(run('queue', done, ...MARK).code, 1);
@@ -655,7 +655,7 @@ test('status separates queued from in flight: --json, --footer and the plain tex
 
 test('roll keeps queued items open, archives only finished work, and says how many are queued', () => {
     const done = idOf(run('start', 'finished', ...MARK).out);
-    run('done', done, ...MARK);
+    run('done', done, '--unverified', ...MARK);
     const later = idOf(run('queue', 'later job', '--stream', 'Launch', ...MARK).out);
     const parked = idOf(run('start', 'parked job', ...MARK).out);
     run('queue', parked, ...MARK);
@@ -787,7 +787,7 @@ function seedHandoff() {
     const wip = idOf(run('start', 'port the fix, see scripts/foo.mjs:12 and PR #123', '--stream', 'Launch', '--repo', 'api', '--ticket', 'api-014', ...MARK).out);
     run('log', 'blocked on the vendor key', '--kind', 'blocked', '--stream', 'Launch', ...MARK);
     const done = idOf(run('start', 'wire the flag', '--stream', 'Launch', ...MARK).out);
-    run('done', done, ...MARK);
+    run('done', done, '--unverified', ...MARK);
     run('log', 'lesson: the cause was a stale cache, ruled out the queue', '--stream', 'Launch', ...MARK);
     run('ask', 'ship on Friday?', '--stream', 'Launch', '--searched', 'test fixture', ...ASK_TEMPLATE, ...MARK);
     run('start', 'other stream work', '--stream', 'Maestro', ...MARK);
@@ -826,7 +826,7 @@ test('handoff --delta: first roll is the full handoff; later rolls write b, c wi
     // Work after the first roll: one new item, one completion, one ask. Ledger timestamps are ISO ms, so wait a tick.
     const until = Date.now() + 5; while (Date.now() < until) { /* spin past the marker ms */ }
     const late = idOf(run('start', 'late work after the roll, PR #456', '--stream', 'Launch', ...MARK).out);
-    run('done', wip, ...MARK);
+    run('done', wip, '--unverified', ...MARK);
     run('log', 'direct done after the roll', '--kind', 'done', '--stream', 'Launch', ...MARK);
     const asked = run('ask', 'merge order after the roll?', '--stream', 'Launch', '--searched', 'test fixture', ...ASK_TEMPLATE, ...MARK);
     assert.equal(asked.code, 0, asked.err);
@@ -1143,7 +1143,7 @@ test('concurrent appends: N processes x M rows all parse, with unique ids and th
 
 test('verify passes a clean ledger and reports every kind of problem with a non-zero exit', () => {
     const a = idOf(run('start', 'one', ...MARK).out);
-    run('done', a, ...MARK);
+    run('done', a, '--unverified', ...MARK);
     const clean = run('verify');
     assert.equal(clean.code, 0);
     assert.match(clean.out, /verify: 2 row\(s\), 0 problem\(s\)/);
@@ -1176,7 +1176,7 @@ test('roll commits the changed ledger files when ledger_git_autocommit is on, by
     mkdirSync(join(vault, 'Projects', 'test-proj', 'Index'), { recursive: true });
     writeFileSync(join(vault, 'Projects', 'test-proj', 'Index', 'maestro.sqlite'), 'binary');
     const id = idOf(run('start', 'ship it', ...MARK).out);
-    run('done', id, ...MARK);
+    run('done', id, '--unverified', ...MARK);
     const r = runEnv({ ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' }, 'roll');
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /ledger git: committed \d+ path\(s\)/);
@@ -1193,7 +1193,7 @@ test('roll commits the changed ledger files when ledger_git_autocommit is on, by
 
 test('roll does not commit when the config is off, the root is not a repo, or verify fails', () => {
     const id = idOf(run('start', 'a', ...MARK).out);
-    run('done', id, ...MARK);
+    run('done', id, '--unverified', ...MARK);
     // off (the default): a repo exists but nothing is committed
     git(vault, 'init', '-q');
     assert.equal(runEnv(gitEnv, 'roll').code, 0);
@@ -1208,7 +1208,7 @@ test('roll does not commit when the config is off, the root is not a repo, or ve
     const plain = mkdtempSync(join(tmpdir(), 'plain-'));
     const p = spawnSync(process.execPath, [SCRIPT, 'start', 'x', '--vault', plain, '--project', 'test-proj', ...MARK], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin' } });
     const pid = p.stdout.trim().split(/\s+/)[1];
-    spawnSync(process.execPath, [SCRIPT, 'done', pid, '--vault', plain, '--project', 'test-proj', ...MARK], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin' } });
+    spawnSync(process.execPath, [SCRIPT, 'done', pid, '--unverified', '--vault', plain, '--project', 'test-proj', ...MARK], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin' } });
     const nr = spawnSync(process.execPath, [SCRIPT, 'roll', '--vault', plain, '--project', 'test-proj'], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' } });
     assert.equal(nr.status, 0, nr.stderr);
     assert.match(nr.stderr, /not a git repository root; not committing/);
@@ -1225,7 +1225,7 @@ test('render writes one page per active stream and CURRENT.md stays the combined
     run('start', 'launch two', '--stream', 'Launch', ...MARK);
     run('log', 'launch blocker', '--kind', 'blocked', '--stream', 'Launch', ...MARK);
     const d = idOf(run('start', 'finished thing', '--stream', 'Launch', ...MARK).out);
-    run('done', d, ...MARK);
+    run('done', d, '--unverified', ...MARK);
     run('ask', 'maestro question?', '--stream', 'Maestro', '--searched', 'test fixture', ...ASK_TEMPLATE, ...MARK);
     run('start', 'loose', ...MARK);
     const r = run('render');
@@ -1258,7 +1258,7 @@ const section2 = (text: string, title: string) => text.split(new RegExp(`^## ${t
 test('an archived stream gets a page that links its retro; the ledger stays one file', () => {
     seedRegistry();
     const id = idOf(run('start', 'the work', '--stream', 'Launch', ...MARK).out);
-    run('done', id, ...MARK);
+    run('done', id, '--unverified', ...MARK);
     runT('retro', 'Launch');
     const path = retroPath('Launch');
     writeFileSync(path, readFileSync(path, 'utf8').replace('status: draft', 'status: reviewed').replace(/Promoted to: $/gm, 'Promoted to: one-off'));
@@ -1349,7 +1349,7 @@ test('--approval is rejected on every kind except decision and resolved', () => 
     }
     assert.throws(() => ledger());
     const w = idOf(run('log', 'task', '--kind', 'wip', ...MARK).out);
-    assert.equal(run('done', w, '--approval', 'one-off', ...MARK).code, 1);
+    assert.equal(run('done', w, '--approval', 'one-off', '--unverified', ...MARK).code, 1);
     assert.equal(run('drop', w, '--approval', 'one-off', ...MARK).code, 1);
     assert.equal(run('log', 'x', '--kind', 'decision', '--approval', 'standing', ...MARK).code, 0);
 });
@@ -1646,7 +1646,7 @@ test('roll --dry-run and --no-worktree-sweep leave every worktree in place', () 
 test('roll archives and commits the ledger before it sweeps, and a --fast roll sweeps nothing', () => {
     const w = sweepWorld();
     git(vault, 'init', '-q');
-    run('done', idOf(run('start', 'ship it', ...MARK).out), ...MARK);
+    run('done', idOf(run('start', 'ship it', ...MARK).out), '--unverified', ...MARK);
     const env = { ...gitEnv, MAESTRO_CONTAINER_ROOT: w.container, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' };
     const fast = runEnvIn(w.container, env, 'roll', '--fast');
     assert.equal(fast.code, 0, fast.err);
@@ -2048,7 +2048,7 @@ test('a ref that stops existing is not a promotion: triage --apply leaves the it
 test('roll --strict refuses before changing anything; plain roll warns and carries on', () => {
     triageWorld();
     const id = idOf(run('start', 'finished work', ...MARK).out);
-    run('done', id, ...MARK);
+    run('done', id, '--unverified', ...MARK);
     const rows = ledger().length;
     const strict = run('roll', '--strict');
     assert.equal(strict.code, 1);
@@ -2065,7 +2065,7 @@ test('roll --strict passes once the blockers are fixed', () => {
     const memo = blockFile('memory.md');
     run('rule', 'Samwise rule: x', '--ref', memo, ...MARK);
     const id = idOf(run('start', 'finished work', ...MARK).out);
-    run('done', id, ...MARK);
+    run('done', id, '--unverified', ...MARK);
     assert.equal(run('roll', '--strict').code, 0);
 });
 
@@ -2204,7 +2204,7 @@ test('defer hides an open item from status, the footer and prime until its date,
     assert.equal(run('defer', id, ...MARK).code, 1);
     assert.equal(run('defer', 'zzzz', '--until', deferDays(3), ...MARK).code, 1);
     const done = idOf(run('start', 'finished', ...MARK).out);
-    run('done', done, ...MARK);
+    run('done', done, '--unverified', ...MARK);
     assert.equal(run('defer', done, '--until', deferDays(3), ...MARK).code, 1);
     const rows = ledger().length;
     const r = run('defer', id, '--until', deferDays(3), ...MARK);
@@ -2228,7 +2228,7 @@ test('a deferral that has reached its date no longer hides the item, and a later
     assert.deepEqual(statusJson().inflight, []);
     run('defer', id, '--until', deferDays(1), ...MARK);
     assert.deepEqual(statusJson().inflight, [], 'latest defer wins, still in the future');
-    run('done', id, ...MARK);
+    run('done', id, '--unverified', ...MARK);
     assert.equal(run('verify').code, 0);
 });
 
@@ -2245,7 +2245,7 @@ test('an in-flight row older than stale_wip_days is stale: out of the in-flight 
     const board = run('status').out;
     assert.match(board, /Stale \(3d\+, no lease\)\n\s+.*forgotten long ago/);
     assert.match(board, /1 in flight · 1 stale/);
-    run('done', old, ...MARK);
+    run('done', old, '--unverified', ...MARK);
     assert.equal(statusJson().stale?.length, 0, 'closing the row clears it');
 });
 
@@ -2305,13 +2305,13 @@ test('closing the last open child prompts for its parent, a sibling still open d
     const a = idOf(run('log', 'first child', '--kind', 'wip', '--parent', parent, ...MARK).out);
     const b = idOf(run('log', 'second child', '--kind', 'wip', '--parent', parent, ...MARK).out);
     assert.equal(must(ledger().find((r) => r.id === a)).parent, parent);
-    const first = run('done', a, ...MARK);
+    const first = run('done', a, '--unverified', ...MARK);
     assert.equal(first.code, 0, first.err);
     assert.doesNotMatch(first.out, /parent .* has no other open child/);
-    const last = run('done', b, ...MARK);
+    const last = run('done', b, '--unverified', ...MARK);
     assert.match(last.out, new RegExp(`parent ${parent} has no other open child: close it\\?`));
     assert.equal(statusJson().inflight.map((i) => i.id).join(), parent, 'the prompt did not close the parent');
-    run('done', parent, ...MARK);
+    run('done', parent, '--unverified', ...MARK);
     const refused = run('log', 'orphan', '--kind', 'wip', '--parent', 'nosuch', ...MARK);
     assert.equal(refused.code, 1);
     assert.match(refused.err, /--parent names no item: nosuch/);
@@ -2424,7 +2424,7 @@ test('deferring the last open item of a stream empties its page, and an expired 
 // ── pending tracker transitions ─────────────────────────────────────────────
 
 function seedPending() {
-    const done = (text: string, ...more: string[]) => run('done', idOf(run('start', text, ...more, ...MARK).out), ...MARK);
+    const done = (text: string, ...more: string[]) => run('done', idOf(run('start', text, ...more, ...MARK).out), '--unverified', ...MARK);
     done('ship the retry cap ABC-12');
     done('wire the flag', '--ticket', 'XYZ-7');
     done('tidy the readme');
@@ -2435,7 +2435,7 @@ function seedPending() {
 
 test('tickets --pending lists done items with a tracker key and no recorded transition, once per key', () => {
     seedPending();
-    run('done', idOf(run('start', 'second pass at ABC-12', ...MARK).out), ...MARK);
+    run('done', idOf(run('start', 'second pass at ABC-12', ...MARK).out), '--unverified', ...MARK);
     const r = run('tickets', '--pending');
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /ABC-12 .*ship the retry cap/);
@@ -2470,7 +2470,7 @@ test('the key pattern is configurable, so an overlay can narrow what counts as a
 });
 
 test('local keys with no tracker (MAESTRO-N, MITHRIL-N) are never pending, and local_key_prefixes is configurable', () => {
-    run('done', idOf(run('start', 'the-maestro MAESTRO-7 and MITHRIL-3 shipped, ABC-5 too', ...MARK).out), ...MARK);
+    run('done', idOf(run('start', 'the-maestro MAESTRO-7 and MITHRIL-3 shipped, ABC-5 too', ...MARK).out), '--unverified', ...MARK);
     assert.deepEqual(parse(run('tickets', '--pending', '--json').out).pending.map((p) => p.key), ['ABC-5']);
     const none = parse(runEnv({ MAESTRO_LOCAL_KEY_PREFIXES: 'none' }, 'tickets', '--pending', '--json').out);
     assert.deepEqual(none.pending.map((p) => p.key).sort(), ['ABC-5', 'MAESTRO-7', 'MITHRIL-3']);
@@ -2990,7 +2990,7 @@ test('rows written before windows were recorded still fold, and the footer names
     mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
     writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), `${JSON.stringify({ id: 'old1', ts: new Date().toISOString(), date: new Date().toISOString().slice(0, 10), kind: 'wip', text: 'before windows' })}\n`);
     assert.equal(parse(run('status', '--json').out).inflight.length, 1);
-    assert.equal(run('done', 'old1', ...MARK).code, 0);
+    assert.equal(run('done', 'old1', '--unverified', ...MARK).code, 0);
     assert.equal(ledger().find((r) => r.kind === 'done')?.window, 'testwin');
     assert.equal(ledger()[0].window, undefined, 'an old row is left as written');
 });
@@ -3158,7 +3158,7 @@ test('verify rejects a learned row that carries a field the command never writes
 test('done, drop and resolve refuse a learned row, leave it in triage box 9, and write nothing', () => {
     const id = idOf(run('learned', 'A claim.', ...LEARNED, ...MARK).out);
     for (const verb of ['done', 'drop', 'resolve']) {
-        const r = run(verb, id, ...MARK);
+        const r = run(verb, id, ...(verb === 'done' ? ['--unverified'] : []), ...MARK);
         assert.equal(r.code, 1, verb);
         assert.match(r.err, /is a learned row: it is closed only by a composer pass/);
     }
@@ -3245,7 +3245,7 @@ test('web needs no --project when the config names none: it falls back to the co
 test('query filters read-only and capped: by stream, status and id, refuses bad filters, writes no row', () => {
     const a = idOf(run('start', 'alpha job', '--stream', 'Alpha', ...MARK).out);
     const b = idOf(run('start', 'beta job', '--stream', 'Beta', ...MARK).out);
-    run('done', b, ...MARK);
+    run('done', b, '--unverified', ...MARK);
     const before = ledger().length;
     type Q = { total: number; shown: number; rows: { id: string }[] };
     assert.deepEqual(parse<Q>(run('query', '--stream', 'Alpha', '--json').out).rows.map((r) => r.id), [a]);

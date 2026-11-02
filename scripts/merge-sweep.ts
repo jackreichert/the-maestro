@@ -148,7 +148,7 @@ export function validDate(s: string): boolean {
 
 /** The close command for a ledger id this script is willing to print. Never executed here. */
 export function doneCommand(id: string): string | undefined {
-    return SAFE_ID.test(id) ? `journal.ts done ${id}` : undefined;
+    return SAFE_ID.test(id) ? `journal.ts done ${id} --verify "<cmd or url>"` : undefined;
 }
 
 interface GhView { state: string; updatedAt?: string }
@@ -283,7 +283,7 @@ const JOURNAL = fileURLToPath(new URL('./journal.ts', import.meta.url));
 
 /** Append `done` to one row through `journal.ts done`. True when it exited 0. */
 function journalDone(id: string, why: string, vault: string, project: string): boolean {
-    const r = spawnSync(process.execPath, [JOURNAL, 'done', id, '--why', why, '--vault', vault, '--project', project, '--model', 'n/a', '--used', 'tool:merge-sweep.ts'], { encoding: 'utf8', timeout: 30_000 });
+    const r = spawnSync(process.execPath, [JOURNAL, 'done', id, '--verify', 'gh pr view: every linked PR is MERGED', '--why', why, '--vault', vault, '--project', project, '--model', 'n/a', '--used', 'tool:merge-sweep.ts'], { encoding: 'utf8', timeout: 30_000 });
     return r.status === 0;
 }
 

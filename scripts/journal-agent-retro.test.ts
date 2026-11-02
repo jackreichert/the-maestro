@@ -31,7 +31,7 @@ function fixture({ briefed = true } = {}) {
 
 test('done refuses a briefed item with no retro; a retro lets it close', () => {
   const f = fixture();
-  const refused = f.run('done', f.id, ...MARKS);
+  const refused = f.run('done', f.id, '--unverified', ...MARKS);
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, new RegExp(`agent-retro ${f.id}`));
   assert.equal(f.rows().filter((r) => r.kind === 'done').length, 0);
@@ -41,14 +41,14 @@ test('done refuses a briefed item with no retro; a retro lets it close', () => {
   const row = f.rows().find((r) => r.kind === 'agent-retro');
   assert.equal(row?.retros, f.id);
   assert.equal(row?.stream, 'orchard');
-  const closed = f.run('done', f.id, ...MARKS);
+  const closed = f.run('done', f.id, '--unverified', ...MARKS);
   assert.equal(closed.status, 0, closed.stderr);
 });
 
 test('done --no-retro closes with the reason recorded; an empty reason is refused', () => {
   const f = fixture();
-  assert.notEqual(f.run('done', f.id, '--no-retro', ...MARKS).status, 0);
-  const r = f.run('done', f.id, '--no-retro', 'the agent was stopped', ...MARKS);
+  assert.notEqual(f.run('done', f.id, '--no-retro', '--unverified', ...MARKS).status, 0);
+  const r = f.run('done', f.id, '--no-retro', 'the agent was stopped', '--unverified', ...MARKS);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(f.rows().find((x) => x.kind === 'done')?.noRetro, 'the agent was stopped');
   const listed = f.run('agent-retros', '--json');
@@ -58,7 +58,7 @@ test('done --no-retro closes with the reason recorded; an empty reason is refuse
 
 test('an item never briefed closes without a retro, and drop is never gated', () => {
   const f = fixture({ briefed: false });
-  assert.equal(f.run('done', f.id, ...MARKS).status, 0);
+  assert.equal(f.run('done', f.id, '--unverified', ...MARKS).status, 0);
   const g = fixture();
   assert.equal(g.run('drop', g.id, '--why', 'not needed', ...MARKS).status, 0);
   assert.notEqual(g.run('drop', g.id, '--no-retro', 'x', ...MARKS).status, 0, '--no-retro is for done only');

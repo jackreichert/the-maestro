@@ -179,6 +179,7 @@ import { boardContextFor } from './lib/journal/board-context.ts';
 import { lapsedRequeues } from './lib/journal/lease-requeue.ts';
 import { umbrellaRefusal } from './lib/journal/umbrella.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
+import { parseDoneProof } from './lib/journal/done-proof.ts';
 import { proposeCloses, proposalLines, applyProposals } from './lib/journal/age-out.ts';
 import { branchState } from './lib/journal/branch-state.ts';
 import { chosenClosing, planClosing, planRefusal, applyClosing } from './lib/journal/resolves.ts';
@@ -1229,13 +1230,18 @@ function cmdClose(newKind: string): void {
     const noRetro = has('no-retro') ? (arg('no-retro') ?? '') : null;
     if (noRetro !== null && newKind !== 'done') die('--no-retro is for done: drop and resolve do not need a retro.');
     if (noRetro !== null) { const bad = noRetroRefusals(noRetro); if (bad.length) die(`done: refused, nothing written.\n${bad.map((b) => `  - ${b}`).join('\n')}`); }
+    // `done` carries its proof (--verify or --unverified); checked before the target is looked up so a bare `done` is always refused the same way.
+    const proofFlags = { verify: { given: has('verify'), value: arg('verify') }, unverified: has('unverified') };
+    if (newKind !== 'done' && (proofFlags.verify.given || proofFlags.unverified)) die('--verify and --unverified are for done: drop and resolve close without a proof.');
+    const doneProof = newKind === 'done' ? parseDoneProof(proofFlags) : undefined;
+    if (doneProof && !doneProof.proof) die(`done: refused, nothing written.\n${doneProof.errors.map((e) => `  - ${e}`).join('\n')}`);
     const result = closeItem({ readLedger, append, newId, fold, today, now }, {
         kind: newKind,
         needle,
         note: arg('answer') || arg('why'),
         ticket: arg('ticket'),
         followUp: true,
-        extras: () => ({ ...approvalClose(newKind), ...(noRetro !== null ? { noRetro: noRetro.replace(/\s+/g, ' ').trim() } : {}), ...usageFromArgs() }),
+        extras: () => ({ ...approvalClose(newKind), ...(doneProof?.proof ?? {}), ...(noRetro !== null ? { noRetro: noRetro.replace(/\s+/g, ' ').trim() } : {}), ...usageFromArgs() }),
         ...(newKind === 'done' && noRetro === null ? { guard: (target: LedgerItem, entries: LedgerRow[]) => retroGate(entries, target) } : {}),
     });
     if (result.kind === 'ambiguous') exitAmbiguous(needle, result.matches);

@@ -90,7 +90,7 @@ test('next records the step, the latest wins, and a closed item refuses', () => 
     const out = run(['recover', id]).out;
     assert.match(out, /Next step recorded: second step/);
     assert.match(out, /Branch: feat\/FAKE-3-x/);
-    assert.equal(run(['done', id, ...MARK]).code, 0);
+    assert.equal(run(['done', id, '--unverified', ...MARK]).code, 0);
     assert.equal(run(['next', id, 'late', ...MARK]).code, 1);
     assert.equal(run(['recover', id]).code, 1);
     assert.equal(run(['verify']).code, 0, 'next rows verify');
