@@ -153,3 +153,22 @@ test('a carry problem schedules the hourly retry and raises one event, and a fai
   r.at(T0 + 25 * HOUR);
   assert.equal(r.carried.length, 2, 'a maintain that failed did not carry');
 });
+
+test('lean profile: a clean run is followed by the merge sweep script; a failed sweep retries and is reported', () => {
+  const sweeps: string[] = [];
+  const results = ['', 'merge sweep exit 2: no ledger'];
+  const io: MaintenanceIo = { localDay: () => '2026-11-02', maintain: () => OK, carry: () => ({ written: [], problems: [] }), sweep: () => { sweeps.push('x'); return results.shift() ?? ''; } };
+  const first = maint.check('box', { now: 1, prev: null, run: noRun }, io);
+  assert.equal(first.ranDay, '2026-11-02');
+  assert.equal(sweeps.length, 1);
+  const io2 = { ...io, localDay: () => '2026-11-03' };
+  const failed = maint.check('box', { now: 2, prev: first, run: noRun }, io2);
+  assert.match(failed.error, /merge sweep exit 2/);
+  assert.equal(failed.ranDay, '2026-11-02');
+  assert.deepEqual(maint.diff(first, failed).map((e) => e.summary), ['roll maintenance failed: merge sweep exit 2: no ledger']);
+});
+
+test('full profile: no sweep hook, so the check never runs the sweep', () => {
+  const io: MaintenanceIo = { localDay: () => '2026-11-02', maintain: () => OK, carry: () => ({ written: [], problems: [] }) };
+  assert.equal(maint.check('box', { now: 1, prev: null, run: noRun }, io).error, '');
+});
