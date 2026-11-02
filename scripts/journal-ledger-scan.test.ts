@@ -62,7 +62,7 @@ for (const [name, argsFor] of WRITERS) {
 
     test(`${name}: a clean row, with paths, shas, commands and placeholders, is written`, () => {
         const f = fixture();
-        const text = 'merged scripts/lib/journal/store.ts at commit 52c927bd3f1e0a9b8c7d6e5f4a3b2c1d0e9f8a7b, ran `node --test`, PASSWORD=<redacted>, token=$TOKEN';
+        const text = 'at commit 52c927bd3f1e, ran `node --test`, PASSWORD=<redacted>, token=$TOKEN';
         const r = f.run(...argsFor(text), ...MARK);
         assert.equal(r.code, 0, r.err);
         assert.match(f.rows(), /52c927bd3f1e/);

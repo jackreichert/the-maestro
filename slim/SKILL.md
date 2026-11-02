@@ -59,7 +59,7 @@ Commands below are `node scripts/<name>.ts`, run from the skill root. Ledger com
   - `--scope working-rule` for how to work with them;
   - `--binds window` for "just here, just today".
 - Every write takes `--model <id> --used <skill or tool>`.
-- Headlines stay short, and every item in a reply carries its ledger id.
+- Headlines stay at 80 characters or fewer (`start` and `queue` refuse longer ones; the detail goes in `log`), and every item in a reply carries its ledger id.
 
 ## Library: what we know
 

@@ -53,7 +53,7 @@ test('start --steal takes it; done frees it; release frees it; a lapsed lease is
     assert.equal(t.run('a', 'lease', id, '--ttl', '0.01').status, 0);
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 900);
     assert.equal(t.run('b', 'lease', id).status, 0, 'a 0.6 s lease has lapsed');
-    assert.equal(t.run('b', 'done', id, ...MARK).status, 0);
+    assert.equal(t.run('b', 'done', id, '--unverified', ...MARK).status, 0);
     assert.equal(t.run('a', 'status', '--json').status, 0);
     assert.deepEqual(JSON.parse(t.run('a', 'status', '--json').stdout).leases.held, []);
   } finally { t.done(); }

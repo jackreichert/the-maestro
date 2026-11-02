@@ -179,6 +179,7 @@ import { boardContextFor } from './lib/journal/board-context.ts';
 import { lapsedRequeues } from './lib/journal/lease-requeue.ts';
 import { umbrellaRefusal } from './lib/journal/umbrella.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
+import { headlineProblem } from './lib/journal/headline.ts';
 import { parseDoneProof } from './lib/journal/done-proof.ts';
 import { proposeCloses, proposalLines, applyProposals } from './lib/journal/age-out.ts';
 import { branchState } from './lib/journal/branch-state.ts';
@@ -688,6 +689,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
     if (!ask && kind === 'question') die('A question goes through `ask`, which requires --searched: journal.ts ask "<question>" --searched "<where I looked>".');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
+    if (kind === 'wip') { const long = headlineProblem(text, queued ? 'queue' : 'start'); if (long) die(long); }
     const reworked = kind === 'rework' ? reworkTarget(text) : undefined;
     const refs = rule ? ruleRefs() : refsFromArgs();
     const askGate = askGateFromArgs(ask, tplFlags.file);   // before anything that reads the filesystem, so a missing --searched is always the first refusal

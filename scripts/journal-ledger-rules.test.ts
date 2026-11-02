@@ -129,3 +129,16 @@ test('ask without --recommend is refused and names the flag (already enforced); 
     assert.match(oneWay.err, /one-way ask can never carry a default/);
     assert.equal(ledger().length, 0);
 });
+
+test('start and queue refuse a headline over 80 characters, say how to shorten it, and write nothing; 80 passes', () => {
+    const long = `${'word '.repeat(16)}end`;   // 83 characters
+    for (const verb of ['start', 'queue']) {
+        const r = run([verb, long, ...MARK]);
+        assert.equal(r.code, 1, verb);
+        assert.match(r.err, /headline is 83 characters; keep it to 80 or fewer/);
+        assert.match(r.err, /journal\.ts log <id>/);
+    }
+    assert.equal(ledger().length, 0);
+    assert.equal(run(['start', 'x'.repeat(80), ...MARK]).code, 0);
+    assert.equal(run(['queue', 'y'.repeat(80), ...MARK]).code, 0);
+});
