@@ -5,7 +5,7 @@
 import { realpathSync } from 'node:fs';
 import { sep } from 'node:path';
 
-export type CheckStatus = 'ok' | 'warn' | 'skip';
+export type CheckStatus = 'ok' | 'warn' | 'fail' | 'skip';
 export interface CheckResult { name: string; status: CheckStatus; detail: string }
 export interface HookCommand { event: string; matcher: string; command: string }
 
@@ -108,9 +108,9 @@ export function checkDuplicateInstalls(f: InstallFacts): CheckResult {
     : { name, status: 'ok', detail: 'no plugin is also installed as loose files, and no nested clone was found' };
 }
 
-/** A line per check, then a verdict line. */
+/** A line per check, then a verdict line. A FAIL is a guardrail that is not live; a WARN is something to look at. */
 export function render(results: CheckResult[]): string {
-  const mark = { ok: 'ok  ', warn: 'WARN', skip: 'skip' } as const;
-  const warns = results.filter((r) => r.status === 'warn').length;
-  return [...results.map((r) => `${mark[r.status]}  ${r.name}: ${r.detail}`), warns ? `doctor: ${warns} problem${warns === 1 ? '' : 's'} found. Nothing was changed.` : 'doctor: no problems found.'].join('\n');
+  const mark = { ok: 'PASS', warn: 'WARN', fail: 'FAIL', skip: 'skip' } as const;
+  const problems = results.filter((r) => r.status === 'warn' || r.status === 'fail').length;
+  return [...results.map((r) => `${mark[r.status]}  ${r.name}: ${r.detail}`), problems ? `doctor: ${problems} problem${problems === 1 ? '' : 's'} found. Nothing was changed.` : 'doctor: no problems found.'].join('\n');
 }

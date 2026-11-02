@@ -77,6 +77,6 @@ test('checkDuplicateInstalls flags a plugin that is also loose files and a neste
 
 test('render ends with a verdict that says nothing was changed when there are problems', () => {
   const out = render([{ name: 'a', status: 'warn', detail: 'x' }, { name: 'b', status: 'ok', detail: 'y' }]);
-  assert.match(out, /^WARN {2}a: x\nok {4}b: y\ndoctor: 1 problem found\. Nothing was changed\.$/);
+  assert.match(out, /^WARN {2}a: x\nPASS {2}b: y\ndoctor: 1 problem found\. Nothing was changed\.$/);
   assert.match(render([{ name: 'b', status: 'ok', detail: 'y' }]), /no problems found/);
 });
