@@ -13,8 +13,9 @@
  * PreToolUse with matcher `Bash` runs git-guard.ts (timeout 10 s), which takes no flags: it asks before risky git commands.
  * PreToolUse with matcher `Agent` runs agent-dispatch.ts and SubagentStop runs agent-return.ts (timeout 10 s each): a dispatch
  * opens or finds a leased in-flight row, and a stop marks it "returned, verify". Both fail open and write the ledger directly.
+ * PreToolUse with matcher `Agent` also runs agent-guard.ts (timeout 10 s, no flags): in slim mode it denies an Agent call with no explicit model, opus outside planning, and sonnet or opus past the hard spend line. Full mode: it does nothing.
  * PreToolUse with matcher `mcp__.*(tlassian|ira).*` runs jira-freeze-guard.ts (timeout 15 s): it refuses a Jira write on a ticket carrying a `next_frozen_labels` label.
- * `--project` and `--vault` are passed through to every hook but git-guard and jira-freeze-guard.
+ * `--project` and `--vault` are passed through to every hook but git-guard, agent-guard and jira-freeze-guard.
  * The one snippet also holds the event-inject entries (SessionStart with no matcher, UserPromptSubmit; see install-hooks.ts), so
  * everything to paste is in one place. `--autocompact-pct N` adds `"env": { "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "N" }`, and is
  * refused (exit 2, nothing printed on stdout) when N puts the trigger under the autocompact floor. Without it no `env` key is
@@ -40,6 +41,7 @@ export function snippet(extra: string[], autocompactPct?: number): object {
       PreCompact: [{ matcher: 'auto|manual', hooks: [{ type: 'command', command: cmd('precompact.ts'), timeout: 120 }] }],
       PreToolUse: [
         { matcher: 'Bash', hooks: [{ type: 'command', command: ['node', shq(join(HOOKS, 'git-guard.ts'))].join(' '), timeout: 10 }] },
+        { matcher: 'Agent', hooks: [{ type: 'command', command: ['node', shq(join(HOOKS, 'agent-guard.ts'))].join(' '), timeout: 10 }] },
         { matcher: 'Agent', hooks: [{ type: 'command', command: cmd('agent-dispatch.ts'), timeout: 10 }] },
         { matcher: 'mcp__.*(tlassian|ira).*', hooks: [{ type: 'command', command: ['node', shq(join(HOOKS, 'jira-freeze-guard.ts'))].join(' '), timeout: 15 }] },
       ],

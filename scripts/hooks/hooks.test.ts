@@ -136,8 +136,10 @@ test('the settings snippet names both events with the matchers and passes flags 
   assert.match(s.hooks.PreToolUse[0].hooks[0].command, /git-guard\.ts'$/, 'no pass-through flags reach the guard');
   assert.match(s.hooks.SessionStart[0].hooks[0].command, /session-start-compact\.ts' --project 'p'$/);
   assert.equal(s.hooks.PreToolUse[1].matcher, 'Agent');
-  assert.match(s.hooks.PreToolUse[1].hooks[0].command, /agent-dispatch\.ts' --project 'p'$/);
-  assert.match(s.hooks.PreToolUse[2].hooks[0].command, /jira-freeze-guard\.ts'$/, 'no pass-through flags reach the Jira guard');
+  assert.match(s.hooks.PreToolUse[1].hooks[0].command, /agent-guard\.ts'$/, 'no pass-through flags reach the agent guard');
+  assert.equal(s.hooks.PreToolUse[2].matcher, 'Agent');
+  assert.match(s.hooks.PreToolUse[2].hooks[0].command, /agent-dispatch\.ts' --project 'p'$/);
+  assert.match(s.hooks.PreToolUse[3].hooks[0].command, /jira-freeze-guard\.ts'$/, 'no pass-through flags reach the Jira guard');
   assert.equal(s.hooks.SessionEnd.length, 2);
   assert.equal(s.hooks.SessionEnd[1].matcher, 'clear|resume|logout|prompt_input_exit|other');
   assert.match(s.hooks.SessionEnd[1].hooks[0].command, /session-end-requeue\.ts' --project 'p'$/);
