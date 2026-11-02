@@ -46,13 +46,15 @@ function isPlanning(ti: NonNullable<GuardCall['tool_input']>): boolean {
   return ti.subagent_type === 'Plan' || [ti.description, ti.prompt].some((t) => typeof t === 'string' && PLAN.test(t));
 }
 
-/** True when the cached spend for today is at or over `hardFraction * todayAllowance`; false when the budget is off, it is no budget day, or the cache is missing or unreadable. */
+/** True when the cached spend for today is at or over `hardFraction * todayAllowance`; on a weight-0 day, true once any spend is recorded; false when the budget is off or the cache is missing or unreadable. */
 export function overHardLine(cfg: BudgetConfig, eventDir: string, tz: string, now: number): boolean {
   if (!budgetOn(cfg)) return false;
   const cache = readCache(spendCacheFile(eventDir));
   if (!cache) return false;
   const v = evaluate(cfg, localDate(new Date(now), tz), cache.daily);
-  return v.todayAllowance > 0 && v.todaySpend >= cfg.hardFraction * v.todayAllowance;
+  // A weight-0 day allows $0, so any real spend is over (budget.ts raises its offday alert the same way).
+  if (!v.todayIsBudgetDay) return v.todaySpend > 0.01;
+  return v.todaySpend >= cfg.hardFraction * v.todayAllowance;
 }
 
 /** The PreToolUse deny object for the hook's stdin JSON, or null to allow. */

@@ -74,3 +74,11 @@ test('overHardLine reads the cached spend: over, under, missing and garbled', ()
   assert.equal(overHardLine(cfg, cacheWith('{garbled'), 'UTC', NOW), false);
   assert.equal(overHardLine(parseBudget({ monthly: '0', startDay: '1', days: 'all', warn: '0.8', hard: '1' }), cacheWith(cacheJson(1000)), 'UTC', NOW), false);
 });
+
+test('overHardLine on a weight-0 day: any recorded spend is over, none is not', () => {
+  const weekdaysOnly = parseBudget({ monthly: '500', startDay: '5', days: 'weekdays', warn: '0.8', hard: '1', weekendWeight: '0' });
+  const SAT = Date.parse('2026-11-07T15:00:00Z');
+  const satCache = (today: number) => cacheWith(JSON.stringify({ at: SAT, since: '2026-11-05', daily: { '2026-11-07': today } }));
+  assert.equal(overHardLine(weekdaysOnly, satCache(5), 'UTC', SAT), true);
+  assert.equal(overHardLine(weekdaysOnly, satCache(0), 'UTC', SAT), false);
+});
