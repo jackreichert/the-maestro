@@ -10,18 +10,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const UNSET: BudgetRaw = { monthly: '', startDay: '', days: '', warn: '', hard: '' };
-const WEEKDAYS: BudgetConfig = { monthlyUsd: 500, startDay: 5, days: 'weekdays', warnFraction: 0.8, hardFraction: 1, costMultiplier: 1 };
+const WEEKDAYS: BudgetConfig = { monthlyUsd: 500, startDay: 5, days: 'weekdays', warnFraction: 0.8, hardFraction: 1, costMultiplier: 1, weekendWeight: 0 };
 const ALL: BudgetConfig = { ...WEEKDAYS, days: 'all' };
 
 test('config: everything unset is off, with the documented defaults', () => {
   const c = parseBudget(UNSET);
   assert.equal(budgetOn(c), false);
-  assert.deepEqual(c, { monthlyUsd: 0, startDay: 1, days: 'all', warnFraction: 0.8, hardFraction: 1, costMultiplier: 1 });
+  assert.deepEqual(c, { monthlyUsd: 0, startDay: 1, days: 'all', warnFraction: 0.8, hardFraction: 1, costMultiplier: 1, weekendWeight: 0 });
 });
 
 test('config: valid values parse, invalid ones fall back, hard never sits below warn', () => {
-  assert.deepEqual(parseBudget({ monthly: '500', startDay: '5', days: 'Weekdays', warn: '0.7', hard: '0.9' }), { monthlyUsd: 500, startDay: 5, days: 'weekdays', warnFraction: 0.7, hardFraction: 0.9, costMultiplier: 1 });
-  assert.deepEqual(parseBudget({ monthly: 'lots', startDay: '31', days: 'sometimes', warn: '-1', hard: 'x' }), { monthlyUsd: 0, startDay: 1, days: 'all', warnFraction: 0.8, hardFraction: 1, costMultiplier: 1 });
+  assert.deepEqual(parseBudget({ monthly: '500', startDay: '5', days: 'Weekdays', warn: '0.7', hard: '0.9' }), { monthlyUsd: 500, startDay: 5, days: 'weekdays', warnFraction: 0.7, hardFraction: 0.9, costMultiplier: 1, weekendWeight: 0 });
+  assert.deepEqual(parseBudget({ monthly: 'lots', startDay: '31', days: 'sometimes', warn: '-1', hard: 'x' }), { monthlyUsd: 0, startDay: 1, days: 'all', warnFraction: 0.8, hardFraction: 1, costMultiplier: 1, weekendWeight: 0 });
   assert.equal(parseBudget({ ...UNSET, warn: '0.9', hard: '0.5' }).hardFraction, 0.9);
 });
 
@@ -184,4 +184,28 @@ test('a failed read after a good one is never shown as current: unavailable on a
   assert.match(spendWatch.diff(null, s1)[0].summary, /cannot read spend/);
   const s2 = spendWatch.check('x', { now: t0 + 18 * 3600_000 + 6 * 60_000, prev: s1, run: bad }, WEEKDAYS, 'UTC', file);
   assert.deepEqual(spendWatch.diff(s1, s2), []);
+});
+
+test('weekend weight: a weekend day gets that share of a weekday allowance, and the weekday allowance shrinks to pay for it', () => {
+  const cfg = { ...WEEKDAYS, weekendWeight: 1 / 3 };
+  // Period Nov 5 to Dec 4 2026: 22 weekdays and 8 weekend days, so 22 + 8/3 weighted days.
+  const mon = evaluate(cfg, '2026-11-09', { '2026-11-09': 5 });
+  assert.ok(Math.abs(mon.budgetDays - (22 + 8 / 3)) < 1e-9);
+  assert.equal(mon.dailyAllowance.toFixed(2), '20.27');
+  assert.equal(mon.todayAllowance, mon.dailyAllowance);
+  const sat = evaluate(cfg, '2026-11-07', { '2026-11-07': 6 });
+  assert.equal(sat.todayIsBudgetDay, true);
+  assert.equal(sat.todayAllowance.toFixed(2), '6.76');
+  assert.deepEqual(crossed(cfg, sat).map((a) => a.key), ['warn']);
+  assert.match(crossed(cfg, sat)[0]?.text ?? '', /of the \$6\.76 daily allowance/);
+  assert.deepEqual(crossed(cfg, evaluate(cfg, '2026-11-07', { '2026-11-07': 7 })).map((a) => a.key), ['hard']);
+  assert.match(spendText(cfg, sat), /today of \$6\.76/);
+});
+
+test('weekend weight: parsed from 0 to 1, anything else is 0; ignored in all mode', () => {
+  assert.equal(parseBudget({ ...UNSET, weekendWeight: '0.333' }).weekendWeight, 0.333);
+  assert.equal(parseBudget({ ...UNSET, weekendWeight: '2' }).weekendWeight, 0);
+  assert.equal(parseBudget({ ...UNSET, weekendWeight: 'x' }).weekendWeight, 0);
+  const all = { ...WEEKDAYS, days: 'all' as const, weekendWeight: 0.25 };
+  assert.equal(evaluate(all, '2026-11-07', {}).todayAllowance, evaluate(all, '2026-11-09', {}).todayAllowance);
 });

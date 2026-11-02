@@ -1,7 +1,9 @@
 /**
  * The spend guardrail's arithmetic and settings, with no I/O. A monthly budget is split evenly over the budget days of the current period
  * (start day to the day before the next start day); today is judged against that daily allowance and the period so far against the
- * allowance times the budget days elapsed (the pace). Spend on a day that is not a budget day has no allowance, so it is over by definition.
+ * allowance times the budget days elapsed (the pace). Each day carries a weight: 1 for a weekday, and for a weekend day 1 in `all` mode or
+ * `weekendWeight` in `weekdays` mode (0 by default). The allowance per weekday is the budget over the period's summed weights, and a day's allowance
+ * is that times its weight. Spend on a day of weight 0 has no allowance, so it is over by definition.
  * Dates are `YYYY-MM-DD` strings in the watch time zone; nothing here reads a clock.
  */
 
@@ -10,10 +12,12 @@ export type BudgetDays = 'weekdays' | 'all';
 /** Every key is optional; `monthlyUsd` of 0 means the guardrail is off. */
 export interface BudgetConfig { monthlyUsd: number; startDay: number; days: BudgetDays; warnFraction: number; hardFraction: number;
   /** Scales ccusage's estimate toward the real bill (long-context turns cost more than ccusage prices them). 1 = take ccusage as is. */
-  costMultiplier: number }
+  costMultiplier: number;
+  /** Weight of a Saturday or Sunday in `weekdays` mode, 0 to 1 (0.333 = a third of a weekday's allowance). Ignored in `all` mode. */
+  weekendWeight: number }
 
 /** The raw settings as read from the config (strings, empty when unset). */
-export interface BudgetRaw { monthly: string; startDay: string; days: string; warn: string; hard: string; multiplier?: string }
+export interface BudgetRaw { monthly: string; startDay: string; days: string; warn: string; hard: string; multiplier?: string; weekendWeight?: string }
 
 const num = (raw: string): number => (/^\d+(\.\d+)?$/.test(raw.trim()) ? Number(raw) : NaN);
 
@@ -24,12 +28,14 @@ export function parseBudget(raw: BudgetRaw): BudgetConfig {
   const warn = num(raw.warn);
   const hard = num(raw.hard);
   const warnFraction = warn > 0 ? warn : 0.8;
+  const weekend = num(raw.weekendWeight ?? '');
   return {
     monthlyUsd: monthly > 0 ? monthly : 0,
     startDay: Number.isInteger(start) && start >= 1 && start <= 28 ? start : 1,
     days: raw.days.trim().toLowerCase() === 'weekdays' ? 'weekdays' : 'all',
     warnFraction,
     costMultiplier: num(raw.multiplier ?? '') > 0 ? num(raw.multiplier ?? '') : 1,
+    weekendWeight: weekend >= 0 && weekend <= 1 ? weekend : 0,
     hardFraction: hard > 0 ? Math.max(hard, warnFraction) : Math.max(1, warnFraction),
   };
 }
@@ -46,6 +52,9 @@ export function isBudgetDay(date: string, days: BudgetDays): boolean {
   const dow = new Date(toUtc(date)).getUTCDay();
   return dow >= 1 && dow <= 5;
 }
+
+/** A day's share of a weekday's allowance: 1 for a budget day, else the weekend weight. */
+export const dayWeight = (date: string, cfg: Pick<BudgetConfig, 'days' | 'weekendWeight'>): number => (isBudgetDay(date, cfg.days) ? 1 : cfg.weekendWeight);
 
 /** First and last day (inclusive) of the period holding `today`: it starts on the latest `startDay` on or before today and ends the day before the next one. */
 export function periodOf(today: string, startDay: number): { start: string; end: string } {
@@ -65,10 +74,10 @@ function span(from: string, to: string): string[] {
 
 export interface BudgetView {
   periodStart: string; periodEnd: string;
-  /** Budget days in the whole period, and how many of them are over once today is counted. */
+  /** Weighted budget days in the whole period, and how many of them are over once today is counted (a weekend day adds its weight). */
   budgetDays: number; elapsed: number;
   todayIsBudgetDay: boolean;
-  /** Dollars allowed per budget day; 0 on a day that is not one. */
+  /** Dollars allowed per weekday, and today (the weekday figure times today's weight). */
   dailyAllowance: number; todayAllowance: number;
   todaySpend: number; periodSpend: number;
   /** Allowance times budget days elapsed, today included. */
@@ -80,15 +89,17 @@ export interface BudgetView {
 export function evaluate(cfg: BudgetConfig, today: string, ccusageDaily: Record<string, number>): BudgetView {
   const daily = Object.fromEntries(Object.entries(ccusageDaily).map(([d, n]) => [d, n * cfg.costMultiplier]));
   const { start, end } = periodOf(today, cfg.startDay);
-  const budgetDays = span(start, end).filter((d) => isBudgetDay(d, cfg.days)).length;
-  const elapsed = span(start, today).filter((d) => isBudgetDay(d, cfg.days)).length;
+  const weigh = (from: string, to: string): number => span(from, to).reduce((n, d) => n + dayWeight(d, cfg), 0);
+  const budgetDays = weigh(start, end);
+  const elapsed = weigh(start, today);
   const dailyAllowance = budgetDays > 0 ? cfg.monthlyUsd / budgetDays : 0;
-  const todayIsBudgetDay = isBudgetDay(today, cfg.days);
+  const todayWeight = dayWeight(today, cfg);
+  const todayIsBudgetDay = todayWeight > 0;
   const periodSpend = span(start, today).reduce((n, d) => n + (daily[d] ?? 0), 0);
   const paceAllowance = dailyAllowance * elapsed;
   return {
     periodStart: start, periodEnd: end, budgetDays, elapsed, todayIsBudgetDay,
-    dailyAllowance, todayAllowance: todayIsBudgetDay ? dailyAllowance : 0,
+    dailyAllowance, todayAllowance: dailyAllowance * todayWeight,
     todaySpend: daily[today] ?? 0, periodSpend, paceAllowance,
     overPace: periodSpend > paceAllowance + 0.005,
   };
@@ -96,6 +107,8 @@ export function evaluate(cfg: BudgetConfig, today: string, ccusageDaily: Record<
 
 const usd = (n: number): string => `$${n < 100 ? n.toFixed(2) : Math.round(n).toString()}`;
 const usdWhole = (n: number): string => `$${Math.round(n)}`;
+/** Weighted day counts: whole numbers as is, fractions to one decimal. */
+const days = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 
 /**
  * The footer segment: `Spend: $14.20 today of $23.81 · period $96 of $500 (on pace) · this machine`. With a multiplier other than 1 the figures read `~$14.20` and the
@@ -119,11 +132,11 @@ export function crossed(cfg: BudgetConfig, v: BudgetView): Alert[] {
   const spent = `${usd(v.todaySpend)} today`;
   if (!v.todayIsBudgetDay) {
     if (v.todaySpend > 0.01) out.push({ key: 'offday', text: `spend-watch: ${spent} on a day that is not a budget day (allowed $0). Stop dispatching agents; the company raises the budget if weekend work is wanted. Counted on this machine only${est}.` });
-  } else if (v.dailyAllowance > 0) {
-    if (v.todaySpend >= cfg.hardFraction * v.dailyAllowance) out.push({ key: 'hard', text: `spend-watch HARD: ${spent} is ${Math.round((100 * v.todaySpend) / v.dailyAllowance)}% of the ${usd(v.dailyAllowance)} daily allowance. Do only what the user explicitly asks. Counted on this machine only${est}.` });
-    else if (v.todaySpend >= cfg.warnFraction * v.dailyAllowance) out.push({ key: 'warn', text: `spend-watch WARN: ${spent} is ${Math.round((100 * v.todaySpend) / v.dailyAllowance)}% of the ${usd(v.dailyAllowance)} daily allowance. Tell the user and stop dispatching agents. Counted on this machine only${est}.` });
+  } else if (v.todayAllowance > 0) {
+    if (v.todaySpend >= cfg.hardFraction * v.todayAllowance) out.push({ key: 'hard', text: `spend-watch HARD: ${spent} is ${Math.round((100 * v.todaySpend) / v.todayAllowance)}% of the ${usd(v.todayAllowance)} daily allowance. Do only what the user explicitly asks. Counted on this machine only${est}.` });
+    else if (v.todaySpend >= cfg.warnFraction * v.todayAllowance) out.push({ key: 'warn', text: `spend-watch WARN: ${spent} is ${Math.round((100 * v.todaySpend) / v.todayAllowance)}% of the ${usd(v.todayAllowance)} daily allowance. Tell the user and stop dispatching agents. Counted on this machine only${est}.` });
   }
-  if (v.overPace) out.push({ key: 'pace', text: `spend-watch PACE: period ${usdWhole(v.periodSpend)} is over the ${usdWhole(v.paceAllowance)} pace (${v.elapsed} of ${v.budgetDays} budget days, ${usdWhole(cfg.monthlyUsd)} budget). Counted on this machine only${est}.` });
+  if (v.overPace) out.push({ key: 'pace', text: `spend-watch PACE: period ${usdWhole(v.periodSpend)} is over the ${usdWhole(v.paceAllowance)} pace (${days(v.elapsed)} of ${days(v.budgetDays)} budget days, ${usdWhole(cfg.monthlyUsd)} budget). Counted on this machine only${est}.` });
   return out;
 }
 

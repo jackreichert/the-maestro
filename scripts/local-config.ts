@@ -542,12 +542,13 @@ export const SLACK_SELF_NAMES = globList('MAESTRO_SLACK_SELF_NAMES', 'slack_self
 
 /**
  * Spend guardrail (lib/budget.ts, event-types/spend-watch.ts). All optional; unset `budget_monthly_usd` means off. `budget_period_start_day` (1 to 28, default 1) starts the budget period,
- * `budget_days` is `weekdays` or `all` (default), `budget_warn_fraction` (default 0.8) and `budget_hard_fraction` (default 1.0) are fractions of the daily allowance, `budget_cost_multiplier` (default 1.0) scales ccusage's estimate toward the real bill.
+ * `budget_days` is `weekdays` or `all` (default), `budget_warn_fraction` (default 0.8) and `budget_hard_fraction` (default 1.0) are fractions of the daily allowance, `budget_cost_multiplier` (default 1.0) scales ccusage's estimate toward the real bill, `budget_weekend_weight` (0 to 1, default 0) gives a weekend day that share of a weekday's allowance in `weekdays` mode.
  */
 export const BUDGET = parseBudget({
   monthly: pick('MAESTRO_BUDGET_MONTHLY_USD', 'budget_monthly_usd'), startDay: pick('MAESTRO_BUDGET_PERIOD_START_DAY', 'budget_period_start_day'),
   days: pick('MAESTRO_BUDGET_DAYS', 'budget_days'), warn: pick('MAESTRO_BUDGET_WARN_FRACTION', 'budget_warn_fraction'), hard: pick('MAESTRO_BUDGET_HARD_FRACTION', 'budget_hard_fraction'),
   multiplier: pick('MAESTRO_BUDGET_COST_MULTIPLIER', 'budget_cost_multiplier'),
+  weekendWeight: pick('MAESTRO_BUDGET_WEEKEND_WEIGHT', 'budget_weekend_weight'),
 });
 export const BUDGET_ON = budgetOn(BUDGET);
 

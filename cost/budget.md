@@ -248,7 +248,7 @@ Kept: `status-watch`, `status-refresh`, `whats-next`, the self-heal, and everyth
 
 ## Spend guardrail
 
-A tight budget (for example $500 a month, weekdays only) needs a watcher. `budget_monthly_usd` (with `budget_period_start_day`, `budget_days`, the two fractions and `budget_cost_multiplier`) turns on a zero-token guardrail: no model runs to measure or announce it.
+A tight budget (for example $500 a month, weekdays only) needs a watcher. `budget_monthly_usd` (with `budget_period_start_day`, `budget_days`, the two fractions, `budget_cost_multiplier` and `budget_weekend_weight`) turns on a zero-token guardrail: no model runs to measure or announce it.
 
 - **Allowance.** Monthly budget divided by the budget days in the period (start day to the day before the next start day). Today is judged against it; the period against allowance times budget days elapsed. Spend on a non-budget day has no allowance, so it is over.
 - **Source.** `npx ccusage daily --since <period start> --json`, cached 15 minutes in the event directory. It reads this machine's transcripts only.
