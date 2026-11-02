@@ -4,7 +4,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -79,4 +79,33 @@ test('drop and resolve take no proof flag', () => {
     const r = run(['drop', id, '--verify', 'x', ...MARK]);
     assert.equal(r.code, 1);
     assert.match(r.err, /--verify and --unverified are for done/);
+});
+
+const LEARNED = ['--kind', 'how-it-works', '--applies-to', 'fake-repo:fake-api:staging', '--evidence', 'docs/spec.md:12', '--verified-at', '2026-10-08 read the spec', '--confidence', 'observed'];
+
+test('learned without --page or --no-page is refused, names both flags, and writes no row', () => {
+    const r = run(['learned', 'The fake api pages by count.', ...LEARNED, ...MARK]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /needs --page <library page>/);
+    assert.match(r.err, /--no-page "<why no page changes>"/);
+    assert.equal(ledger().length, 0);
+});
+
+test('learned --page must name a file that exists in the vault; --no-page needs a reason', () => {
+    const missing = run(['learned', 'The fake api pages by count.', ...LEARNED, '--page', 'Library/the-maestro/ghost.md', ...MARK]);
+    assert.equal(missing.code, 1);
+    assert.match(missing.err, /is not a file under the vault/);
+    const bare = run(['learned', 'The fake api pages by count.', ...LEARNED, '--no-page', ...MARK]);
+    assert.equal(bare.code, 1);
+    assert.equal(ledger().length, 0);
+});
+
+test('learned --page with an existing page, and --no-page with a reason, both write the row', () => {
+    mkdirSync(join(vault, 'Library', 'the-maestro'), { recursive: true });
+    writeFileSync(join(vault, 'Library', 'the-maestro', 'api.md'), '# Fake api\n');
+    assert.equal(run(['learned', 'The fake api pages by count.', ...LEARNED, '--page', 'Library/the-maestro/api.md', ...MARK]).code, 0);
+    assert.equal(run(['learned', 'The fake api caps pages at 50.', ...LEARNED, '--no-page', 'a one-off, no page covers it', ...MARK]).code, 0);
+    const rows = ledger().filter((x) => x.kind === 'learned') as (Row & { page?: string; noPage?: string })[];
+    assert.equal(rows[0]?.page, 'Library/the-maestro/api.md');
+    assert.equal(rows[1]?.noPage, 'a one-off, no page covers it');
 });

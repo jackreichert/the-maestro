@@ -65,6 +65,7 @@ Commands below are `node scripts/<name>.ts`, run from the skill root. Ledger com
 
 The library is the vault's internal-Notion space: evergreen, organized, and maintained.
 
+- Record a lesson with `learned ... --page <page edited this turn>`, or `--no-page "<why>"`; the writer refuses `learned` with neither.
 - A lesson from code, a run or the user becomes a library page edit, or a working-rule memory if it is about how to work with them.
 - Link to pages; never duplicate a fact.
 - Before searching code or asking the user, look in the library and the project's `CONTEXT.md`.

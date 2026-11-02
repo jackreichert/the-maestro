@@ -3024,7 +3024,7 @@ test('two windows rolling a delta at the same moment each get their own file', a
 
 // ── learned ─────────────────────────────────────────────────────────────────
 
-const LEARNED = ['--kind', 'how-it-works', '--applies-to', 'fake-repo:fake-api:staging', '--evidence', 'docs/spec.md:12', '--verified-at', '2026-10-08 read the spec', '--confidence', 'observed'];
+const LEARNED = ['--kind', 'how-it-works', '--applies-to', 'fake-repo:fake-api:staging', '--evidence', 'docs/spec.md:12', '--verified-at', '2026-10-08 read the spec', '--confidence', 'observed', '--no-page', 'test fixture, no page'];
 /** The learned rows; none when nothing was ever written, which is the point of the refusal tests. */
 const learnedRows = () => (existsSync(ledgerFile()) ? ledger().filter((r) => r.kind === 'learned') : []);
 /** `LEARNED` with one flag's value replaced, or the flag removed when `value` is null. */

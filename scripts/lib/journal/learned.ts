@@ -18,19 +18,21 @@ export type Confidence = (typeof CONFIDENCES)[number];
 /** The fields as stored on a row (`text` is the claim). */
 export interface LearnedFields {
     text: string; learnedKind: LearnedKind; appliesTo: string; evidence: string; verifiedAt: string; confidence: Confidence; supersedes?: string;
+    /** The library page edited in the same turn, or the reason none was: exactly one of the two, on every row `learned` writes. */
+    page?: string; noPage?: string;
 }
 
 /** The part of a stored row these helpers read; anything may be there, so each field is checked before it is trusted. */
-export type LearnedRow = Partial<Record<'text' | 'learnedKind' | 'appliesTo' | 'evidence' | 'verifiedAt' | 'confidence' | 'supersedes' | 'date' | 'repo' | 'stream' | 'model' | 'used' | 'tokens' | 'harness' | 'agent', unknown>>;
+export type LearnedRow = Partial<Record<'text' | 'learnedKind' | 'appliesTo' | 'evidence' | 'verifiedAt' | 'confidence' | 'supersedes' | 'page' | 'noPage' | 'date' | 'repo' | 'stream' | 'model' | 'used' | 'tokens' | 'harness' | 'agent', unknown>>;
 
 /** The other free text a row carries (usage marks, repo, stream, date). Not part of the fact, but written to the same row, so it is scanned too. */
 export type LearnedExtras = Partial<Record<'date' | 'repo' | 'stream' | 'model' | 'used' | 'tokens' | 'harness' | 'agent', string>>;
 
 /** The flags as the command line gave them (null when absent or valueless). */
-export interface RawLearned { claim: string; kind: string | null; appliesTo: string | null; evidence: string | null; verifiedAt: string | null; confidence: string | null; supersedes: string | null; extras?: LearnedExtras }
+export interface RawLearned { claim: string; kind: string | null; appliesTo: string | null; evidence: string | null; verifiedAt: string | null; confidence: string | null; supersedes: string | null; page?: string | null; noPage?: string | null; extras?: LearnedExtras }
 
 /** What the run knows. `repos` is undefined when no container is configured: then only the shape of applies-to is checked. */
-export interface LearnedContext extends ScanOptions { repos?: ReadonlySet<string>; learnedIds: ReadonlySet<string> }
+export interface LearnedContext extends ScanOptions { repos?: ReadonlySet<string>; learnedIds: ReadonlySet<string>; /** True where a row is written: it must name its page or say why not. Off when auditing stored rows, which predate the rule. */ requirePage?: boolean }
 
 export const CLAIM_MAX = 400;
 export const FIELD_MAX = 300;
@@ -106,13 +108,28 @@ const RULES: Rule[] = [
             return /\/|\.md$/.test(t) && t.length <= FIELD_MAX && !CONTROL.test(t) ? null : '--supersedes must be an earlier learned id or a page path.';
         },
     },
+    {
+        name: 'page',
+        refuse: (c) => {
+            const { page, noPage } = c.v;
+            if (page !== undefined && noPage !== undefined) return 'give --page or --no-page, not both: either the library page was edited or there is a reason it was not.';
+            if (page === undefined && noPage === undefined) return c.ctx.requirePage ? 'needs --page <library page> (the page you edited in this turn, vault-relative, ending .md) or --no-page "<why no page changes>". A lesson with no page edit and no reason is not recorded.' : null;
+            if (page !== undefined) {
+                if (!isText(page)) return '--page needs a value: the vault-relative path of the library page you edited.';
+                const t = page.trim();
+                return /^[^/\\.][^\0]*\.md$/.test(t) && !t.split('/').includes('..') && t.length <= FIELD_MAX && !CONTROL.test(t) ? null : '--page must be a vault-relative path ending .md, with no .. or leading slash.';
+            }
+            if (!isText(noPage)) return '--no-page needs a reason: --no-page "<why no page changes>".';
+            return CONTROL.test(noPage) ? '--no-page has a control character: plain text only.' : noPage.trim().length > FIELD_MAX ? `--no-page is over ${FIELD_MAX} characters: say it shorter.` : null;
+        },
+    },
     { name: 'date', refuse: (c) => (c.v.date === undefined || (typeof c.v.date === 'string' && DATE.test(c.v.date) && isRealDate(c.v.date)) ? null : '--date must be a real YYYY-MM-DD.') },
     {
         name: 'scanner',
         refuse: (c) => {
             const text = (k: keyof Check['v']): string | undefined => (typeof c.v[k] === 'string' ? (c.v[k] as string) : Array.isArray(c.v[k]) ? (c.v[k] as unknown[]).map(String).join(' ') : undefined);
             const fields = {
-                claim: text('text'), 'applies-to': text('appliesTo'), evidence: text('evidence'), 'verified-at': text('verifiedAt'), supersedes: text('supersedes'),
+                claim: text('text'), 'applies-to': text('appliesTo'), evidence: text('evidence'), 'verified-at': text('verifiedAt'), supersedes: text('supersedes'), page: text('page'), 'no-page': text('noPage'),
                 repo: text('repo'), stream: text('stream'), model: text('model'), used: text('used'), tokens: text('tokens'), harness: text('harness'), agent: text('agent'),
             };
             // A field this long is refused by its own rule or by this one; scanning it would only burn time.
@@ -134,6 +151,7 @@ export function parseLearned(raw: RawLearned, ctx: LearnedContext): LearnedParse
     const v: Check['v'] = {
         text: trimmed(raw.claim), learnedKind: raw.kind ?? undefined, appliesTo: trimmed(raw.appliesTo), evidence: trimmed(raw.evidence),
         verifiedAt: trimmed(raw.verifiedAt), confidence: raw.confidence ?? undefined, supersedes: trimmed(raw.supersedes),
+        page: trimmed(raw.page ?? null), noPage: trimmed(raw.noPage ?? null),
         ...raw.extras,
     };
     const errors = refusals(v, ctx);
@@ -141,6 +159,7 @@ export function parseLearned(raw: RawLearned, ctx: LearnedContext): LearnedParse
     const fields: LearnedFields = {
         text: v.text as string, learnedKind: v.learnedKind as LearnedKind, appliesTo: v.appliesTo as string, evidence: v.evidence as string,
         verifiedAt: v.verifiedAt as string, confidence: v.confidence as Confidence, ...(v.supersedes !== undefined ? { supersedes: v.supersedes as string } : {}),
+        ...(v.page !== undefined ? { page: v.page as string } : {}), ...(v.noPage !== undefined ? { noPage: v.noPage as string } : {}),
     };
     return { fields, errors: [] };
 }
@@ -163,7 +182,7 @@ export function relearn(rows: readonly (LearnedRow & { id?: unknown; kind?: unkn
 
 /** Every field a stored `learned` row may carry: the fact, its location and checks, the usage marks, and the row's own bookkeeping. Anything else is not written by `learned`. */
 export const LEARNED_ROW_FIELDS: ReadonlySet<string> = new Set([
-    'id', 'ts', 'date', 'kind', 'text', 'learnedKind', 'appliesTo', 'evidence', 'verifiedAt', 'confidence', 'supersedes',
+    'id', 'ts', 'date', 'kind', 'text', 'learnedKind', 'appliesTo', 'evidence', 'verifiedAt', 'confidence', 'supersedes', 'page', 'noPage',
     'repo', 'stream', 'model', 'used', 'tokens', 'harness', 'agent', 'window',
 ]);
 
@@ -175,14 +194,14 @@ export const LEARNED_ROW_FIELDS: ReadonlySet<string> = new Set([
 export function learnedProblems(row: LearnedRow, learnedIds: ReadonlySet<string>, opts: ScanOptions = {}): string[] {
     const unknown = Object.keys(row).filter((k) => !LEARNED_ROW_FIELDS.has(k)).map((k) => (k.length > 24 ? `${k.slice(0, 24)}...` : k));
     const unknownProblem = unknown.length ? [`unknown field${unknown.length > 1 ? 's' : ''} (${unknown.join(', ')}): \`learned\` writes only its named fields, so this row was edited by hand.`] : [];
-    return [...unknownProblem, ...refusals({ text: row.text, learnedKind: row.learnedKind, appliesTo: row.appliesTo, evidence: row.evidence, verifiedAt: row.verifiedAt, confidence: row.confidence, supersedes: row.supersedes, date: row.date, repo: row.repo, stream: row.stream, model: row.model, used: row.used, tokens: row.tokens, harness: row.harness, agent: row.agent }, { ...opts, learnedIds })];
+    return [...unknownProblem, ...refusals({ text: row.text, learnedKind: row.learnedKind, appliesTo: row.appliesTo, evidence: row.evidence, verifiedAt: row.verifiedAt, confidence: row.confidence, supersedes: row.supersedes, page: row.page, noPage: row.noPage, date: row.date, repo: row.repo, stream: row.stream, model: row.model, used: row.used, tokens: row.tokens, harness: row.harness, agent: row.agent }, { ...opts, learnedIds })];
 }
 
 export const LEARNED_USAGE = [
     'journal.ts learned "<claim>" --kind how-to|how-it-works|gotcha|decision|tool --applies-to <repo:component[:env]>',
     '    --evidence "<file:line, PR, note path, or command and the count it printed>" --verified-at "<sha | YYYY-MM-DD how checked>"',
-    '    --confidence observed|told-by-jack|inferred [--supersedes <learned id | page path>] --model "<name>" --used "skill:x,tool:y"',
-    '    Every field above is required except --supersedes. The claim is one sentence about a system, in the present tense; ids and counts only.',
+    '    --confidence observed|told-by-jack|inferred --page <library page edited this turn> | --no-page "<why none>" [--supersedes <learned id | page path>] --model "<name>" --used "skill:x,tool:y"',
+    '    Every field above is required except --supersedes; exactly one of --page and --no-page. The claim is one sentence about a system, in the present tense; ids and counts only.',
     '    A claim, evidence or location that looks like a secret or PHI is refused and nothing is written.',
     '    The same fact with a new --verified-at or --confidence is written again as a row that supersedes the earlier one; an exact repeat is not.',
 ];
