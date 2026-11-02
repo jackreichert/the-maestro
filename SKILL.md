@@ -121,7 +121,7 @@ than two agents, killed/failed states, elapsed time): `reference/dispatch.md#sta
 
 **Lean cost profile.** With `cost_profile: lean` the loop registers no `retro-due`, `repost-nudge` or `library-due`, teammate reviews run on demand only, and the merge sweep is a script in roll-maintenance, never an agent ([cost/budget.md#lean-cost-profile](cost/budget.md#lean-cost-profile)).
 
-**Spend guardrail.** With `budget_monthly_usd` set, the footer shows a `Spend:` segment and `spend-watch` events arrive: at WARN stop dispatching agents, at HARD do only what Jack explicitly asks ([playbooks/event-types/spend-watch.md](playbooks/event-types/spend-watch.md)).
+**Spend guardrail.** With `budget_monthly_usd` set, the footer shows a `Spend:` segment and `spend-watch` events arrive: at WARN stop dispatching agents, at HARD do only what the user explicitly asks ([playbooks/event-types/spend-watch.md](playbooks/event-types/spend-watch.md)).
 
 ## Managing running agents
 

@@ -115,13 +115,13 @@ export interface Alert { key: AlertKey; text: string }
 /** The thresholds crossed right now, in the order of how bad they are. Spend of a cent or less on a non-budget day is rounding, not spend. */
 export function crossed(cfg: BudgetConfig, v: BudgetView): Alert[] {
   const out: Alert[] = [];
-  const est = cfg.costMultiplier !== 1 ? ` (ccusage x${cfg.costMultiplier}, an estimate; the Console cost for the key is authoritative)` : '';
+  const est = cfg.costMultiplier !== 1 ? ` (ccusage x${cfg.costMultiplier}, an estimate; the Console cost for the API key is authoritative)` : '';
   const spent = `${usd(v.todaySpend)} today`;
   if (!v.todayIsBudgetDay) {
     if (v.todaySpend > 0.01) out.push({ key: 'offday', text: `spend-watch: ${spent} on a day that is not a budget day (allowed $0). Stop dispatching agents; the company raises the budget if weekend work is wanted. Counted on this machine only${est}.` });
   } else if (v.dailyAllowance > 0) {
-    if (v.todaySpend >= cfg.hardFraction * v.dailyAllowance) out.push({ key: 'hard', text: `spend-watch HARD: ${spent} is ${Math.round((100 * v.todaySpend) / v.dailyAllowance)}% of the ${usd(v.dailyAllowance)} daily allowance. Do only what Jack explicitly asks. Counted on this machine only${est}.` });
-    else if (v.todaySpend >= cfg.warnFraction * v.dailyAllowance) out.push({ key: 'warn', text: `spend-watch WARN: ${spent} is ${Math.round((100 * v.todaySpend) / v.dailyAllowance)}% of the ${usd(v.dailyAllowance)} daily allowance. Tell Jack and stop dispatching agents. Counted on this machine only${est}.` });
+    if (v.todaySpend >= cfg.hardFraction * v.dailyAllowance) out.push({ key: 'hard', text: `spend-watch HARD: ${spent} is ${Math.round((100 * v.todaySpend) / v.dailyAllowance)}% of the ${usd(v.dailyAllowance)} daily allowance. Do only what the user explicitly asks. Counted on this machine only${est}.` });
+    else if (v.todaySpend >= cfg.warnFraction * v.dailyAllowance) out.push({ key: 'warn', text: `spend-watch WARN: ${spent} is ${Math.round((100 * v.todaySpend) / v.dailyAllowance)}% of the ${usd(v.dailyAllowance)} daily allowance. Tell the user and stop dispatching agents. Counted on this machine only${est}.` });
   }
   if (v.overPace) out.push({ key: 'pace', text: `spend-watch PACE: period ${usdWhole(v.periodSpend)} is over the ${usdWhole(v.paceAllowance)} pace (${v.elapsed} of ${v.budgetDays} budget days, ${usdWhole(cfg.monthlyUsd)} budget). Counted on this machine only${est}.` });
   return out;

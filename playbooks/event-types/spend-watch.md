@@ -17,13 +17,13 @@ Each line is actionable and said once per threshold per day.
 | `spend-watch WARN: ...` | Today is at or past `budget_warn_fraction` of the daily allowance. |
 | `spend-watch HARD: ...` | Today is at or past `budget_hard_fraction` of it. |
 | `spend-watch PACE: ...` | The period total is over the pace. |
-| `spend-watch: cannot read spend (...)` | ccusage failed and there is no figure for today; the budget is not enforced until it works. Tell Jack once. |
+| `spend-watch: cannot read spend (...)` | ccusage failed and there is no figure for today; the budget is not enforced until it works. Tell the user once. |
 | `spend-watch: $X today on a day that is not a budget day` | Any spend on a weekend (in `weekdays` mode). |
 
 ## What you do
 
-- **WARN:** tell Jack the line, and stop dispatching agents. Finish only what is already running.
-- **HARD:** tell Jack the line, and do only what he explicitly asks, one thing at a time.
-- **PACE** or a non-budget day: tell Jack; treat it as WARN until he says otherwise.
+- **WARN:** tell the user the line, and stop dispatching agents. Finish only what is already running.
+- **HARD:** tell the user the line, and do only what they explicitly ask, one thing at a time.
+- **PACE** or a non-budget day: tell the user; treat it as WARN until they say otherwise.
 
 The footer's `Spend:` segment says `unavailable (reason)`, or `STALE` with the time of the last good read, when ccusage fails.
