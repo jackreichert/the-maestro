@@ -11,6 +11,7 @@
  *
  * `node scripts/local-config.ts` prints the resolved values and the files they came from.
  */
+import { budgetOn, parseBudget } from './lib/budget.ts';
 import { checkWindow, logProblem, parseClock, parseDays, parseInt10, parseRepos, parseSwitch, parseTriggers, parseZone } from './lib/repost-nudge-config.ts';
 import type { Parsed } from './lib/repost-nudge-config.ts';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -538,6 +539,17 @@ export const OTHERS_PRS_ACTIVE_HOURS = positiveInt(pick('MAESTRO_OTHERS_PRS_ACTI
 export const OTHERS_PRS_DROP_DAYS = positiveInt(pick('MAESTRO_OTHERS_PRS_DROP_DAYS', 'others_prs_drop_days'), 2);
 /** Your display names in Slack, comma-separated: a reply by you in a thread is never read as a teammate claiming the PR (Others' PRs list). Default none. */
 export const SLACK_SELF_NAMES = globList('MAESTRO_SLACK_SELF_NAMES', 'slack_self_names');
+
+/**
+ * Spend guardrail (lib/budget.ts, event-types/spend-watch.ts). All optional; unset `budget_monthly_usd` means off. `budget_period_start_day` (1 to 28, default 1) starts the budget period,
+ * `budget_days` is `weekdays` or `all` (default), `budget_warn_fraction` (default 0.8) and `budget_hard_fraction` (default 1.0) are fractions of the daily allowance, `budget_cost_multiplier` (default 1.0) scales ccusage's estimate toward the real bill.
+ */
+export const BUDGET = parseBudget({
+  monthly: pick('MAESTRO_BUDGET_MONTHLY_USD', 'budget_monthly_usd'), startDay: pick('MAESTRO_BUDGET_PERIOD_START_DAY', 'budget_period_start_day'),
+  days: pick('MAESTRO_BUDGET_DAYS', 'budget_days'), warn: pick('MAESTRO_BUDGET_WARN_FRACTION', 'budget_warn_fraction'), hard: pick('MAESTRO_BUDGET_HARD_FRACTION', 'budget_hard_fraction'),
+  multiplier: pick('MAESTRO_BUDGET_COST_MULTIPLIER', 'budget_cost_multiplier'),
+});
+export const BUDGET_ON = budgetOn(BUDGET);
 
 /**
  * Cost profile: `full` (default) or `lean`. Lean keeps the loop's zero-token watches and drops every event whose only job is to make the orchestrator start an LLM agent:
