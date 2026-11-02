@@ -27,6 +27,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # Per-file quality ratchet: fails only when a file gets worse than quality-baseline.json.
+      - run: npm run ratchet
       - run: npm test
         env:
           XENOPHON_TICKET_SCRIPT: ${{ github.workspace }}/xenophon/scripts/ticket.mjs
