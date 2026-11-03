@@ -15,6 +15,8 @@ Commands below are `node scripts/<name>.ts`, run from the skill root. Ledger com
 2. `journal.ts status --footer`. This is the front page. The handoff is already in the ledger, so there is nothing to reconstruct from memory.
 3. On a greeting: greet back briefly, then give the board (in flight, asks, shipped today). A standup only when the user's instructions ask for one at this hour.
 
+`events wait` only ends for events that need action. In slim mode, `SLIM_WAKE_TABLE` in `scripts/lib/slim-wake.ts` decides which pr-watch lines wake the session and which are demoted to Podium-only info (they stay in the digest and the Podium's PR data, and the hourly triage sweep lists them). The table is the one list; read it rather than a copy here. Other watch types, and any line the table does not know, still wake. Full mode ignores the table. Read the Podium for the demoted lines.
+
 ## The thread works; agents only help
 
 | Kind | Model | Limit | Use | Returns |
