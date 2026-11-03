@@ -23,6 +23,7 @@ import { buildOthersPrs } from './others-prs.ts';
 import type { OthersScopeOptions } from './others-prs.ts';
 import { buildEpics, buildHome } from './home.ts';
 import { buildCost } from './cost.ts';
+import { BadRequest, buildStandup } from './standup.ts';
 import { buildProjects } from './projects.ts';
 import { withVerdicts } from './local-review.ts';
 import { createLocalReviewCache, spawnProducer } from './local-review-cache.ts';
@@ -134,6 +135,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
     { method: 'GET', pattern: /^\/api\/scripts\/([^/]+)\/source$/, handler: (_u, m) => { const id = decodeName(m[1] ?? ''); return id === null ? undefined : buildScriptSource(o.web, id, now()); } },
     { method: 'GET', pattern: /^\/api\/epics$/, handler: () => buildEpics(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/cost$/, handler: () => buildCost(o.web, now()) },
+    { method: 'GET', pattern: /^\/api\/standup$/, handler: (u) => buildStandup(o.web, u.searchParams, now()) },
     { method: 'GET', pattern: /^\/api\/projects$/, handler: () => buildProjects(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/local-review$/, handler: () => containerRoot
       ? withVerdicts(localReview.read(), o.web.vault)
@@ -183,6 +185,7 @@ export function createWebServer(o: WebServerOptions): WebServer {
       if (!file) return sendError(res, 404);
       return send(res, 200, readFileSync(file), TYPES[extname(file)] ?? 'application/octet-stream');
     } catch (e) {
+      if (e instanceof BadRequest) return sendError(res, 400);
       log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error');
       return sendError(res, 500);
     }

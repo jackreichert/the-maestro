@@ -16,6 +16,7 @@ import { MOVEMENTS_CSS, movementsSection } from './home-movements.ts';
 import { STREAM_PAGE_CSS, homeUi } from './home-sections.ts';
 import { SCORE_CSS, scoreSection } from './home-score.ts';
 import { LOCAL_WIDGET_CSS, localReviewWidget } from './local-review-widget.ts';
+import { STANDUP_CSS, standupWidget } from './standup-widget.ts';
 import type { NeedsItem } from './needs-items.ts';
 import type { ChartsData, CostData, EpicsData, LocalReview, PodiumState, ProjectsData } from './types.ts';
 
@@ -43,6 +44,7 @@ export const HOME_TAB_CSS = `
   ${HELD_CSS}
   ${MOVEMENTS_CSS}
   ${LOCAL_WIDGET_CSS}
+  ${STANDUP_CSS}
   ${DECK_CSS}
   ${COST_CSS}
   ${HOME_MOTION_CSS}
@@ -80,6 +82,7 @@ export function homeTab(st: PodiumState, charts: ChartsData | null, opts: HomeOp
     cues,
     h('div', { class: 'third side' }, held, flight),
     ages, prs, rehearsal,
+    standupWidget(),
     movements, coda,
     deck, cost?.cost ?? null, ...(cost?.rest ?? []));
 }
