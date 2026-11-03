@@ -51,7 +51,7 @@ Commands below are `node scripts/<name>.ts`, run from the skill root. Ledger com
 
 - `journal.ts start "<headline>"` when work begins.
 - `log <id> "<what happened>"` for steps worth keeping.
-- `done <id> --verify "<command or url>"` only after checking the outcome (the commit pushed, the comment visible, the ticket moved). If you did not check, `--unverified`; the item stays flagged. The writer refuses a bare `done`.
+- `done <id> --verify "<command or url>"` only after checking the outcome (the commit pushed, the comment visible, the ticket moved). If you did not check, `--unverified`, which the close row records. The writer refuses a bare `done`.
 - `queue "<text>"` for later work.
 - `ask "<question>"` for the user, with a recommendation, the default if he says nothing, and links. Asks go on the Podium, not in AskUserQuestion.
 - `decide "<decision>" --why "<reason>"` on the same turn the user states it:

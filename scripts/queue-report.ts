@@ -6,7 +6,7 @@
  *
  * Lists, for the open ledger rows (in flight and queued):
  *   - rows naming a pull request that GitHub says is MERGED (looked up with `gh pr view`; MAESTRO_GH_BIN points at another gh),
- *     each with the `journal.ts done <id>` command to close it if you agree: the report never runs it;
+ *     each with the `journal.ts done <id> --verify "<cmd or url>"` command to close it if you agree: the report never runs it;
  *   - queued rows that already have a built branch (a tracker key they name appears in a branch name of their repo), as the footer's Queue line counts them.
  * A PR whose owner or state cannot be resolved is counted as unknown, never as merged. Root and project resolve as flow-report.ts does.
  */

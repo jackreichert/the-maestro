@@ -24,7 +24,7 @@
  *   journal.ts queue "<text>" --stream S --model "<name>" --used "skill:x,tool:y"   a to-do not started yet: shown as Queued, not In flight
  *   journal.ts queue <id> --model "<name>" --used "skill:x,tool:y"   move an open in-flight item to queued (a row is appended; its history stays)
  *   journal.ts start <id> --model "<name>" --used "skill:x,tool:y"   when <id> is a queued item: promote it to in flight (start "<text>" still opens a new item)
- *   journal.ts done <id|text> --model "<name>" --used "skill:x,tool:y"
+ *   journal.ts done <id|text> --verify "<cmd|url>" | --unverified --model "<name>" --used "skill:x,tool:y"
  *   journal.ts drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
  *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
  *                                             add --how-do-i when the question is a how-do-I the library could not answer: it is also logged as a `miss` (source ask)
@@ -71,7 +71,7 @@
  *   journal.ts miss "<question>" --source find|ask|eval [--repo R] [--model ... --used ...]
  *                                             a question the library could not answer, for the composer; scanned for secrets, one row per question per repo per day
  *   journal.ts misses [--json]               the open misses grouped by topic, for the composer
- *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred [--supersedes <id|path>] --model ... --used ...
+ *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred --page <lib page> | --no-page "<why>" [--supersedes <id|path>] --model ... --used ...
  *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
  *   journal.ts shared <path-or-url> --project <p> --title "<t>" [--why "<one line>"] --model ... --used ...
  *                                             records a document the user handed over so its project tab lists it; only the title and place are stored, a path must sit under the vault or container root, secret-shaped names and links are refused (`shared --help`)

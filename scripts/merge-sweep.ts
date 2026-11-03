@@ -12,7 +12,7 @@
  * `gh:pr:repo#N`. The owner comes from `repo_owners` (config) or the row's own `repo` field (`owner/name`); with neither the
  * PR is unknown, never guessed. Each PR is read with `gh pr view` (`MAESTRO_GH_BIN` points at another gh).
  * The report has two lists:
- *   - merged: GitHub says MERGED, with the `journal.ts done <id>` command to close the row if you agree (printed, never run);
+ *   - merged: GitHub says MERGED, with the `journal.ts done <id> --verify "<cmd or url>"` command to close the row if you agree (printed, never run);
  *   - stale: GitHub says OPEN and `updatedAt` is at least `--stale-days` (default 7) whole UTC days before `--today`.
  * A PR this script cannot read (gh fails, the state is not MERGED/OPEN/CLOSED, the activity timestamp is missing, or the
  * name has no owner) is unknown, never merged. A PR closed without merging is listed apart from both, and is not a close.
