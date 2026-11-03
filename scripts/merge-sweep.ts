@@ -12,7 +12,7 @@
  * `gh:pr:repo#N`. The owner comes from `repo_owners` (config) or the row's own `repo` field (`owner/name`); with neither the
  * PR is unknown, never guessed. Each PR is read with `gh pr view` (`MAESTRO_GH_BIN` points at another gh).
  * The report has two lists:
- *   - merged: GitHub says MERGED, with the `journal.ts done <id>` command to close the row if you agree (printed, never run);
+ *   - merged: GitHub says MERGED, with the `journal.ts done <id> --verify "<cmd or url>"` command to close the row if you agree (printed, never run);
  *   - stale: GitHub says OPEN and `updatedAt` is at least `--stale-days` (default 7) whole UTC days before `--today`.
  * A PR this script cannot read (gh fails, the state is not MERGED/OPEN/CLOSED, the activity timestamp is missing, or the
  * name has no owner) is unknown, never merged. A PR closed without merging is listed apart from both, and is not a close.
@@ -148,7 +148,7 @@ export function validDate(s: string): boolean {
 
 /** The close command for a ledger id this script is willing to print. Never executed here. */
 export function doneCommand(id: string): string | undefined {
-    return SAFE_ID.test(id) ? `journal.ts done ${id}` : undefined;
+    return SAFE_ID.test(id) ? `journal.ts done ${id} --verify "<cmd or url>"` : undefined;
 }
 
 interface GhView { state: string; updatedAt?: string }
@@ -283,7 +283,7 @@ const JOURNAL = fileURLToPath(new URL('./journal.ts', import.meta.url));
 
 /** Append `done` to one row through `journal.ts done`. True when it exited 0. */
 function journalDone(id: string, why: string, vault: string, project: string): boolean {
-    const r = spawnSync(process.execPath, [JOURNAL, 'done', id, '--why', why, '--vault', vault, '--project', project, '--model', 'n/a', '--used', 'tool:merge-sweep.ts'], { encoding: 'utf8', timeout: 30_000 });
+    const r = spawnSync(process.execPath, [JOURNAL, 'done', id, '--verify', 'gh pr view: every linked PR is MERGED', '--why', why, '--vault', vault, '--project', project, '--model', 'n/a', '--used', 'tool:merge-sweep.ts'], { encoding: 'utf8', timeout: 30_000 });
     return r.status === 0;
 }
 

@@ -146,3 +146,23 @@ test('relearn: an exact repeat is the same, a new verified-at or confidence refr
     assert.deepEqual(relearn([row('aaaa'), row('bbbb', { verifiedAt: '342b177' })], f), { kind: 'same', id: 'aaaa' }, 'repeating an older check is not a refresh');
     assert.deepEqual(relearn([row('aaaa', { evidence: 'other:2' }), { id: 'cccc', kind: 'note', ...f }], f), { kind: 'new' });
 });
+
+const writeCtx = { ...ctx, requirePage: true };
+
+test('a write with neither --page nor --no-page is refused and names both flags', () => {
+    const r = parse({}, writeCtx);
+    assert.equal(r.fields, undefined);
+    assert.ok(r.errors.some((e) => /needs --page <library page>.*--no-page "<why no page changes>"/.test(e)));
+});
+
+test('--page and --no-page together, an empty --no-page, and a page that is not a vault-relative .md path are refused', () => {
+    assert.match(parse({ page: 'Library/a.md', noPage: 'x' }, writeCtx).errors[0] ?? '', /not both/);
+    assert.match(parse({ noPage: '   ' }, writeCtx).errors[0] ?? '', /--no-page needs a reason/);
+    for (const page of ['/abs/page.md', '../out.md', 'Library/a.txt', 'Library/../x.md']) assert.match(parse({ page }, writeCtx).errors[0] ?? '', /--page must be a vault-relative path/, page);
+});
+
+test('--page and --no-page are stored; stored rows that predate the rule still audit clean', () => {
+    assert.equal(parse({ page: 'Library/the-maestro/page.md' }, writeCtx).fields?.page, 'Library/the-maestro/page.md');
+    assert.equal(parse({ noPage: 'nothing durable changed' }, writeCtx).fields?.noPage, 'nothing durable changed');
+    assert.deepEqual(learnedProblems(GOOD_STORED, new Set()), []);
+});

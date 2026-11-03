@@ -223,7 +223,7 @@ test('--read-only takes no claim; a closed item cannot be briefed; a missing --d
     assert.equal(existsSync(lock('repo-b')), false);
 
     // A briefed item needs a retro or a recorded reason before done.
-    assert.equal(run(['done', id, '--no-retro', 'closed only to test the refusal', ...MARK]).code, 0);
+    assert.equal(run(['done', id, '--unverified', '--no-retro', 'closed only to test the refusal', ...MARK]).code, 0);
     assert.equal(run(['brief', id, '--out-dir', outDir, ...MARK]).code, 1);
 });
 

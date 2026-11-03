@@ -235,7 +235,7 @@ function readQueuedKeys(vault: string, project: string): Set<string> {
 /** Appends one fix through `journal.ts queue`. Throws on a non-zero exit; the caller logs and continues. */
 function enqueueFix(item: DigestFix, vault: string, project: string): void {
   const r = spawnSync(process.execPath, [
-    JOURNAL, 'queue', item.text,
+    JOURNAL, 'queue', item.text, '--machine',
     '--repo', item.repo,
     '--model', 'n/a',
     '--used', 'tool:loop-supervisor',

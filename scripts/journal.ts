@@ -24,7 +24,7 @@
  *   journal.ts queue "<text>" --stream S --model "<name>" --used "skill:x,tool:y"   a to-do not started yet: shown as Queued, not In flight
  *   journal.ts queue <id> --model "<name>" --used "skill:x,tool:y"   move an open in-flight item to queued (a row is appended; its history stays)
  *   journal.ts start <id> --model "<name>" --used "skill:x,tool:y"   when <id> is a queued item: promote it to in flight (start "<text>" still opens a new item)
- *   journal.ts done <id|text> --model "<name>" --used "skill:x,tool:y"
+ *   journal.ts done <id|text> --verify "<cmd|url>" | --unverified --model "<name>" --used "skill:x,tool:y"
  *   journal.ts drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
  *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
  *                                             add --how-do-i when the question is a how-do-I the library could not answer: it is also logged as a `miss` (source ask)
@@ -72,7 +72,7 @@
  *   journal.ts miss "<question>" --source find|ask|eval [--repo R] [--model ... --used ...]
  *                                             a question the library could not answer, for the composer; scanned for secrets, one row per question per repo per day
  *   journal.ts misses [--json]               the open misses grouped by topic, for the composer
- *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred [--supersedes <id|path>] --model ... --used ...
+ *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred --page <lib page> | --no-page "<why>" [--supersedes <id|path>] --model ... --used ...
  *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
  *   journal.ts shared <path-or-url> --project <p> --title "<t>" [--why "<one line>"] --model ... --used ...
  *                                             records a document the user handed over so its project tab lists it; only the title and place are stored, a path must sit under the vault or container root, secret-shaped names and links are refused (`shared --help`)
@@ -180,6 +180,8 @@ import { boardContextFor } from './lib/journal/board-context.ts';
 import { lapsedRequeues } from './lib/journal/lease-requeue.ts';
 import { umbrellaRefusal } from './lib/journal/umbrella.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
+import { headlineProblem } from './lib/journal/headline.ts';
+import { parseDoneProof } from './lib/journal/done-proof.ts';
 import { proposeCloses, proposalLines, applyProposals } from './lib/journal/age-out.ts';
 import { branchState } from './lib/journal/branch-state.ts';
 import { chosenClosing, planClosing, planRefusal, applyClosing } from './lib/journal/resolves.ts';
@@ -689,6 +691,11 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
     if (!ask && kind === 'question') die('A question goes through `ask`, which requires --searched: journal.ts ask "<question>" --searched "<where I looked>".');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
+    // --machine: a script's generated queue line (the supervisor's fix lines carry a url a parser reads back), so its length is not a person's headline.
+    if (has('machine') && !queued) die('--machine is for queue only: a started item is a person\'s headline and keeps the limit.');
+    if (kind === 'wip' && !has('machine')) { const long = headlineProblem(text, queued ? 'queue' : 'start'); if (long) die(long); }
+    const logDoneProof = kind === 'done' ? parseDoneProof({ verify: { given: has('verify'), value: arg('verify') }, unverified: has('unverified') }) : undefined;
+    if (logDoneProof && !logDoneProof.proof) die(`log --kind done: refused, nothing written.\n${logDoneProof.errors.map((e) => `  - ${e}`).join('\n')}`);
     const reworked = kind === 'rework' ? reworkTarget(text) : undefined;
     const refs = rule ? ruleRefs() : refsFromArgs();
     const askGate = askGateFromArgs(ask, tplFlags.file);   // before anything that reads the filesystem, so a missing --searched is always the first refusal
@@ -748,6 +755,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         gate,
         transitioned: transitionedFlag(),
         ...(routed.acted === null ? { ...askFields, ...askGate, ...template } : { searched: askGate.searched }),
+        ...(logDoneProof?.proof ?? {}),
         ...ruleScopeFor(kind),
         ...approvalFor(kind),
         ...usageFromArgs(),
@@ -786,12 +794,13 @@ function cmdLearned(): void {
     const entries = readLedger();
     const learnedIds = new Set(entries.filter((e) => e.kind === 'learned' && e.id).map((e) => e.id as string));
     const parsed = parseLearned(
-        { claim: arg('text') || positional.join(' '), kind: flag('kind'), appliesTo: flag('applies-to'), evidence: flag('evidence'), verifiedAt: flag('verified-at'), confidence: flag('confidence'), supersedes: flag('supersedes'),
+        { claim: arg('text') || positional.join(' '), kind: flag('kind'), appliesTo: flag('applies-to'), evidence: flag('evidence'), verifiedAt: flag('verified-at'), confidence: flag('confidence'), supersedes: flag('supersedes'), page: flag('page'), noPage: flag('no-page'),
             extras: { date: flag('date') ?? today(), repo: flag('repo') ?? undefined, stream: flag('stream') ?? undefined, model: flag('model') ?? undefined, used: flag('used') ?? undefined, tokens: flag('tokens') ?? undefined, harness: flag('harness') ?? undefined, agent: flag('agent') ?? undefined } },
-        { repos: knownRepos(), learnedIds },
+        { repos: knownRepos(), learnedIds, requirePage: true },
     );
     if (!parsed.fields) die(`learned: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\n(journal.ts learned --help)`);
     const { fields } = parsed;
+    if (fields.page !== undefined && !existsSync(join(ticketsBase(), fields.page))) die(`learned: refused, nothing written.\n  - --page ${fields.page} is not a file under the vault (${ticketsBase()}). Edit or create the page first, then record it; or use --no-page "<why>".`);
     const seen = relearn(entries, fields);
     if (seen.kind === 'same') { console.log(`learned  ${seen.id}  ${fields.text}  (already recorded)`); return; }
     const entry = {
@@ -1231,13 +1240,18 @@ function cmdClose(newKind: string): void {
     const noRetro = has('no-retro') ? (arg('no-retro') ?? '') : null;
     if (noRetro !== null && newKind !== 'done') die('--no-retro is for done: drop and resolve do not need a retro.');
     if (noRetro !== null) { const bad = noRetroRefusals(noRetro); if (bad.length) die(`done: refused, nothing written.\n${bad.map((b) => `  - ${b}`).join('\n')}`); }
+    // `done` carries its proof (--verify or --unverified); checked before the target is looked up so a bare `done` is always refused the same way.
+    const proofFlags = { verify: { given: has('verify'), value: arg('verify') }, unverified: has('unverified') };
+    if (newKind !== 'done' && (proofFlags.verify.given || proofFlags.unverified)) die('--verify and --unverified are for done: drop and resolve close without a proof.');
+    const doneProof = newKind === 'done' ? parseDoneProof(proofFlags) : undefined;
+    if (doneProof && !doneProof.proof) die(`done: refused, nothing written.\n${doneProof.errors.map((e) => `  - ${e}`).join('\n')}`);
     const result = closeItem({ readLedger, append, newId, fold, today, now }, {
         kind: newKind,
         needle,
         note: arg('answer') || arg('why'),
         ticket: arg('ticket'),
         followUp: true,
-        extras: () => ({ ...approvalClose(newKind), ...(noRetro !== null ? { noRetro: noRetro.replace(/\s+/g, ' ').trim() } : {}), ...usageFromArgs() }),
+        extras: () => ({ ...approvalClose(newKind), ...(doneProof?.proof ?? {}), ...(noRetro !== null ? { noRetro: noRetro.replace(/\s+/g, ' ').trim() } : {}), ...usageFromArgs() }),
         ...(newKind === 'done' && noRetro === null ? { guard: (target: LedgerItem, entries: LedgerRow[]) => retroGate(entries, target) } : {}),
     });
     if (result.kind === 'ambiguous') exitAmbiguous(needle, result.matches);

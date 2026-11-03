@@ -6,7 +6,7 @@
  *
  * Lists, for the open ledger rows (in flight and queued):
  *   - rows naming a pull request that GitHub says is MERGED (looked up with `gh pr view`; MAESTRO_GH_BIN points at another gh),
- *     each with the `journal.ts done <id>` command to close it if you agree: the report never runs it;
+ *     each with the `journal.ts done <id> --verify "<cmd or url>"` command to close it if you agree: the report never runs it;
  *   - queued rows that already have a built branch (a tracker key they name appears in a branch name of their repo), as the footer's Queue line counts them.
  * A PR whose owner or state cannot be resolved is counted as unknown, never as merged. Root and project resolve as flow-report.ts does.
  */
@@ -56,7 +56,7 @@ export function main(argv: string[]): number {
     const built = queueHygiene(items.filter(isQueued), new Date().toISOString().slice(0, 10), TRACKER_KEY_PATTERN, branchesOf).built;
     if (has('json')) { printJson({ merged, built }); return 0; }
     console.log(`Open rows naming a merged PR (${merged.length}); nothing was closed:`);
-    for (const m of merged) console.log(`  ${m.id}  ${m.text}\n      ${m.prs.map((p) => `${p.ref.repo}#${p.ref.number} ${p.state}`).join(', ')}${m.allMerged ? '' : '  (other PRs on this row are not merged)'}\n      close if you agree: journal.ts done ${m.id}`);
+    for (const m of merged) console.log(`  ${m.id}  ${m.text}\n      ${m.prs.map((p) => `${p.ref.repo}#${p.ref.number} ${p.state}`).join(', ')}${m.allMerged ? '' : '  (other PRs on this row are not merged)'}\n      close if you agree: journal.ts done ${m.id} --verify "<cmd or url>"`);
     console.log(`\nQueued rows with a built branch (${built.length}):`);
     for (const b of built) console.log(`  ${b.id}  ${b.branch}`);
     return 0;

@@ -21,7 +21,7 @@ For every `owner/repo#N` a row lists, follow [pr-state.md](pr-state.md) and note
 A row is hard evidence when the script says `CLOSE` (its ticket is closed, or every child row is closed), or when its only PR is merged. For each one:
 
 ```bash
-node <scripts_dir>/journal.ts done <id> "closed by triage: <the evidence, e.g. ticket widgets-12 is closed>"
+node <scripts_dir>/journal.ts done <id> --verify "<cmd or url>" --why "closed by triage: <the evidence, e.g. ticket widgets-12 is closed>"
 ```
 
 Cite the evidence in the text every time. Never close a row the script marks `ASK` unless a PR is merged.

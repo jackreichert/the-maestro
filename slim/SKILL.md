@@ -51,7 +51,7 @@ Commands below are `node scripts/<name>.ts`, run from the skill root. Ledger com
 
 - `journal.ts start "<headline>"` when work begins.
 - `log <id> "<what happened>"` for steps worth keeping.
-- `done <id>` only after checking the outcome (the commit pushed, the comment visible, the ticket moved).
+- `done <id> --verify "<command or url>"` only after checking the outcome (the commit pushed, the comment visible, the ticket moved). If you did not check, `--unverified`, which the close row records. The writer refuses a bare `done`.
 - `queue "<text>"` for later work.
 - `ask "<question>"` for the user, with a recommendation, the default if he says nothing, and links. Asks go on the Podium, not in AskUserQuestion.
 - `decide "<decision>" --why "<reason>"` on the same turn the user states it:
@@ -59,12 +59,13 @@ Commands below are `node scripts/<name>.ts`, run from the skill root. Ledger com
   - `--scope working-rule` for how to work with them;
   - `--binds window` for "just here, just today".
 - Every write takes `--model <id> --used <skill or tool>`.
-- Headlines stay short, and every item in a reply carries its ledger id.
+- Headlines stay at 80 characters or fewer (`start` and `queue` refuse longer ones; the detail goes in `log`), and every item in a reply carries its ledger id.
 
 ## Library: what we know
 
 The library is the vault's internal-Notion space: evergreen, organized, and maintained.
 
+- Record a lesson with `learned ... --page <page edited this turn>`, or `--no-page "<why>"`; the writer refuses `learned` with neither.
 - A lesson from code, a run or the user becomes a library page edit, or a working-rule memory if it is about how to work with them.
 - Link to pages; never duplicate a fact.
 - Before searching code or asking the user, look in the library and the project's `CONTEXT.md`.
