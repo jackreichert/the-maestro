@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { fold, mapStreamWith } from '../ledger-core.ts';
 import type { LedgerRow } from '../ledger-core.ts';
 import { parseArgs } from '../journal/args.ts';
-import { footerLines, footerRows, groups } from '../journal/board.ts';
+import { footerRows, groups } from '../journal/board.ts';
 import type { BoardContext } from '../journal/board.ts';
 import { sessionText } from '../session-text.ts';
 import type { SessionStatus } from '../session-text.ts';
@@ -39,7 +39,7 @@ const rows: LedgerRow[] = [
 ];
 
 /** Board groups over the in-memory rows, the way `journal.ts status` builds them. */
-function board(): BoardStatus & { footerText: string[] } {
+function board(): BoardStatus {
   const ctx: BoardContext = {
     readLedger: () => rows, fold: (e) => fold(e, null), today: () => TODAY, rollPoint: () => undefined,
     has: parseArgs(['status']).has, mapStream: (s) => mapStreamWith(null, s), loadRegistry: () => null, ensureDir: () => {}, dir: '', dryRun: true,
@@ -49,8 +49,8 @@ function board(): BoardStatus & { footerText: string[] } {
   const session: SessionStatus = { available: true, turns: 86, ctxK: 142, triggerK: 200, pct: 71, readK: 129, advice: 'roll soon' };
   return {
     inflight: g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, done,
-    footer: { ledger: footerRows(g, done), session }, footerText: footerLines(g, done),
-  } as BoardStatus & { footerText: string[] };
+    footer: { ledger: footerRows(g, done), session },
+  } as BoardStatus;
 }
 
 const page = (status: BoardStatus): string => {
@@ -65,14 +65,10 @@ const section = (p: string, heading: string): string[] => {
 };
 const cells = (l: string): string[] => l.split('|').slice(1, -1).map((c) => c.trim());
 
-test('the Status table carries exactly the numbers status --footer prints, one row per stream', () => {
+test('the Status table carries exactly the footerRows numbers, one row per stream', () => {
   const b = board();
   const rowsOnPage = section(page(b), '## Status').filter((l) => l.startsWith('| ')).slice(1).map(cells);
-  const fromFooter = b.footerText.map((l) => {
-    const m = l.match(/^\*\*Ledger \((.+)\):\*\* (\d+) done today · (\d+) in flight(?: · (\d+) queued)? · (\d+) awaiting you(?: · (\d+) to run)?(?: · (\d+) blocked)?$/);
-    assert.ok(m, l);
-    return [m[1], m[2], m[3], m[4] ?? '0', m[5], m[6] ?? '0', m[7] ?? '0'];
-  });
+  const fromFooter = b.footer!.ledger.map((r) => [r.name ?? 'all', r.done, r.inflight, r.queued, r.awaiting, r.paste, r.blocked].map(String));
   assert.deepEqual(rowsOnPage, fromFooter);
   assert.deepEqual(rowsOnPage.map((r) => r[0]), ['Example Pilot', 'Example Rollout', 'other'], 'Example Pilot and Example Rollout stay separate streams');
   assert.deepEqual(rowsOnPage.find((r) => r[0] === 'Example Rollout'), ['Example Rollout', '1', '2', '1', '1', '1', '0']);

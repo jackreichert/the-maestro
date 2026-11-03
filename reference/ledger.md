@@ -14,7 +14,7 @@ node $J done  "Port the calendar fix" "${M[@]}"  # id or a unique substring
 node $J ask   "Split the calendar change into a follow-up PR?" --blocked "the PR waits" --option "Split -- two reviews" --option "Keep -- one large diff" --recommend "Split: smaller to review" --link "https://github.com/example/repo/pull/7" --searched "reference/ledger.md, the PR diff" "${M[@]}"
 node $J resolve "calendar change" --answer "Yes — no consumer yet" "${M[@]}"
 node $J status                            # what is open + done today, with usage marks
-node $J status --footer                   # the reply-footer Ledger lines (below)
+node $J status --footer                   # the reply footer (below)
 node $J status --footer --line            # the same facts as one line; --session <id> / --stdin pick the transcript
 node $J standup                           # end-of-day summary, ready to paste (no usage marks)
 node $J roll                              # compress: archive the day, keep open items
@@ -232,18 +232,16 @@ node $J unarchive Launch "${M[@]}"
 
 ## The footer lines
 
-`status --footer` prints the Ledger lines and the Session line of the reply footer, so those two are never typed from memory:
+`status --footer` prints the reply footer, so it is never typed from memory. It carries no per-stream Ledger lines: they cost every reply and the done count was not trusted (the-maestro-450). The per-stream counts stay in `status --json` (`footer.ledger`, which the Podium's Status table reads) and, summed, in `--line`:
 
 ```
-**Ledger (Launch):** 1 done today · 1 in flight · 0 awaiting you
-**Ledger (Maestro):** 0 done today · 0 in flight · 1 awaiting you · 1 blocked
-**Ledger (other):** 0 done today · 1 in flight · 0 awaiting you
+**Review queue:** 2 of 4 waiting on reviewers
 **Session:** 86 turns · ctx 142k of ~200k (71%) · 129k read/turn · roll soon
 ```
 
-One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· 12 in flight (7 stale, 3d+ with no lease)` marks in-flight rows at least three days old that hold no live lease: the count is rows, and these are the ones nothing is known to be working on, so confirm each alive or `drop` it. `· N blocked` appears only when something is blocked, and `· N queued` (straight after in flight, e.g. `1 in flight · 3 queued · 0 awaiting you`) only when something is queued. With no streams at all it is the single `**Ledger:**` line. After them, when a PR snapshot exists, comes `**Review queue:** N of 4` (open non-draft PRs against `review_queue_cap`; `(full)` at the cap, and a note when the snapshot is over ten minutes old; a snapshot over 30 minutes old is not shown: the footer reads GitHub live instead, and prints `unknown (snapshot 11h old; live refresh failed)` when that read fails; a count above the cap says by how much), then the Session line. After a compaction the Session line reads `N turns since compact (M before)`: N, the context and read/turn count from the last compact, M is the turns before it, and the roll percent uses the context, not a turn count. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
+When a PR snapshot exists, the footer has a `**Review queue:** N of 4` line (open non-draft PRs against `review_queue_cap`; `(full)` at the cap, and a note when the snapshot is over ten minutes old; a snapshot over 30 minutes old is not shown: the footer reads GitHub live instead, and prints `unknown (snapshot 11h old; live refresh failed)` when that read fails; a count above the cap says by how much), and it ends with the Session line. After a compaction the Session line reads `N turns since compact (M before)`: N, the context and read/turn count from the last compact, M is the turns before it, and the roll percent uses the context, not a turn count.
 
-`status --footer --line` prints the same facts on one line, summed across streams (the review queue, loop and session follow when they apply):
+`status --footer --line` prints the footer on one line, led by the ledger counts summed across streams (the review queue, loop and session follow when they apply):
 
 ```
 Ledger: 0 done · 2 in flight · 0 awaiting | Loop: ok <1 min | Session: 103 turns (57%) · 159k/turn

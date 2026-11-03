@@ -228,19 +228,19 @@ test('--stream none means no stream on start, ask and log, with or without a reg
     }
     const footer = run('status', '--footer').out;
     assert.doesNotMatch(footer, /none/i);
-    assert.match(footer, /\*\*Ledger:\*\*/);
+    assert.deepEqual(parse<{ footer: { ledger: { name: string | null }[] } }>(run('status', '--json').out).footer.ledger.map((r) => r.name), [null]);
     assert.equal(registry().streams.none, undefined);
 });
 
 test('tag --stream none clears a stream, and the footer drops it', () => {
     run('start', 'to clear', '--stream', 'Launch', ...MARK);
     const id = idOf(run('start', 'keeps stream', '--stream', 'Launch', ...MARK).out);
-    assert.match(run('status', '--footer').out, /Ledger \(Launch\)/);
+    assert.deepEqual(parse<{ footer: { ledger: { name: string | null }[] } }>(run('status', '--json').out).footer.ledger.map((r) => r.name), ['Launch']);
     assert.equal(run('tag', 'to clear', '--stream', 'none', ...MARK).code, 0);
     assert.equal(must(ledger().find((e) => e.kind === 'tag')).stream, undefined);
     const streams = statusJson().inflight.map((i) => i.stream);
     assert.deepEqual(streams.sort(), [undefined, 'Launch'].sort());
-    assert.doesNotMatch(run('status', '--footer').out, /Ledger \(none\)/);
+    assert.ok(!parse<{ footer: { ledger: { name: string | null }[] } }>(run('status', '--json').out).footer.ledger.map((r) => r.name).includes('none'));
     assert.ok(id);
 });
 
@@ -463,7 +463,7 @@ test('archived items are hidden by default and shown with --include-archived; un
 
 const sessionNone = () => `**Session:** unavailable (no sessions in ${projects}; set projects_dir)`;
 
-test('status --footer prints one Ledger line per active stream, registry names, and an other line', () => {
+test('status --footer prints no Ledger rows, however many streams are active (the-maestro-450)', () => {
     seedRegistry();
     const a = idOf(run('start', 'launch one', '--stream', 'launch', ...MARK).out);
     run('start', 'launch two', '--stream', 'launch-v2', ...MARK);
@@ -474,9 +474,6 @@ test('status --footer prints one Ledger line per active stream, registry names, 
     const r = run('status', '--footer');
     assert.equal(r.code, 0, r.err);
     assert.deepEqual(r.out.trim().split('\n'), [
-        '**Ledger (Launch):** 1 done today · 1 in flight · 0 awaiting you',
-        '**Ledger (Maestro):** 0 done today · 0 in flight · 1 awaiting you (1 one-way) · 1 blocked',
-        '**Ledger (other):** 0 done today · 1 in flight · 0 awaiting you',
         '**Leases:** 2 mine, 0 other',
         sessionNone(),
     ]);
@@ -520,7 +517,7 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     assert.match(odd[0], /no session "x\?y\?z" in /);
     const multi = status(['--session', 'aaaaaaaa-mine']);
     assert.ok(multi.length >= 2);
-    assert.equal(multi[0], '**Ledger:** 0 done today · 1 in flight · 0 awaiting you');
+    assert.equal(multi.find((l) => l.startsWith('**Ledger')), undefined, 'the multi-line footer carries no Ledger rows');
     assert.equal(multi.find((l) => l.startsWith('**Window:**')), '**Window:** aaaaaaaa-min', 'the footer names the window of the session it measures');
     const unpinned = status([]);
     assert.equal(unpinned.find((l) => l.startsWith('**Window:**')), undefined, 'without a pinned session the newest transcript is not shown under MAESTRO_WINDOW\'s name');
@@ -528,7 +525,7 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     assert.equal(multi.find((l) => l.startsWith('**Session:**')), '**Session:** aaaaaaaa · 2 turns · ctx 100k of ~200k (50%) · 100k read/turn', '--session applies to the multi-line footer too');
 });
 
-test('status --json carries the footer numbers, and they match what status --footer prints', () => {
+test('status --json carries the per-stream footer numbers', () => {
     seedRegistry();
     const a = idOf(run('start', 'launch one', '--stream', 'launch', ...MARK).out);
     run('done', a, '--unverified', ...MARK);
@@ -542,14 +539,12 @@ test('status --json carries the footer numbers, and they match what status --foo
         { name: 'other', done: 0, inflight: 1, queued: 0, awaiting: 0, paste: 0, blocked: 0 },
     ]);
     assert.deepEqual(f.session, { available: false, unavailable: `no sessions in ${projects}; set projects_dir` });
-    const text = run('status', '--footer').out.trim().split('\n');
-    assert.equal(text[0], '**Ledger (Maestro):** 0 done today · 0 in flight · 1 awaiting you (1 one-way) · 1 blocked');
 });
 
-test('status --footer with no streams is the single plain Ledger line, and appends nothing', () => {
+test('status --footer with no streams prints no Ledger line, and appends nothing', () => {
     run('start', 'plain', ...MARK);
     const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
-    assert.deepEqual(run('status', '--footer').out.trim().split('\n'), ['**Ledger:** 0 done today · 1 in flight · 0 awaiting you', '**Leases:** 1 mine, 0 other', sessionNone()]);
+    assert.deepEqual(run('status', '--footer').out.trim().split('\n'), ['**Leases:** 1 mine, 0 other', sessionNone()]);
     assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
 });
 
@@ -640,11 +635,6 @@ test('status separates queued from in flight: --json, --footer and the plain tex
     assert.deepEqual(j.paste.map((i) => i.text), ['run this']);
     const footer = parse<{ footer: { ledger: { name: string; inflight: number; queued: number; paste: number }[] } }>(run('status', '--json').out).footer.ledger;
     assert.deepEqual(footer.map((r) => [r.name, r.inflight, r.queued, r.paste]), [['Launch', 1, 1, 1], ['Maestro', 0, 1, 0], ['other', 0, 1, 0]]);
-    assert.deepEqual(run('status', '--footer').out.trim().split('\n').slice(0, 3), [
-        '**Ledger (Launch):** 0 done today · 1 in flight · 1 queued · 0 awaiting you · 1 to run',
-        '**Ledger (Maestro):** 0 done today · 0 in flight · 1 queued · 0 awaiting you',
-        '**Ledger (other):** 0 done today · 0 in flight · 1 queued · 0 awaiting you',
-    ]);
     const text = run('status').out;
     assert.match(text, /In flight\n {2}`\w+` running now/);
     assert.match(text, /Queued\n {2}`\w+` parked later/);
@@ -1770,7 +1760,6 @@ test('a decision is a record: log --kind decision never shows as awaiting', () =
     assert.equal(run('log', 'Samwise rule: always squash', '--kind', 'decision', ...MARK).code, 0);
     assert.deepEqual(statusJson().awaiting, []);
     assert.doesNotMatch(run('status').out, /Awaiting you/);
-    assert.deepEqual(run('status', '--footer').out.split('\n')[0], '**Ledger:** 0 done today · 0 in flight · 0 awaiting you');
 });
 
 test('ask --kind decision is pending: it shows as awaiting until resolved', () => {
@@ -2086,7 +2075,7 @@ test('paste asks show apart from the questions in status, the footer and CURRENT
     assert.match(s, /Awaiting you\n  `\w+` which way\?[^]*Paste blocks for you\n  `\w+` run the count .*block: /);
     assert.doesNotMatch(s.split('Paste blocks for you')[0], /run the count/);
     assert.match(s, /0 done · 0 in flight · 1 awaiting you(?: \(1 one-way\))? · 1 to run/);
-    assert.match(run('status', '--footer').out.split('\n')[0], /1 awaiting you(?: \(1 one-way\))? · 1 to run/);
+    assert.match(run('status', '--footer', '--line').out, /1 awaiting · 1 to run/);
     const j = statusJson();
     assert.deepEqual([j.awaiting.length, j.paste.length, j.paste[0].paste], [1, 1, f]);
     const cur = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
@@ -2212,7 +2201,7 @@ test('defer hides an open item from status, the footer and prime until its date,
     assert.equal(ledger().length, rows + 1);
     assert.equal(ledger().at(-1)?.kind, 'defer');
     assert.deepEqual(statusJson().inflight.map((i) => i.text), ['still on the board']);
-    assert.match(run('status', '--footer').out.split('\n')[0], /1 in flight/);
+    assert.match(run('status', '--footer', '--line').out, /1 in flight/);
     assert.doesNotMatch(run('prime').out, /after the push/);
     assert.match(run('prime').out, /1 deferred item\(s\) hidden/);
     assert.match(run('triage').out, new RegExp(`${id} .*deferred until ${deferDays(3)}`));
@@ -2241,7 +2230,7 @@ test('an in-flight row older than stale_wip_days is stale: out of the in-flight 
     assert.deepEqual(j.stale?.map((i) => i.id), [old]);
     assert.equal(j.footer.ledger[0]?.inflight, 1);
     assert.equal(j.footer.ledger[0]?.stale, 1);
-    assert.match(run('status', '--footer').out, /1 in flight · 1 stale \(3d\+, no lease\)/);
+    assert.match(run('status', '--footer', '--line').out, /1 in flight · 1 stale/);
     const board = run('status').out;
     assert.match(board, /Stale \(3d\+, no lease\)\n\s+.*forgotten long ago/);
     assert.match(board, /1 in flight · 1 stale/);
