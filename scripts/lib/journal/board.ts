@@ -148,8 +148,8 @@ export function footerDone(g: Groups, d: string, opts?: { tz?: string }): DayDon
 }
 
 /**
- * The counts behind the reply-footer Ledger lines: one row per active stream (canonical registry names), then `other` for
- * items with no stream. With no streams at all it is the single plain row. The footer text and the status page both read this.
+ * The per-stream counts: one row per active stream (canonical registry names), then `other` for items with no stream.
+ * With no streams at all it is the single plain row. `status --footer --line` and `status --json` (the status page) read this.
  */
 export const FOOTER_STALE_DAYS = DEFAULT_STALE_WIP_DAYS;
 
