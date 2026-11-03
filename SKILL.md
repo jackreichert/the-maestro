@@ -96,12 +96,10 @@ End every reply with the live agent roster and the ledger count. Call `ListAgent
 
 ```
 **Agents:** `trace-client-id` running 4m · `map-amada-uat` completed
-**Ledger:** 4 done today · 2 in flight · 1 awaiting you
 **Session:** 86 turns · ctx 142k of ~200k (71%) · 129k read/turn · roll soon
 ```
 
-`journal.ts status --footer` prints the Ledger lines, one per active stream when streams are in use,
-then the Session line for the current session (the newest transcript in `projects_dir`, or the one named by `--session <id>`; at 60% of
+`journal.ts status --footer` prints no per-stream Ledger lines (`--line` and `--json` keep the ledger counts); it ends with the Session line for the current session (the newest transcript in `projects_dir`, or the one named by `--session <id>`; at 60% of
 the autocompact trigger it ends `· roll soon`, at 90% `· roll now`; the roll figure is the context, so after a compact it falls for real, and the line then reads `2 turns since compact (137 before)` rather than dropping silently). `status --footer --line` prints the same facts as one line (ledger totals, review queue, loop, session); with two windows open, pass `--session <id>` so each reads its own transcript
 ([reference/ledger.md#the-footer-lines](reference/ledger.md#the-footer-lines)).
 

@@ -201,7 +201,7 @@ import { statusJson } from './lib/journal/status-json.ts';
 import { splitInflight, staleRollLines } from './lib/journal/stale-wip.ts';
 import { parentRefusal, parentPromptLine } from './lib/journal/parent.ts';
 import type { Groups } from './lib/journal/board.ts';
-import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerDone, footerRows, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
+import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerDone, footerRows, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
 import { briefPaths, briefText, agentPrompt, libraryBlock } from './lib/journal/brief.ts';
@@ -1493,7 +1493,8 @@ function cmdStatus() {
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
         if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window), doneLabel: live.doneLabel, drift: ledgerDrift(), spend: spendLine(session) })); return; }
-        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, ledgerDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...[spendLine(session)].filter(Boolean), ...[githubFooter(EVENT_DIR, Date.now(), WATCH_TZ)].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), ...[ledgerDrift()].filter(Boolean).map((l) => `**${l.replace(': ', ':** ')}`), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        // No per-stream Ledger rows here: they cost every reply and the done count was not trusted (the-maestro-450). --line and --json keep them.
+        [...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, ledgerDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...[spendLine(session)].filter(Boolean), ...[githubFooter(EVENT_DIR, Date.now(), WATCH_TZ)].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), ...[ledgerDrift()].filter(Boolean).map((l) => `**${l.replace(': ', ':** ')}`), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 

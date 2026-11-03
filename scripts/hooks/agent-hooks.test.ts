@@ -12,7 +12,7 @@ import { foldLeases, liveLease } from '../lib/journal/leases.ts';
 import { liveAgent, lapsedRequeues } from '../lib/journal/lease-requeue.ts';
 import { agentReturned, toolUseIdOf } from './agent-return.ts';
 import { returnRows } from '../lib/journal/agent-rows.ts';
-import { footerLines, footerRows } from '../lib/journal/board.ts';
+import { footerRows } from '../lib/journal/board.ts';
 import { footerOneLine } from '../lib/journal/footer-line.ts';
 import { dispatch } from './agent-dispatch.ts';
 import { requeueEnding } from './session-end-requeue.ts';
@@ -273,7 +273,6 @@ test('the footer counts a returned row as to verify, not in flight, and moves ba
   assert.deepEqual([footer().inflight, footer().verify], [1, undefined]);
   agentReturned({ session_id: SESSION, agent_type: 'general-purpose' }, led);
   assert.deepEqual([footer().inflight, footer().verify], [0, 1], 'the agent finished: the footer says so without the orchestrator remembering');
-  assert.match(footerLines({ inflight: inflight(), queued: [], blocked: [], awaiting: [], paste: [] }, [])[0], /0 in flight · 1 to verify/);
   assert.match(footerOneLine({ rows: [footer()], session: { available: false, unavailable: 'x' } }), /0 in flight · 1 to verify/);
   dispatch(toolCall('Build the widget', 'toolu_C'), led);
   assert.deepEqual([footer().inflight, footer().verify], [1, undefined], 'a re-dispatch puts it back in flight');

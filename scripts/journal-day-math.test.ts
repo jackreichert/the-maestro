@@ -44,7 +44,7 @@ for (const [label, now, tz] of [
     test(`a row untouched since 2026-10-09 is stale 3 days later in the footer count and status --json (${label})`, () => {
         const vault = fixture('2026-10-09');
         assert.deepEqual(staleIds(vault, now, tz), ['aaaa']);
-        assert.match(journal(vault, now, tz, 'status', '--footer').out, /1 stale/);
+        assert.match(journal(vault, now, tz, 'status', '--footer', '--line').out, /1 stale/);
     });
 }
 

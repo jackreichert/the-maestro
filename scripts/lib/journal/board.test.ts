@@ -9,7 +9,7 @@ import type { LedgerRow } from '../ledger-core.ts';
 import { localDate } from '../status-page/priorities.ts';
 import { parseArgs } from './args.ts';
 import { CURRENT_ROW_CAP, CURRENT_ARCHIVE_CAP } from './current.ts';
-import { activeStreams, archivedRetros, footerDone, footerLines, footerRows, groups, inStream, noStream, render, standupText, streamPageLink } from './board.ts';
+import { activeStreams, archivedRetros, footerDone, footerRows, groups, inStream, noStream, render, standupText, streamPageLink } from './board.ts';
 import type { BoardContext } from './board.ts';
 
 const TODAY = '2026-10-03';
@@ -70,7 +70,6 @@ test('a roll does not zero the footer done-today count, and a close just after m
     const classic = footerDone(rolled, TODAY);
     assert.deepEqual(classic.all.map((i) => i.id), ['aaaa']);
     assert.deepEqual(classic.sinceRoll?.map((i) => i.id), []);
-    assert.match(footerLines(rolled, classic.all, classic.sinceRoll).join('\n'), /\*\*Ledger \(Alpha\):\*\* 1 done today · 0 since last roll · 0 in flight · 0 awaiting you/);
 
     const late: LedgerRow[] = [
         { id: 'aaaa', kind: 'wip', ts: '2026-10-05T15:00:00Z', date: '2026-10-05', text: 'morning', stream: 'Alpha' },
@@ -86,20 +85,9 @@ test('a roll does not zero the footer done-today count, and a close just after m
     const view = footerDone(g, etDay, { tz: et });
     assert.deepEqual(view.sinceRoll?.map((i) => i.id), ['bbbb']);
     assert.equal(footerRows(g, view.all, view.sinceRoll)[0]?.done, 2);
-    assert.match(footerLines(g, view.all, view.sinceRoll).join('\n'), /2 done today · 1 since last roll/);
 });
 
-test('footerLines gives one line per stream and an other line', () => {
-    const g = groups(ctxFor());
-    const lines = footerLines(g, g.doneOn(TODAY));
-    assert.deepEqual(lines, [
-        '**Ledger (Beta):** 0 done today · 0 in flight · 1 awaiting you',
-        '**Ledger (Alpha):** 1 done today · 0 in flight · 0 awaiting you',
-        '**Ledger (other):** 0 done today · 1 in flight · 0 awaiting you',
-    ]);
-});
-
-test('footerRows holds the numbers footerLines prints', () => {
+test('footerRows gives one row per stream and an other row', () => {
     const g = groups(ctxFor());
     assert.deepEqual(footerRows(g, g.doneOn(TODAY)), [
         { name: 'Beta', done: 0, inflight: 0, queued: 0, awaiting: 1, paste: 0, blocked: 0 },
@@ -124,19 +112,14 @@ test('groups keeps queued items out of inflight and apart from every other list'
     assert.deepEqual(g.awaiting.map((i) => i.id), ['cccc']);
 });
 
-test('footer rows and lines add the queued count only where it is above zero, and a queued-only stream still gets a line', () => {
+test('footer rows add the queued count only where it is above zero, and a queued-only stream still gets a line', () => {
     const g = groups(ctxFor({ readLedger: withQueued }));
     assert.deepEqual(footerRows(g, g.doneOn(TODAY)).map((r) => [r.name, r.inflight, r.queued]), [['Alpha', 0, 2], ['Beta', 0, 0], ['other', 1, 1]]);
-    assert.deepEqual(footerLines(g, g.doneOn(TODAY)), [
-        '**Ledger (Alpha):** 1 done today · 0 in flight · 2 queued · 0 awaiting you',
-        '**Ledger (Beta):** 0 done today · 0 in flight · 1 awaiting you',
-        '**Ledger (other):** 0 done today · 1 in flight · 1 queued · 0 awaiting you',
-    ]);
     const byId = (id: string): LedgerRow => withQueued().find((r) => r.id === id) as LedgerRow;
     const streamed = groups(ctxFor({ readLedger: () => [byId('qqq1')] }));
-    assert.deepEqual(footerLines(streamed, []), ['**Ledger (Alpha):** 0 done today · 0 in flight · 1 queued · 0 awaiting you']);
+    assert.deepEqual(footerRows(streamed, []).map((r) => [r.name, r.queued]), [['Alpha', 1]]);
     const loose = groups(ctxFor({ readLedger: () => [byId('qqq4')] }));
-    assert.deepEqual(footerLines(loose, []), ['**Ledger:** 0 done today · 0 in flight · 1 queued · 0 awaiting you']);
+    assert.deepEqual(footerRows(loose, []).map((r) => [r.name, r.queued]), [[null, 1]]);
 });
 
 test('standupText and render list Queued apart from In flight, and only when something is queued', () => {
@@ -203,7 +186,6 @@ test('the footer splits in-flight rows 3 days old or more with no lease out as s
     const row = footerRows(g, [], undefined, live)[0];
     assert.equal(row?.inflight, 2, 'the stale row is not counted as in flight');
     assert.equal(row?.stale, 1);
-    assert.match(footerLines(g, [], undefined, live).join('\n'), /2 in flight · 1 stale \(3d\+, no lease\)/);
     assert.equal(footerRows(g, [], undefined, { today, leased: new Set(['old1', 'old2']) })[0]?.stale, undefined);
 });
 
@@ -218,7 +200,6 @@ test('the stale limit is configurable: staleDays moves the cutoff and the footer
     assert.equal(footerRows(g, [], undefined, at(3))[0]?.stale, 2);
     assert.equal(footerRows(g, [], undefined, at(5))[0]?.stale, 1);
     assert.equal(footerRows(g, [], undefined, at(7))[0]?.stale, undefined);
-    assert.match(footerLines(g, [], undefined, at(5)).join('\n'), /1 in flight · 1 stale \(5d\+, no lease\)/);
 });
 
 test('CURRENT.md caps its rows and clips long text, and the full row stays on the stream page', () => {

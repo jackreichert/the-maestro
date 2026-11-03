@@ -9,7 +9,7 @@ import type { Store } from './store.ts';
 import { DEFAULT_STALE_WIP_DAYS } from './staleness.ts';
 import { fmt, slug } from './format.ts';
 import { renderCurrent, ARCHIVE_INDEX, OTHER_STREAM, CURRENT_ARCHIVE_CAP } from './current.ts';
-import { askSummary, asksNote } from './ask-fields.ts';
+import { askSummary } from './ask-fields.ts';
 import { localDate } from '../status-page/priorities.ts';
 import { daysBetween } from '../boxes.ts';
 import { lastTouchOf, touchDates } from '../last-touch.ts';
@@ -180,12 +180,6 @@ export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | '
     if (otherCount) rows.push(row('other', (i) => !i.stream));
     return rows;
 }
-
-const footerLine = (r: FooterRow, staleDays = FOOTER_STALE_DAYS, doneLabel = 'done today'): string =>
-    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} ${doneLabel}${r.sinceRoll !== undefined ? ` · ${r.sinceRoll} since last roll` : ''} · ${r.inflight} in flight${r.stale ? ` · ${r.stale} stale (${staleDays}d+, no lease)` : ''}${r.verify ? ` · ${r.verify} to verify` : ''}${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
-
-/** The reply-footer Ledger lines, one per `footerRows` row. `sinceRoll` is shown only when the caller passes that day's post-roll slice. */
-export const footerLines = (g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[], live?: FooterLiveness): string[] => footerRows(g, done, sinceRoll, live).map((r) => footerLine(r, live?.staleDays, live?.doneLabel));
 
 export function standupText(ctx: BoardContext, d: string): string {
     const { has } = ctx;

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { fold, mapStreamWith } from '../ledger-core.ts';
 import type { LedgerRow } from '../ledger-core.ts';
 import { parseArgs } from './args.ts';
-import { footerLines, footerRows, groups } from './board.ts';
+import { footerRows, groups } from './board.ts';
 import type { BoardContext } from './board.ts';
 import { fmt } from './format.ts';
 import { triageItems, triageLines, triageReport } from './triage.ts';
@@ -42,13 +42,11 @@ test('an ask with fields prints compact bits ahead of the usage marks, and a one
 test('the footer is unchanged for legacy asks and notes one-way asks and the soonest decide-by otherwise', () => {
     const plain = awaiting([legacy]);
     assert.deepEqual(footerRows({ inflight: [], queued: [], blocked: [], awaiting: plain, paste: [] }, []), [{ name: 'Avonlea', done: 0, inflight: 0, queued: 0, awaiting: 1, paste: 0, blocked: 0 }]);
-    assert.deepEqual(footerLines({ inflight: [], queued: [], blocked: [], awaiting: plain, paste: [] }, []), ['**Ledger (Avonlea):** 0 done today · 0 in flight · 1 awaiting you']);
     const mixed = awaiting([legacy, twoWay, oneWay, noDoor]);
     const rows = footerRows({ inflight: [], queued: [], blocked: [], awaiting: mixed, paste: [] }, []);
     assert.equal(rows[0]?.awaiting, 4);
     assert.equal(rows[0]?.oneWay, 2, 'the legacy ask is not counted as one-way: it carries no fields');
     assert.equal(rows[0]?.nextBy, '2026-10-09');
-    assert.equal(footerLines({ inflight: [], queued: [], blocked: [], awaiting: mixed, paste: [] }, [])[0], '**Ledger (Avonlea):** 0 done today · 0 in flight · 4 awaiting you (2 one-way · next by 2026-10-09)');
 });
 
 test('triage carries the bits on an ask and prints them in its list', () => {
