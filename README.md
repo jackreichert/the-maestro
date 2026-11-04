@@ -1001,7 +1001,7 @@ The standing watches (`renews` types such as the PR and inbox watches) keep them
 
 ### session-start.ts
 
-The first command of every session, and the first thing to run after a compaction. It is idempotent, so running it twice changes nothing.
+The first command of every session, and in full mode the first thing to run after a compaction (in slim mode a roll runs nothing: the hook's footer is the handoff). It is idempotent, so running it twice changes nothing.
 
 ```bash
 node scripts/session-start.ts [--status-dir <dir>] [--project <name>]

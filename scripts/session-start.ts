@@ -62,7 +62,7 @@ export interface StartDeps {
   disabledTypes?: readonly string[];
   /** Watch types a registered watch of which is removed (the lean cost profile: events that only wake an LLM agent). Absent means none. */
   retireTypes?: readonly string[];
-  /** `slim` puts the mode line first, so a session (or one after compaction) follows slim/SKILL.md only. Absent means full. */
+  /** `slim` puts the mode line first, so a fresh session follows slim/SKILL.md only (a rolled slim session runs nothing; the hook page is its handoff). Absent means full. */
   mode?: 'full' | 'slim';
   /** The spend guardrail is set up (`budget_monthly_usd`): spend-watch is registered too. */
   budgetOn?: boolean;
@@ -103,7 +103,7 @@ const clock = (at: number, tz: string): string => new Intl.DateTimeFormat('en-US
 const existing = (id: string, w: Watch, statusDir: string): string =>
   `${id}: already registered (${w.id}, expires ${w.expires})${w.target === statusDir ? '' : `; WARNING its target is ${w.target}, not ${statusDir}: \`event-loop.ts remove ${w.id}\` and rerun to retarget`}`;
 
-/** The first line in slim mode: the one instruction a fresh or compacted session must not miss. */
+/** The first line in slim mode: the one instruction a fresh session must not miss. */
 export const SLIM_LINE = 'Mode: slim. Follow slim/SKILL.md only and ignore the full maestro SKILL.md (set `mode: full` in the config to switch back).';
 
 /** Registers the missing watches, then reports page age and loop state. Safe to run any number of times. */
