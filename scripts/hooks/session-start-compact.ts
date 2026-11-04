@@ -37,8 +37,19 @@ export type Run = (args: string[]) => { ok: boolean; out: string };
 /** Runs `cold-start.ts generate`; optional, so a checkout without it (or a failing run) only loses that part. */
 export type ColdRun = () => { ok: boolean; out: string };
 
-/** Slim mode's pointer: the session reads slim/SKILL.md and the ledger front page, not the board. */
-export const SLIM_POINTER = 'Mode: slim. Run session-start.ts, then follow slim/SKILL.md only. The board is on the Podium; the ledger holds the handoff.';
+/**
+ * Slim mode's page after a roll (`compact`, `clear`): the footer above it is the whole handoff. It names no skill file and no start script,
+ * because following either rebuilds the thread in place and erases the small page the roll just bought.
+ */
+export const SLIM_ROLL_NOTE = [
+  'Mode: slim, after a roll. The footer above is the front page; the ledger holds the handoff.',
+  'Do not treat the compaction summary as a source of state.',
+  'Do not run session-start.ts and do not start an events waiter.',
+  'Read more only on demand: `journal.ts start-here`, `journal.ts library-brief`, `journal.ts status --footer`.',
+].join('\n');
+
+/** Slim mode's pointer for a fresh session (`startup`, `resume`): the full start-up applies. */
+export const SLIM_START_POINTER = 'Mode: slim. Fresh session: run session-start.ts, then follow slim/SKILL.md. The board is on the Podium; the ledger holds the handoff.';
 
 /**
  * The context for a source: empty for an unknown source. In slim mode it is only the footer (the ledger front page) and a pointer,
@@ -50,7 +61,7 @@ export function context(source: string, run: Run, cold?: ColdRun, warnings: stri
   if (mode === 'slim') {
     const footer = run(['status', '--footer']);
     parts.push({ title: 'Front page (journal.ts status --footer)', body: footer.ok ? footer.out : `status failed: ${footer.out.split('\n').pop()}` });
-    parts.push({ title: 'Slim', body: SLIM_POINTER });
+    parts.push({ title: 'Slim', body: source === 'compact' || source === 'clear' ? SLIM_ROLL_NOTE : SLIM_START_POINTER });
     return assemble(parts);
   }
   const prime = run(['prime', '--source', source, '--no-update-check']);
