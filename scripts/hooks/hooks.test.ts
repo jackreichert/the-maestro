@@ -92,7 +92,9 @@ test('session-start context in slim mode: only the front-page footer and the sli
   assert.equal(coldRan, false);
   assert.deepEqual(seen, [['status', '--footer']]);
   assert.equal(context('other', run, undefined, [], 'slim'), '');
-  assert.match(context('startup', run, undefined, [], 'slim'), /Fresh session: run session-start\.ts/);
+  for (const src of ['startup', 'resume']) assert.match(context(src, run, undefined, [], 'slim'), /Fresh session: run session-start\.ts/);
+  assert.match(context('clear', run, undefined, [], 'slim'), /Mode: slim, after a roll/);
+  for (const src of ['startup', 'resume']) assert.ok(!/after a roll|Do not run session-start/.test(context(src, run, undefined, [], 'slim')), `${src} is not a roll`);
   assert.match(context('compact', run, undefined, [], 'full'), /== Board \(journal\.ts prime\) ==/);
 });
 
