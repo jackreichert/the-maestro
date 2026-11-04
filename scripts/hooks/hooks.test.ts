@@ -85,11 +85,14 @@ test('session-start context in slim mode: only the front-page footer and the sli
   const out = context('compact', run, () => { coldRan = true; return { ok: true, out: 'cold' }; }, ['too low'], 'slim');
   assert.match(out, /== Autocompact ==\n!! too low/);
   assert.match(out, /== Front page \(journal\.ts status --footer\) ==\nFooter x/);
-  assert.match(out, /Mode: slim/);
+  assert.match(out, /Mode: slim, after a roll/);
+  assert.ok(!/session-start\.ts, then|slim\/SKILL\.md/.test(out), 'a roll page never points back at the start script or the skill file');
+  assert.match(out, /Do not run session-start\.ts and do not start an events waiter/);
   assert.ok(!out.includes('Board x') && !out.includes('== Cold start =='), 'slim skips the board and the cold-start page');
   assert.equal(coldRan, false);
   assert.deepEqual(seen, [['status', '--footer']]);
   assert.equal(context('other', run, undefined, [], 'slim'), '');
+  assert.match(context('startup', run, undefined, [], 'slim'), /Fresh session: run session-start\.ts/);
   assert.match(context('compact', run, undefined, [], 'full'), /== Board \(journal\.ts prime\) ==/);
 });
 

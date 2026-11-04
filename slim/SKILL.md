@@ -9,11 +9,15 @@ One thread does the work. It plans with one Opus pass, builds itself, gets one S
 
 Commands below are `node scripts/<name>.ts`, run from the skill root. Ledger commands take `--vault <ledger root>` as the user's CLAUDE.md says.
 
-## Session start (and after every compaction)
+## Session start
+
+**After a roll (compact or clear): do nothing here.** The hook already printed the footer, which is the whole handoff. Do not run `session-start.ts`, do not start a waiter, and do not treat the compaction summary as a source. Read more only on demand: `journal.ts start-here`, `library-brief`, `status --footer`. A greeting after a roll gets a greeting back and nothing more.
+
+**Fresh session (startup or resume):**
 
 1. `session-start.ts`. Its first line must be `Mode: slim`; otherwise stop following this file and read the full `SKILL.md`. It also heals the loop and the Podium and prints one `events wait` command. Start that command with `run_in_background`.
 2. `journal.ts status --footer`. This is the front page. The handoff is already in the ledger, so there is nothing to reconstruct from memory.
-3. On a greeting: greet back briefly, then give the board (in flight, asks, shipped today). A standup only when the user's instructions ask for one at this hour.
+3. On a greeting: greet back briefly. The board (in flight, asks, shipped today) only when the user asks for it.
 
 `events wait` only ends for events that need action. In slim mode, `SLIM_WAKE_TABLE` in `scripts/lib/slim-wake.ts` decides which pr-watch lines wake the session and which are demoted to Podium-only info (they stay in the digest and the Podium's PR data, and the hourly triage sweep lists them). The table is the one list; read it rather than a copy here. Other watch types, and any line the table does not know, still wake. Full mode ignores the table. Read the Podium for the demoted lines.
 
@@ -76,7 +80,7 @@ The library is the vault's internal-Notion space: evergreen, organized, and main
 
 - Keep this thread under ~150k context. Past that, every turn is billed at the long-context rate and each cache re-warm costs more.
 - The ledger already holds the handoff, so a roll is silent: never ask the user to compact and never announce it.
-- After a roll, start again at **Session start**.
+- After a roll, read the footer the hook printed and stop. Do not start again at **Session start**.
 
 ## Safety (unchanged from the full maestro, enforced by hooks)
 
