@@ -16,20 +16,19 @@ One Markdown note per ticket in the configured vault is the source of truth; a l
 
 ## Estimate
 
-Estimate effort, complexity, and risk, not priority. Time ranges are planning guides, not commitments.
+Estimate effort, complexity, and risk, not priority; times are guides, not promises.
 
-| Points | Typical scope | Time guide |
+| Points | Scope | Time guide |
 |--------|---------------|------------|
-| 1 | Tiny, understood, single-surface; minimal setup/dependencies; no assistance | 1-2 hours |
-| 2 | Small slice across 2-3 places; known behavior, no expected blockers | Half a day |
-| 3 | Medium feature or deeper investigation; real test surface, some discussion | About a day |
-| 5 | Large blast radius; engineering discussion before starting | 2-3 days |
-| 8+ | Too large or uncertain for one task; split | Do not schedule as a leaf |
+| 1 | Tiny, understood, single-surface; minimal setup/dependencies, independent | 1-2 hours |
+| 2 | Small, 2-3 places; known behavior, no blockers | Half-day |
+| 3 | Medium feature/investigation; testing and discussion | One day |
+| 5 | Broad impact; discuss first | 2-3 days |
+| 8+ | Split; leaves stay 1-5 | N/A |
 
-- Clarify requirements, dependencies, assumptions, and done/go-live criteria first. Include coding, testing/manual QA/edge cases, review, documentation, deployment, and follow-up fixes.
-- Round up for uncertainty, coordination, migrations, regression testing, flaky dependencies, iteration, monitoring/rollback, or multi-customer impact. Account for meetings, interruptions, and competing work.
-- For major unknowns, time-box a 1-2 point spike with a specific finding/deliverable, then re-estimate implementation. Keep leaves at 1-5 points.
-- Record points and rationale in **Estimate**; log revisions when scope or assumptions change. Calibrate against similar completed tickets.
+- Clarify requirements, dependencies, assumptions, and done/go-live criteria. Include coding, QA/edge cases, review, docs, deployment, and fixes.
+- Round up for uncertainty, coordination, migrations, regression, flaky dependencies, iteration, monitoring/rollback, and multi-customer impact; allow for interruptions.
+- Time-box major unknowns as a 1-2 point spike with a defined deliverable, then re-estimate. Record points/rationale in **Estimate**, log changed assumptions/scope, and calibrate against completed work.
 
 ## Local records
 
