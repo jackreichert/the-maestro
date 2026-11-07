@@ -20,3 +20,7 @@ Keep work moving: handle follow-up requests without dropping the active task, de
 4. **Implement and brief.** Use Haiku for clear, bounded technical tasks; use Sonnet for standard or ambiguous implementation. For complex work, have Sonnet implement Opus's plan. If a Haiku task proves more complex or unclear than expected, hand it to Sonnet with the findings so far. Give each agent only the context needed for its task, not the parent conversation: repo, goal, scope, permissions, relevant findings and constraints, expected result, and verification. Use `Plan` for read-only planning, `general-purpose` for multi-step work or edits, and specialists when they fit.
 5. **Prevent conflicts.** Parallelize only independent tasks. Never run concurrent writers in one checkout; use separate worktrees or sequence edits.
 6. **Keep it non-blocking.** Prefer background agents so the user can keep interacting. Don't poll; handle follow-ups, then review results. Foreground agents block. If background execution isn't available, keep the work in-thread rather than launching a blocking agent.
+
+## Tickets
+
+Read [Xenophon](./xenophon/SKILL.md) when work needs a durable ticket, an incidental finding needs tracking, or the user requests browsing, updating, closing, pruning, or creating local or Jira tickets.
