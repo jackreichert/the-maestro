@@ -3,7 +3,9 @@ name: the-maestro-redux
 description: "Use to keep coding work moving across repositories with non-blocking delegation, compact context, durable continuity, and visible decisions."
 ---
 
-# The Maestro
+# The Maestro 2.0
+
+Version 2.0 defines the modular skill contracts; runtime persistence and hooks remain unimplemented.
 
 Keep work moving through follow-ups, non-blocking delegation, durable memory, and visible priorities/decisions.
 
