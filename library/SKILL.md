@@ -34,7 +34,7 @@ Human-readable onboarding and reusable repo memory, not a search log. Newcomers 
 
 ## Turn-end and maps
 
-For `Stop`, follow [Ledger's checkpoint contract](../ledger/SKILL.md): prepared verified patches only, stable IDs, revision checks, serialized writes, separate read-back acknowledgements/retries. Preserve conflicts; never claim proposals applied. Refresh affected links/index and record page/application receipts without hook loops. Ledger, Podium, and library are separate writes, not one transaction. Slim `PreCompact` flushes prepared continuation only; no discovery or whole-library rewrites. Hooks/indexers are not implemented.
+For `Stop`, follow [Ledger's checkpoint contract](../ledger/SKILL.md) and [persistence commands](../reference/persistence.md): verified patches only, stable IDs, revision checks, serialized writes and separate read-back receipts/retries. Preserve conflicts; never claim proposals applied. Prepare affected links/README tables explicitly; no automatic library indexer. Ledger, Podium, and library are separate writes, not one transaction. Slim `PreCompact` flushes already-prepared continuation/work only; no discovery or whole-library rewrites.
 
 Prefer small Mermaid flow diagrams. UML/Graphify is optional for complex/unfamiliar boundaries; scope safely and verify relationships. Maps support prose, never replace it or regenerate every turn.
 

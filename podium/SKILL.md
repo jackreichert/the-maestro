@@ -21,7 +21,7 @@ Current coordination, not history. Podium owns priorities/workspace state; [Ledg
 ## Answer questions
 
 - Persist a `question` bead; display its assigned event ID as the hash beside every landing/overflow question. Edits retain the ID, not a content hash.
-- Accept `hash + answer`, quoted question/answer, or vault answers read on request. Match exact ID first, otherwise a unique contextual open-question match; clarify ambiguity, including answer-only text.
+- Accept `hash + answer`, quoted question/answer, or vault answers read on request. Use CLI `lookup` for exact IDs; otherwise require a unique contextual open-question match. Clarify ambiguity, including answer-only text.
 - Check current question/resolution. Identical repeats are no-ops; conflicts require reconciliation, never inferred reversal. Preserve unanswered questions/unprocessed edits.
 - Save/read back a decision bead resolving the question, then remove it from all open Podium lists. Ledger retains history; no Podium resolution archive. Failed decision write keeps it open; failed removal stays pending for retry, even when the repeated answer is a no-op.
 - Reassess blocked work within existing permissions; answering is not completing the resulting work.
@@ -35,6 +35,6 @@ Current coordination, not history. Podium owns priorities/workspace state; [Ledg
 - Refresh relevant PR/external state on request or before acting; retain checked times and flag unavailable/stale evidence. No idle refresh/watchers.
 - No whole-board rewrite/PR polling in hooks. Slim `PreCompact` flushes prepared continuation only; retros, cleanup, discovery, PR refresh are separate.
 
-Draft only: no writer, hook, live vault page, or automatic PR sync.
+The [persistence CLI](../reference/persistence.md) supplies revision-checked patches and resolve-before-removal guards, not answer matching or automatic PR sync. No live vault/hook installation is implied.
 
-Acceptance: fresh Haiku finds priority/next step, recovers rationale, and avoids live writers. Test ID/quoted/vault answers, ambiguity, repeats/conflicts, resolve-before-removal, overflow, stale state, partial failures when tooling exists.
+Acceptance: fresh Haiku finds priority/next step, recovers rationale, and avoids live writers. Runtime tests cover durable resolution/removal, overflow leftovers, repeats/conflicts and partial failures; rehearse ID/quoted/vault matching, ambiguity and fresh-session recovery in the target harness.

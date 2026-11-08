@@ -6,6 +6,8 @@ covered_through_seq: null
 
 # <Topic>
 
+Authored synthesis, separate from generated `brief.md`; leave coverage `null` unless independently verified.
+
 ## Current conclusions
 
 <Verified facts, decisions, labeled proposals.>

@@ -1,46 +1,62 @@
 # Agent setup: Maestro 2.0
 
-Install skills only. No live installation is authorized by this document itself. Follow applicable safety/Git rules; never read `.env*`, `ssm-*.json`, or secret-bearing files.
+This runbook grants no installation permission. Never read secret files or migrate old memory implicitly. [Runtime commands/limits](./reference/persistence.md) are part of setup.
 
-## 1. Confirm
+## 1. Confirm scope
 
-- Read [README](./README.md), [settings contract](./README.md#settings), and [Maestro](./SKILL.md).
-- Ask for harness, scope (workspace/user), absolute source/destination, vault/ledger/container paths, and approval for exact file/symlink changes. Read-only inspection is fine; do not change Git, global instructions, old plugins, hooks, or vault data without permission.
-- Inspect the destination and existing Maestro registrations. Stop on collisions; preserve unrelated files and user edits. Record only the specific prior settings/links needed to reverse approved changes, never copy secret files.
+- Read [README](./README.md), [settings](./README.md#settings), and [Maestro](./SKILL.md).
+- Ask for harness, workspace/user scope, absolute source/destination, vault/ledger/container paths, and approval for exact registration/settings/hook changes. Read-only inspection is fine; preserve unrelated settings/files.
+- Inspect existing registrations and competing writers. Stop on collisions; disable old hooks/instructions only with approval. Do not remove old memory. Preserve only the specific prior registrations/settings needed for reversal, never copy secrets.
 
-## 2. Configure
+## 2. Configure and register
 
-- After approval, create/update `~/.config/the-maestro-redux/settings.json` using confirmed values and [public defaults](./settings.json). Preserve existing valid overrides; check JSON and the documented contract. Do not invent repo mappings.
-- Tell the user this is agent-read configuration, with no executable loader or secret scanning. Unset paths may remain `null` for unused capabilities; required unresolved paths block that operation.
+- Verify Node 24 and `node:sqlite`; run `npm test` in the bundle. No dependencies need installing. Resolve the actual Node executable to an absolute path for hooks.
+- After approval, configure `~/.config/the-maestro-redux/settings.json` (or an explicit `--settings` override), preserving valid existing values. Persistence requires existing, owner-controlled, separate ledger/vault roots; ask before creating them. Settings files and in-root paths cannot be symlinks; no secrets in config.
+- Claude Code workspace: `<container>/.claude/skills/the-maestro-redux`; user: `~/.claude/skills/the-maestro-redux`. Use an approved symlink to the complete repo or copy the bundle, excluding `.git` and prohibited files. Preserve relative links; do not flatten child skills.
+- Check current target-harness skill documentation and discovery/symlink support. Keep frontmatter unchanged. This is not a packaged plugin; child skills are explicitly read, not independent slash commands.
 
-## 3. Register the bundle
+## 3. Optional Claude Code hooks
 
-- Claude Code workspace scope: `<container>/.claude/skills/the-maestro-redux`; user scope: `~/.claude/skills/the-maestro-redux`. Use an approved symlink to this entire repo or copy the complete bundle, excluding `.git` and prohibited files. Preserve relative paths; don't flatten child skills into separate destinations.
-- Verify current target-harness documentation before acting; use its supported skill directory for other harnesses. Confirm symlink support/discovery rather than assuming it.
-- Keep root/child frontmatter unchanged: child automatic invocation is disabled, but Maestro can read their linked files. This is not a packaged Claude Code plugin; don't invent plugin-install commands.
-- Disable only explicitly approved competing old Maestro instructions for the test session. Do not remove old memory/hooks as part of this setup. If old hooks still mutate overlapping records, isolate the test or stop for a migration decision.
+Verify [current hook documentation](https://code.claude.com/docs/en/hooks.md) and installed version first. For other harnesses, register no guessed equivalent.
 
-## 4. Verify in a fresh session
+After explicit approval, **merge** these command hooks into the chosen Claude Code settings: `.claude/settings.json` for workspace or `~/.claude/settings.json` for user scope. Maestro's own settings do not register hooks. Preserve all unrelated hooks/settings.
 
-- Resolve the installed root and every relative skill/reference/template link. Validate settings and report resolved paths without secrets.
-- Confirm the harness discovers root Maestro. Explicitly invoke/select it if necessary; neither a symlink nor skill discovery guarantees every startup loads it.
-- Test a planning request and a Podium question request: check selective reads, settings resolution, and proposal/approval boundaries. Don't claim a hash saved or a question removed unless an actual permitted ledger/vault write was read back.
-- Confirm no new hooks, watchers, loops, plugin activation, or runtime persistence were installed. Report each check/result and anything untested; disk layout alone is not discovery proof.
+Illustration: replace each `/absolute/...` with a verified absolute path, including the Node executable. Do not execute placeholders. Quote paths as shown; reject or correctly escape embedded shell quotes.
 
-## 5. Handoff / rollback
+```json
+{
+  "hooks": {
+    "Stop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "\"/absolute/node\" \"/absolute/bundle/scripts/memory.mjs\" hook --settings \"/absolute/settings.json\"",
+        "timeout": 30
+      }]
+    }],
+    "PreCompact": [{
+      "matcher": "manual|auto",
+      "hooks": [{
+        "type": "command",
+        "command": "\"/absolute/node\" \"/absolute/bundle/scripts/memory.mjs\" hook --settings \"/absolute/settings.json\"",
+        "timeout": 30
+      }]
+    }]
+  }
+}
+```
 
-Report installed source/destination, local settings location, changes, validation, limits, and exact reversal steps. Rollback requires approval: undo only this installation's registrations/settings changes, restore preserved prior values, leave repo/vault history and unrelated files untouched. Never broadly delete a skills/config directory.
+Both entry points consume Claude JSON on stdin and flush stable pending IDs for that session. Do not make them asynchronous or add blocking/continuation output. They emit bounded plain-text recovery guidance; PreCompact stdout may become compaction instructions. Partial failures exit `1`, not `2`; inspect receipts/debug logs because harness notification visibility varies. No prepared checkpoint means unverified capture, not success.
 
-If asked to enable automatic persistence, stop and scope the missing implementation/tests separately. This setup cannot supply them.
+Stop is not an API-error hook. Interrupted turns may never deliver it; save important decisions immediately. No StopFailure handler is installed by this runbook.
 
-## Future Stop / PreCompact hook setup
+## 4. Rehearse before live memory
 
-**Blocked until the writer exists; do not register a placeholder command.**
+- Use approved isolated test roots first. Confirm root skill discovery in a fresh session; linking files alone is not proof. Check every relative link and selective child-skill loading.
+- Prepare a synthetic checkpoint with the actual session ID before responding. Verify **actual** Stop delivery/read-back for ledger, Podium and library, then compaction before Stop, repeated delivery, revision conflict, partial failure and safe retry. Subprocess tests do not prove lifecycle delivery.
+- Resolve a synthetic hash-linked question and confirm its decision precedes removal from every open Podium list. Rehearse quoted/vault matching and ambiguity in the agent, not the writer.
+- Refresh a topic brief, append a correction, and verify a fresh agent recovers rationale plus the newer event. Validate ownership and permissions independently of old receipts.
+- Report results and gaps. Do not enable live roots until the user accepts the rehearsal. No zero-loss guarantee, loops, watchers, scheduled retros or automatic PR sync.
 
-1. Implement/test the prepared-delta writer against [Ledger's contract](./ledger/SKILL.md): stable IDs, revision conflicts, independent acknowledgements, partial-failure retries, and no transcript scraping or summarizing agent.
-2. Verify current Claude Code hook documentation and installed version. After approval, merge a `Stop` command-hook entry into the chosen scope's Claude settings (`.claude/settings.json` for workspace scope or `~/.claude/settings.json` for user scope); preserve unrelated hooks/settings. Maestro's own settings file does not register Claude hooks.
-3. Point the command to the verified writer using explicit resolved paths and supported hook input/output. It flushes only prepared operations, exits promptly, and avoids Stop continuation loops. Never guess command arguments before the writer defines them.
-4. Register slim `PreCompact` separately: flush pending continuation only, with the same retry IDs; no retro, cleanup, discovery, or PR polling. Check for competing old memory hooks before enabling either.
-5. In an isolated test vault, verify actual Stop delivery, duplicate invocations, interrupted turns, partial writes, question resolution/removal, and compaction before Stop. Read back all affected surfaces; report failures rather than claiming persistence.
+## 5. Handoff and rollback
 
-Executable commands/config examples will be added with the writer. Until then, there is no working automatic Stop installation.
+Report source/destination, local config, exact hook changes, validation and untested limits. Rollback needs approval: remove only these registrations/hooks, restore preserved values, and leave vault/ledger history and unrelated files intact. Never broadly delete skill/config directories or steal writer locks.

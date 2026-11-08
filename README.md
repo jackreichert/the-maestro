@@ -1,6 +1,6 @@
 # Maestro 2.0
 
-Modular agent workflows for a multi-repo workspace. **Skills-only release:** no plugin manifest, installer, persistence scripts, hooks, indexer, loops, or watchers. Memory contracts describe intended behavior, not functioning automation.
+Modular agent workflows for a multi-repo workspace, with a dependency-free Node 24 persistence CLI, SQLite/FTS topic index, and Claude Code Stop/PreCompact entry point. No plugin manifest, automatic installer, loops, or watchers. Actual harness delivery requires a separately approved installation and rehearsal.
 
 ## Skills
 
@@ -17,7 +17,7 @@ Modular agent workflows for a multi-repo workspace. **Skills-only release:** no 
 
 ## Setup
 
-Give an installation agent [SETUP.md](./SETUP.md). It confirms scope and permissions, installs the whole bundle without breaking relative links, and checks discovery. It does not install unfinished hooks or migrate old memory.
+Give an installation agent [SETUP.md](./SETUP.md). It confirms scope/permissions, registers the whole bundle, configures optional hooks, and checks discovery. It does not migrate old memory. See [persistence commands](./reference/persistence.md) for preparation, retries, recovery, and limits.
 
 Root Maestro supports discovery; child skills currently have `disable-model-invocation: true`. Maestro explicitly reads them as needed. Linking the bundle does not expose each nested skill as an independent slash command; plugin packaging is separate future work.
 
@@ -25,7 +25,7 @@ Root Maestro supports discovery; child skills currently have `disable-model-invo
 
 [settings.json](./settings.json) contains public defaults. Local overrides live at `~/.config/the-maestro-redux/settings.json`, outside the repo. Never store secrets, credentials, personal data, current priorities, or permissions in settings.
 
-**Agent-read contract, not a programmatic loader:** read defaults and the local file when present, merge objects recursively, and preserve explicit `null`. An absent local file means defaults; unreadable/invalid files or unknown keys require an explicit error and correction, not silent fallback. Explain unresolved required settings before using them. Applicable safety/repo rules win; settings never authorize actions.
+Agents and the CLI merge defaults with local overrides recursively, preserving explicit `null`. An absent local file means defaults; unreadable/invalid files or unknown keys fail explicitly. CLI `--settings /absolute/file.json` selects a different override. Every persistence command requires existing, separate ledger/vault roots; `container_root` may remain unset. Budgets/branch flows guide agents, not automatic Git enforcement. Settings never authorize actions.
 
 | Field | Meaning / validation |
 |---|---|
@@ -62,6 +62,6 @@ Podium owns changing priorities; ledger owns scoped decisions/permissions; local
 
 ## Verification and limits
 
-Check JSON syntax, relative links, skill frontmatter, and Git whitespace. Installation additionally requires fresh-session discovery and selective-read checks in the target harness. These checks do not prove persistence, recovery accuracy, or runtime enforcement.
+Run `npm test` with Node 24; no dependency installation is needed. Synthetic tests cover deduplication, partial failures, conflicts, locks/concurrent writers, question removal, index/brief recovery, input guards and hook subprocesses. Installation additionally requires fresh-session discovery, actual hook delivery and recovery checks in the target harness.
 
-Retros run on demand. Stop/PreCompact automation requires separately implemented and tested writers. Keep the old memory path intact until the replacement passes recovery tests; never run competing Maestro instruction sets in one session.
+Retros run on demand. Hooks flush only prepared safe deltas; they never scrape conversations or guarantee zero loss. Preserve old memory until the replacement passes an isolated harness rehearsal; never run competing writers/instruction sets in one session.

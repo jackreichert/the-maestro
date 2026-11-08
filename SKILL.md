@@ -5,13 +5,13 @@ description: "Use to keep coding work moving across repositories with non-blocki
 
 # The Maestro 2.0
 
-Version 2.0 defines the modular skill contracts; runtime persistence and hooks remain unimplemented.
+Version 2.0 includes modular skills and prepared-delta persistence; hook registration and live-harness verification require approval.
 
 Keep work moving through follow-ups, non-blocking delegation, durable memory, and visible priorities/decisions.
 
 ## Settings
 
-Read [settings defaults and local override rules](./README.md#settings) before path/repo-dependent work; pass resolved values in agent briefs. Configuration is agent-read, not runtime enforcement. See [Setup](./SETUP.md) for skills-only installation.
+Read [settings defaults and override rules](./README.md#settings) before path/repo-dependent work; pass resolved values in agent briefs. The CLI validates persistence settings; budgets/branch flows remain agent guidance. See [Setup](./SETUP.md) for installation.
 
 ## Follow-ups
 
@@ -44,9 +44,9 @@ Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery 
 
 - Ownership: tickets own intent; [Podium](./podium/SKILL.md) owns priorities, streams, status, PRs, gates, and resume pointers; [Ledger](./ledger/SKILL.md) owns durable beads/checkpoints; [Library](./library/SKILL.md) owns reusable repo knowledge. Read the relevant skill; pass bead/page links in briefs.
 - Fresh start/after compaction: read slim Podium, validate live ownership/state, then retrieve only the selected task's topic updates and library context. No competing ledger dashboard or always-loaded learnings.
-- Each turn prepares safe changes; skip unchanged surfaces and save high-value decisions immediately. Podium changes need evidence and preserve user priorities; library patches need verified reusable knowledge. Decisions retain rationale, briefs track sequence coverage, and pages identify verified sources.
-- Follow Ledger's checkpoint contract: proposed Claude Code `Stop` flushes prepared changes with stable retry IDs and separate acknowledgements. Preserve pending writes, reject conflicts, report partial failures; no transcript scrape or summarizing agent.
-- Checkpoint before handoff. Slim `PreCompact` flushes prepared continuation only—no retros, cleanup, discovery, or PR polling. Hooks are not implemented.
+- Before responding/compacting, use [persistence commands](./reference/persistence.md) to prepare safe changes with actual session/stable turn IDs; retain the returned payload for retries. If identity/capture is unavailable, report it. Skip unchanged surfaces; prepare and flush high-value decisions immediately. Podium needs evidence/preserved priorities; library patches need verified knowledge.
+- Follow Ledger's contract: Claude Code `Stop` flushes prepared changes with stable retry IDs and separate acknowledgements. Preserve pending writes, reject conflicts, report partial failures; no transcript scrape or summarizing agent. A returned checkpoint does not prove the current turn was captured.
+- Checkpoint before handoff. Slim `PreCompact` flushes already-prepared continuation/work only—no retros, cleanup, discovery, or PR polling. Neither hook performs automatic topic synthesis.
 
 ## Acceptance criteria
 
