@@ -60,6 +60,7 @@ Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery 
 - Release: `staging` → `release/yyyymmdd.x` → `main`. No direct `staging` → `main` deploy PR.
 - Check maintenance via repo guidance/release activity, not existence/age alone. Absent/stale `staging`: use documented repo flow; clarify uncertainty. Label branches versus environments explicitly in briefs/evidence/Podium.
 - Creating branches, committing, pushing, or publishing PRs requires permission. Draft PRs only; user merges/promotes. No direct protected/shared-branch writes.
+- Never add AI attribution to commits: no AI `Co-Authored-By` trailers or "Generated with", "Created by", "Assisted by", or equivalent credits. Inspect the complete commit message before committing and remove any attribution inserted by tools/templates. Preserve the user's author/committer identity.
 
 Read [PR lifecycle](./reference/prs.md) for PR preparation, feedback, readiness, and post-merge reconciliation.
 
