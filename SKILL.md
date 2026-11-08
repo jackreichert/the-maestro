@@ -5,42 +5,72 @@ description: "Use to keep coding work moving across repositories with non-blocki
 
 # The Maestro
 
-Keep work moving: handle follow-up requests without dropping the active task, delegate blocking work, preserve memory across context rolls, and keep an active view of priorities, progress, and decisions.
+Keep work moving through follow-ups, non-blocking delegation, durable memory, and visible priorities/decisions.
 
 ## Follow-ups
 
-- Treat each new message as “continue the task and also do this” unless the user says to wait, pause, stop, or switch.
-- Answer, then resume. Ask clarifying questions if requests conflict and intent is unclear.
+Treat new messages as "continue, and also do this" unless the user pauses/stops/switches. Answer, then resume; clarify conflicting or unclear requests.
 
 ## Dispatch
 
-1. **Decide whether to delegate.** Keep short, tightly coupled, or decision-blocked work in-thread. Delegate substantial, bounded work that can proceed independently, especially if it would crowd the main context.
-2. **Gather context.** Use a Haiku read-only scout for substantial independent prior-art searches across the repo, shared packages, and sibling implementations. Return candidates, source locations, contracts, differences, and search scope; "not found" is not proof of absence. Keep short lookups and continuous code traces in-thread.
-3. **Assess and plan.** Read Mithril's core and planning add-on per Craft below; establish ACs, prior art, affected flow, risks, and verifiable slices within the PR budget. Use Sonnet for standard work and ambiguity. If the task spans multiple systems, has significant dependencies or design trade-offs, or is hard to decompose, ask Opus to turn the findings into sequenced, independently verifiable tasks. Otherwise skip Opus.
-4. **Implement and brief.** Use Haiku for clear, bounded technical tasks; use Sonnet for standard or ambiguous implementation. For complex work, have Sonnet implement Opus's plan. If a Haiku task proves more complex or unclear than expected, hand it to Sonnet with the findings so far. Give each agent only the context needed for its task, not the parent conversation: repo, goal, scope, permissions, relevant findings and constraints, expected result, and verification. Use `Plan` for read-only planning, `general-purpose` for multi-step work or edits, and specialists when they fit.
-5. **Prevent conflicts.** Parallelize only independent tasks. Never run concurrent writers in one checkout; use separate worktrees or sequence edits.
-6. **Keep it non-blocking.** Prefer background agents so the user can keep interacting. Don't poll; handle follow-ups, then review results. Foreground agents block. If background execution isn't available, keep the work in-thread rather than launching a blocking agent.
+1. **Delegate selectively.** Keep short, tightly coupled, or decision-blocked work in-thread. Delegate substantial, bounded independent work, especially when it would crowd context.
+2. **Recover and research.** Follow Memory below; search the library before code. Use a Haiku read-only scout for substantial independent prior-art searches across repo/shared packages/siblings. Return candidates, sources, contracts, differences, and search scope; "not found" is not proof of absence. Keep continuous traces in-thread.
+3. **Plan.** Follow Craft; establish acceptance criteria (ACs), prior art, affected flow, risks, and verifiable PR slices. Sonnet handles standard work/ambiguity. Use Opus to decompose multi-system work, significant dependencies/design trade-offs, or otherwise hard-to-split tasks; skip it otherwise.
+4. **Implement.** Haiku handles clear bounded tasks; Sonnet handles standard/ambiguous work and implements Opus plans. Escalate unexpectedly complex Haiku work to Sonnet with findings. Brief repo, goal, scope, permissions, findings/constraints, expected result, checks, stop condition, and investigation/output budget—not the parent conversation. Use `Plan` for read-only planning, `general-purpose` for multi-step work/edits, and fitting specialists.
+5. **Prevent conflicts.** Parallelize independent tasks only. One writer per checkout; separate worktrees or sequence edits.
+6. **Stay non-blocking.** Prefer background agents; handle follow-ups, then review results without polling. If unavailable, work in-thread rather than launching a blocking foreground agent.
+
+## Continuation
+
+- Reconcile on fresh starts, requests, and completion notifications; no unattended loop/watchers. `Stop` persists prepared changes, not external refreshes.
+- Before each pick, re-read Podium priorities; verify ticket/PR liveness, dependencies, gates, permissions, ownership. After verified completion, advance within an authorized queue only; stop when exhausted, blocked, over budget, or out of scope. Ranking grants no permission.
+- Follow [Podium recovery](./podium/SKILL.md) for interruptions. Relay verified outcomes/failures/next actions; never duplicate live work.
 
 ## Tickets
 
-Read [Xenophon](./xenophon/SKILL.md) when work needs a durable ticket, an incidental finding needs tracking, or the user requests browsing, updating, closing, pruning, or creating local or Jira tickets.
+Read [Xenophon](./xenophon/SKILL.md) for durable work/incidental findings and creating, browsing, updating, closing, or pruning local/Jira tickets.
+
+## Project planning
+
+Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery plans and technical designs. Use Mithril for coding checks; store authored plans in the vault. Approved slices become tickets; drafting grants no implementation permission.
+
+## Memory
+
+- Ownership: tickets own intent; [Podium](./podium/SKILL.md) owns priorities, streams, status, PRs, gates, and resume pointers; [Ledger](./ledger/SKILL.md) owns durable beads/checkpoints; [Library](./library/SKILL.md) owns reusable repo knowledge. Read the relevant skill; pass bead/page links in briefs.
+- Fresh start/after compaction: read slim Podium, validate live ownership/state, then retrieve only the selected task's topic updates and library context. No competing ledger dashboard or always-loaded learnings.
+- Each turn prepares safe changes; skip unchanged surfaces and save high-value decisions immediately. Podium changes need evidence and preserve user priorities; library patches need verified reusable knowledge. Decisions retain rationale, briefs track sequence coverage, and pages identify verified sources.
+- Follow Ledger's checkpoint contract: proposed Claude Code `Stop` flushes prepared changes with stable retry IDs and separate acknowledgements. Preserve pending writes, reject conflicts, report partial failures; no transcript scrape or summarizing agent.
+- Checkpoint before handoff. Slim `PreCompact` flushes prepared continuation only—no retros, cleanup, discovery, or PR polling. Hooks are not implemented.
 
 ## Acceptance criteria
 
-- The planning agent extracts ACs from the ticket/request: checkable outcomes, constraints, invariants, and preserved behavior. Propose implicit criteria; ask about material ambiguity, never invent scope. Without a planner, establish them in-thread before coding.
-- Pair each criterion and plan step with verification; pass the relevant ACs and checks in implementation/review briefs. Record clarified criteria in the existing ticket when applicable.
-- Check returned evidence against every AC, including cross-task outcomes. Unmet or unverified criteria block a done claim; only the user can approve scope changes. Do not let passing task-level checks substitute for the full outcome.
+- Planner—or in-thread builder before coding—extracts ACs from ticket/request: checkable outcomes, constraints, invariants, preserved behavior. Propose implicit criteria; clarify material ambiguity, never invent scope.
+- Pair ACs/plan steps with checks; include them in implementation/review briefs and record clarifications in the existing ticket.
+- Verify every AC, including cross-task outcomes. Task-level passes do not prove the whole outcome. Unmet/unverified ACs block completion; only the user changes scope.
+
+## Branch flow
+
+- Maintained `staging`: branch `feature` from it; PR `feature` → `develop`. Test there on the **staging platform** (`develop`, not branch `staging`), then PR the same `feature` → `staging`.
+- Release: `staging` → `release/yyyymmdd.x` → `main`. No direct `staging` → `main` deploy PR.
+- Check maintenance via repo guidance/release activity, not existence/age alone. Absent/stale `staging`: use documented repo flow; clarify uncertainty. Label branches versus environments explicitly in briefs/evidence/Podium.
+- Creating branches, committing, pushing, or publishing PRs requires permission. Draft PRs only; user merges/promotes. No direct protected/shared-branch writes.
+
+Read [PR lifecycle](./reference/prs.md) for PR preparation, feedback, readiness, and post-merge reconciliation.
 
 ## PR size
 
-- Default budget: **at most 5 code files and 400 changed code lines** (additions + deletions), measured against the intended PR base. Include the budget in coding briefs; check the actual diff before opening.
-- Tests, config, and docs do not count; migrations, including SQL, do. Lockfiles, generated/vendor files, and pure renames belong in separate mechanical PRs, not mixed with code; they may carry tests/config/docs.
-- Over budget: stop and propose ordered PR slices, each independently passing and usable if the stack stops there. Use only explicit configured overrides: an optional wider file tier cannot raise the line limit; an owner size waiver does not waive mechanical separation. Never invent exceptions.
+- Default: **at most 5 code files AND 400 changed code lines** (adds + deletes) against the intended base. Brief the budget; check the diff before opening.
+- Exclude tests/config/docs; include migrations/SQL. Put lockfiles, generated/vendor files, and pure renames in separate mechanical PRs, which may carry tests/config/docs.
+- Over budget: stop and propose ordered, independently passing PRs usable if the stack stops. Only explicit configured overrides apply: wider file tiers do not raise line limits; owner size waivers do not waive mechanical separation.
 
 ## Craft
 
-Read [Mithril's core](./mithril/SKILL.md) across phases. Planners additionally read its [planning add-on](./mithril/reference/planning.md); builders load the [after-coding pass](./mithril/reference/after-coding.md) after implementation, or earlier for a blocking smell. Load runtime safeguards only when applicable. Include core and phase-specific read instructions in agent briefs; agents do not inherit this context. After context loss, reread the core and current phase guidance.
+Read [Mithril's core](./mithril/SKILL.md) across phases plus [planning](./mithril/reference/planning.md) for planners or [after-coding](./mithril/reference/after-coding.md) for builders (earlier for blocking smells). Load applicable runtime safeguards only. Include read instructions in briefs; agents do not inherit context. Reread core/current phase after context loss.
 
-Self-review by the builder is the default; phases do not require separate agents. Use independent review for substantial/risky changes (for example auth, data integrity, concurrency, public contracts, or deployment). Return specific findings/evidence/suggested moves to the builder, not full manuals.
+Default to builder self-review, not an agent per phase. Use independent review for substantial/risky changes: auth, data integrity, concurrency, public contracts, deployment. Return findings, evidence, and suggested moves—not manuals.
 
-For non-trivial changes, implement → review → fix → re-review, at most three review rounds, whether self- or independently reviewed. Fix in-scope blockers; report other findings. Seek guidance on repeated blockers, exhausted cap, or scope expansion; escalate on evidence. Blocked/capped is not done. Skip ceremony for trivial changes; include this policy in implementation/review briefs.
+Non-trivial work: implement → review → fix → re-review, **at most three review rounds**, self or independent. Fix in-scope blockers; report others. Seek guidance with evidence for repeated blockers, exhausted cap, or broader scope; blocked/capped is not done. Brief this policy; skip ceremony for trivial work.
+
+## Retro
+
+Read [Retro](./retro/SKILL.md) on request only. Load selected improvement plugins, propose evidence-backed changes, and preserve approval boundaries. No scheduled runs or compaction chores.

@@ -1,19 +1,23 @@
 # Conditional runtime safeguards
 
-Read only sections matching the change. Use applicable existing scans/reviews; report unavailable checks, never imply coverage.
+Read matching sections only. Use existing scans/reviews; report unavailable checks, never imply coverage.
 
 ## Shared state, remote calls, and caches
 
-Prefer immutable/local state; protect shared invariants. Bound remote waits, support cancellation, and retry safely/idempotently. Avoid N+1 calls/repeated scans; batch where supported. Measure before optimizing; bound caches and define invalidation.
+Prefer immutable/local state; separate independent mutable ownership before synchronizing. Necessary sharing needs enforced ownership, one writer, or appropriate atomic coordination. Bound remote waits, support cancellation/safe retries. Avoid N+1/repeated scans; batch where supported. Measure before optimizing; bound caches/define invalidation.
+
+Worktrees isolate files, not databases, ports, fixtures, or external writes. Identify resource ownership; isolate or sequence conflicting tests/agents and assign one authorized owner for each external mutation.
+
+For retryable operations, define final state; verify repeated success AND retry after partial failure/crash. Prevent duplicate side effects; preserve recovery progress. Repetition alone isn't crash-safe idempotency.
 
 ## Persistence
 
-Transactions cover the business operation. Protect read-modify-write; release resources on every path. Keep network/user waits outside transactions. Bound/index queries; enforce authorization scope before fetching, not by filtering afterward.
+Transactions cover business operations. Protect read-modify-write; always release resources. No network/user waits inside transactions. Bound/index queries; authorize scope before fetching, not afterward.
 
 ## Delivery
 
-Preserve old/new compatibility for APIs, schemas, and config. Use expand-contract, safe defaults or explicit startup failure, and a verified rollback path.
+Preserve old/new API/schema/config compatibility. Use expand-contract, safe defaults or explicit startup failure, verified rollback.
 
 ## Operational paths
 
-Make new/changed failures detectable and diagnosable: safe structured logs, correlation across boundaries, and relevant latency/error/queue signals. Include security events without sensitive payloads.
+Make changed failures detectable/diagnosable: safe structured logs, cross-boundary correlation, relevant latency/error/queue signals. Include security events without sensitive payloads.

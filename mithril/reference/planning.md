@@ -1,9 +1,12 @@
 # Planning add-on
 
-Read with the core when planning code changes; do not load the after-coding catalog just to plan.
+Read with [core](../SKILL.md) when planning; no after-coding catalog needed.
 
-- Extract ACs from the ticket/request: outcomes, constraints, invariants, and preserved behavior. Propose implicit criteria; ask about material ambiguity, never invent scope. Pair each criterion and plan step with verification.
-- Verify prior art in repo, shared packages, stdlib, declared dependencies, and sibling implementations. Compare defaults, ordering, status mapping, empty input, and failures. Record reuse or why not; "not found" includes search scope, not proof of absence.
-- Read relevant files and owning methods in full, chunking large files. Trace entry through callers/helpers, validation, transformation, I/O, outputs/side effects, failures, and tests. Mark unresolved links.
-- Identify dependencies, risks, and test gaps. Read applicable runtime safeguards before choosing affected boundaries or migrations. Propose preparatory refactoring only where needed for safe implementation.
-- Produce ordered, independently verifiable slices within Maestro's PR budget. Brief builders with ACs/checks, invariants, reuse decisions, scope/permissions, relevant findings, and remaining uncertainty.
+For project shaping or technical documents, also use [Planning](../../planning/SKILL.md); this add-on covers coding checks.
+
+- Extract ACs: outcomes, constraints, invariants, preserved behavior. Propose implicit criteria; clarify material ambiguity, never invent scope. Pair ACs/steps with checks.
+- Verify repo/shared-package/stdlib/dependency/sibling prior art. Compare defaults, ordering, status mapping, empty input, failures. Record reuse/rejection; "not found" includes search scope, not proof of absence.
+- Apply core's full-context trace to relevant files/methods; flag unresolved links.
+- Establish domain shape/invariants before logic. Prefer existing types/validated constructors that exclude invalid states; model alternatives explicitly, not ambiguous flags/temporary fields. Preserve clear local designs; no speculative type hierarchies.
+- Identify dependencies/risks/test gaps; read matching runtime safeguards before choosing boundaries/migrations. Refactor first only when safe implementation requires it.
+- Order independently verifiable slices within Maestro's PR budget. Brief ACs/checks, invariants, reuse, scope/permissions, findings, uncertainty.

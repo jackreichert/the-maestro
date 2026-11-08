@@ -18,11 +18,11 @@ resolution: null
 
 ## Problem
 
-<What happens or needs changing, and why it matters. For bugs, include reproduction steps, expected behavior, and actual behavior.>
+<Problem/impact. Bugs: reproduction, expected vs actual behavior.>
 
 ## What done looks like
 
-<The observable finished state. Do not file until this is clear.>
+<Observable finished state; clarify before filing.>
 
 ## Scope
 
@@ -30,8 +30,8 @@ resolution: null
 
 ## Acceptance criteria
 
-- [ ] <A specific, independently verifiable requirement.>
-- [ ] <Relevant test or verification requirement.>
+- [ ] <Specific, independently verifiable requirement.>
+- [ ] <Test/verification requirement.>
 
 ## Out of scope
 
@@ -39,20 +39,20 @@ resolution: null
 
 ## Context
 
-<Relevant background and team-accessible references.>
+<Background and team-accessible references.>
 
 ## Estimate
 
-<1, 2, 3, or 5 points plus rationale: full delivery effort, assumptions, dependencies, and uncertainty. Split 8+ point work; use a time-boxed 1-2 point spike for major unknowns.>
+<1/2/3/5 points; full delivery effort, assumptions, dependencies, uncertainty. Split 8+; time-box major unknowns as 1-2 point spikes.>
 
 ---
 
-Local only: do not publish the sections below to Jira.
+Local only: never publish below to Jira.
 
 ## Evidence
 
-- <Source path/line or check — what it establishes.>
-- <Unverified hypothesis or ruled-out explanation, clearly labeled.>
+- <Source/check and what it establishes.>
+- <Labeled hypothesis or ruled-out explanation.>
 
 ## Decisions needed
 
@@ -63,19 +63,19 @@ Local only: do not publish the sections below to Jira.
 
 ## Links
 
-- <Supporting local plan, research, or related ticket.>
+- <Local plan, research, related ticket.>
 
 ## Log
 
-- <YYYY-MM-DD — substantive progress or revalidation with evidence, metadata change, or reopening reason.>
-- <If deferred: reason and revisit date or trigger; log reassessment when due.>
+- <YYYY-MM-DD — evidenced progress/revalidation, metadata change, reopening reason.>
+- <Deferral: reason/revisit date or trigger; reassess when due.>
 
 ## Resolution
 
-<On completion: what changed and why the done state is satisfied. On retirement: approval, reason, and replacement link if applicable; retirement does not mean the work was delivered.>
+<Completion: changes and proof of done state. Retirement: approval/reason/replacement, not delivery.>
 
 For completed work:
 
 | Criterion | Check | Result | Evidence |
 |-----------|-------|--------|----------|
-| <Acceptance criterion or done state> | <Verification performed> | <Actual result> | <Source or artifact> |
+| <AC or done state> | <Verification> | <Actual result> | <Source/artifact> |
