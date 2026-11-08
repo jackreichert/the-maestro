@@ -32,7 +32,7 @@ Estimate effort/complexity/risk, not priority; times are guides, not promises.
 
 ## Local records
 
-- Resolve vault/repo; ask if unknown. Active: `Projects/<repo>/Tickets/<id>.md`; closed: `Tickets/Archive/`; overview: `Tickets/_Index.md`.
+- Resolve vault via [settings](../README.md#settings) and repo; ask if unset. Active: `Projects/<repo>/Tickets/<id>.md`; closed: `Tickets/Archive/`; overview: `Tickets/_Index.md`.
 - Replace placeholders; omit unused sections. Allocate `<repo>-NNN` above all active/archived IDs; never reuse. Serialize project writes; reject collisions.
 - Preserve template YAML and unknown metadata. Dates `YYYY-MM-DD`; absent values `null`; lists arrays. Status `open|in-progress|blocked|closed`; type `bug|task|feature|epic|chore`; priority `0` critical to `4` backlog, default `2`.
 - Keep `reviewed: false`; only the user stamps review dates. Closed resolution: `completed|retired`; otherwise `null`. Older unproven closures stay unclassified.

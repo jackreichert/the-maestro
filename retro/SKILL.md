@@ -10,7 +10,7 @@ On demand only, including weekly reviews. No scheduler, watcher, Stop/PreCompact
 
 ## Run a bounded review
 
-1. Confirm scope/window/plugins; reuse prior results, avoid double-counting. Resolve vault/repo: `Projects/<repo>/Research/Retros/`; cross-repo reviews use an agreed workspace project.
+1. Confirm scope/window/plugins; reuse prior results, avoid double-counting. Resolve vault via [settings](../README.md#settings) and repo: `Projects/<repo>/Research/Retros/`; cross-repo reviews use an agreed workspace project.
 2. Compare outcomes with commitments/acceptance criteria; distinguish implemented/reviewed/merged/tested/deployed. Check blocked/carried/retired work and review misses; verify evidence, not confident reports.
 3. Load selected eligible registry modules within scope/budget. Batch collection; deterministic checks before analysis. Missing evidence stays unknown.
 4. Deduplicate lessons: verified knowledge → library; outcomes/rationale → ledger; work → tickets; working rules → proposals. Existing-rule misses need recall/execution investigation before more text.

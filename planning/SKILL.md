@@ -19,7 +19,7 @@ Project shaping and technical design; [Mithril planning](../mithril/reference/pl
 
 ## Documents and approval
 
-- Resolve vault/project (default `/Users/aryajack/Documents/AryaObsidian`). Check `Plans/`, `Planning/`, and existing `Projects/<repo>/CONTEXT.md` links first.
+- Resolve vault via [settings](../README.md#settings) and project; ask if unset. Check `Plans/`, `Planning/`, and existing `Projects/<repo>/CONTEXT.md` links first.
 - Vault artifacts: `Plans/<repo>-<workstream>.md` (distinct suffixes for separate documents); phases: `Planning/<repo>/<workstream>/`. Cross-repo work needs an agreed project. Only templates live here.
 - Reuse canonical docs; conclusions first, linked detail, preserved edits/history. Track status, source revisions, gates, approval scope, superseded decisions. Material changes reopen affected approvals/invalidate affected verification.
 - Drafts/recommendations/tickets grant no implementation, publication, Git, or deployment permission. Record explicit approval/source and unresolved gates; read back writes/links, report partial failures.

@@ -10,7 +10,7 @@ Topic memory and continuation evidence, not transcripts or a dashboard. [Podium]
 
 ## Records
 
-- Resolve `LEDGER_ROOT`; ask if unknown. Layout: `Events/YYYY-MM.jsonl`, `Topics/<id>/{topic.json,brief.md}`, `Pending/<session>/<checkpoint-id>.json`, derived `Index/ledger.sqlite`. Podium replaces ledger `Resume.md`. Topics span repos; repos are metadata. Migration from the old format needs an explicit plan.
+- Resolve `LEDGER_ROOT` via [settings](../README.md#settings); ask if unset. Layout: `Events/YYYY-MM.jsonl`, `Topics/<id>/{topic.json,brief.md}`, `Pending/<session>/<checkpoint-id>.json`, derived `Index/ledger.sqlite`. Podium replaces ledger `Resume.md`. Topics span repos; repos are metadata. Migration from the old format needs an explicit plan.
 - Append checkpoint envelopes; never rewrite history. Allocate checkpoint/event IDs before writes; reuse on retry. Envelopes receive globally increasing committed sequences (ingestion order, not occurrence time). Events carry UTC time, session/turn, repos, topic IDs, kind, concise summary, sources.
 - Kinds: `progress`, `decision`, `finding`, `blocker`, `question`, `next`, `correction`, `checkpoint`. Include actual outcomes, decision rationale/rejected options, finding verification/uncertainty, and blocker/next dependencies. Podium questions use their `question` event IDs as stable hashes.
 - Distinguish decisions/proposals and facts/hypotheses. Explicit references supersede conclusions, resolve blockers/questions, or replace next actions; chronology does not. `topic.json` owns identity, aliases, repos, related topics/tickets/pages. Reuse IDs through the index.

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "paths": {
+    "vault_root": null,
+    "ledger_root": null,
+    "container_root": null
+  },
+  "pr_budget": {
+    "max_code_files": 5,
+    "max_changed_code_lines": 400
+  },
+  "repos": {}
+}

@@ -9,6 +9,10 @@ Version 2.0 defines the modular skill contracts; runtime persistence and hooks r
 
 Keep work moving through follow-ups, non-blocking delegation, durable memory, and visible priorities/decisions.
 
+## Settings
+
+Read [settings defaults and local override rules](./README.md#settings) before path/repo-dependent work; pass resolved values in agent briefs. Configuration is agent-read, not runtime enforcement. See [Setup](./SETUP.md) for skills-only installation.
+
 ## Follow-ups
 
 Treat new messages as "continue, and also do this" unless the user pauses/stops/switches. Answer, then resume; clarify conflicting or unclear requests.

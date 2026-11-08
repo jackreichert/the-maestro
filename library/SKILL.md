@@ -10,7 +10,7 @@ Human-readable onboarding and reusable repo memory, not a search log. Newcomers 
 
 ## Organize by meaning
 
-- Resolve `VAULT_ROOT`/repo; ask if unknown. Entry: `Projects/<repo>/Knowledge/README.md`; concept pages beside it; runbooks in `Projects/<repo>/Runbooks/`.
+- Resolve `VAULT_ROOT` via [settings](../README.md#settings) and repo; ask if unset. Entry: `Projects/<repo>/Knowledge/README.md`; concept pages beside it; runbooks in `Projects/<repo>/Runbooks/`.
 - Entry explains purpose/boundaries and links working guide, architecture, concepts, troubleshooting. Link authoritative README/config/docs; don't duplicate commands/policy.
 - Organize by concept/subsystem, not file/directory. Individual file pages need important entry points or non-obvious behavior. Use [the template](./page-template.md); omit unused sections.
 - Explain vocabulary, flows, integrations, setup/build/test, sources, conventions, pitfalls for an incoming engineer. Current guidance precedes history.

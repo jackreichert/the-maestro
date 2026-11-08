@@ -10,7 +10,7 @@ Current coordination, not history. Podium owns priorities/workspace state; [Ledg
 
 ## Slim landing page
 
-- Resolve `VAULT_ROOT` (default `/Users/aryajack/Documents/AryaObsidian`). Entry: `Podium/README.md`; overflow: `Podium/Streams/<stream-id>.md`. Reuse existing records, not a second dashboard.
+- Resolve `VAULT_ROOT` from [settings](../README.md#settings); ask if unset. Entry: `Podium/README.md`; overflow: `Podium/Streams/<stream-id>.md`. Reuse existing records, not a second dashboard.
 - Use [the template](./template.md). User-ranked streams: stable ID, outcome, repos, phase/status, blocker, next action, bead pointers. A bead is a ledger event ID/topic brief, not a new format.
 - PRs grouped by stream, then repo: link, purpose, target branch, observed review/CI, dependency, next action/owner, checked time. Implementation, merge, QA, staging, production differ; unknown is not success.
 - User questions by stream: associated ledger question hash; one-way (irreversible/costly) or two-way (reversible within stated limits) gate; context, options, recommendation/tradeoff, blocked work, beads, what was checked. Only real deadlines; reversibility grants no permission.
