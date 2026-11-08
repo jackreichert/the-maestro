@@ -59,7 +59,9 @@ Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery 
 - Maintained `staging`: branch `feature` from it; PR `feature` → `develop`. Test there on the **staging platform** (`develop`, not branch `staging`), then PR the same `feature` → `staging`.
 - Release: `staging` → `release/yyyymmdd.x` → `main`. No direct `staging` → `main` deploy PR.
 - Check maintenance via repo guidance/release activity, not existence/age alone. Absent/stale `staging`: use documented repo flow; clarify uncertainty. Label branches versus environments explicitly in briefs/evidence/Podium.
-- Creating branches, committing, pushing, or publishing PRs requires permission. Draft PRs only; user merges/promotes. No direct protected/shared-branch writes.
+- Within authorized work, verified user-owned, unprotected branches allow staging by explicit path, commits, pushes to their own remote, and creating feature branches from the correct base without further approval. Verify ownership from every commit since divergence against the user's confirmed author identity; mixed authorship means shared. Empty branches count as owned only when the user or agent created them on the user's behalf; uncertainty requires asking.
+- Protected branches (`main`, `staging`, `develop`, plus repo-specific protections) and shared branches remain off-limits for direct writes. Reset, rebase, merge, cherry-pick, revert, force-push, and bulk staging still need explicit permission, even on owned branches. Never rewrite another person's commits.
+- PR publication requires permission. Draft PRs only; user merges/promotes. After a commit or push, report the branch, changed files, and actual validation results.
 - Never add AI attribution to commits: no AI `Co-Authored-By` trailers or "Generated with", "Created by", "Assisted by", or equivalent credits. Inspect the complete commit message before committing and remove any attribution inserted by tools/templates. Preserve the user's author/committer identity.
 
 Read [PR lifecycle](./reference/prs.md) for PR preparation, feedback, readiness, and post-merge reconciliation.
