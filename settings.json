@@ -7,7 +7,7 @@
   },
   "pr_budget": {
     "max_code_files": 5,
-    "max_changed_code_lines": 400
+    "max_changed_code_lines": 1000
   },
   "repos": {}
 }

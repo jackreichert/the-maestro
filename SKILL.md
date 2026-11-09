@@ -73,9 +73,9 @@ Read [PR lifecycle](./reference/prs.md) for PR preparation, feedback, readiness,
 
 ## PR size
 
-- Default: **at most 5 code files AND 400 changed code lines** (adds + deletes) against the intended base. Brief the budget; check the diff before opening.
+- Aim for **at most 500 changed code lines** (adds + deletes) across at most 5 code files against the intended base. If a larger slice is justified, up to 1,000 lines is acceptable.
 - Exclude tests/config/docs; include migrations/SQL. Put lockfiles, generated/vendor files, and pure renames in separate mechanical PRs, which may carry tests/config/docs.
-- Over budget: stop and propose ordered, independently passing PRs usable if the stack stops. Only explicit configured overrides apply: wider file tiers do not raise line limits; owner size waivers do not waive mechanical separation.
+- Above 1,000 lines, stop and ask the user for an explicit per-PR override; otherwise split into ordered, independently passing PRs usable if the stack stops. Configured limits cannot exceed 1,000; wider file tiers do not raise the line limit or waive mechanical separation.
 
 ## Craft
 

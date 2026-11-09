@@ -192,7 +192,7 @@ export function loadSettings(defaultFile, localFile) {
   }
   keys(settings.pr_budget, ['max_code_files', 'max_changed_code_lines'], ['max_code_files', 'max_changed_code_lines']);
   requireValue(Object.values(settings.pr_budget).every((value) => Number.isInteger(value) && value > 0)
-    && settings.pr_budget.max_changed_code_lines <= 400, 'Invalid PR budget');
+    && settings.pr_budget.max_changed_code_lines <= 1000, 'Invalid PR budget');
   keys(settings.repos, Object.keys(settings.repos));
   for (const [repo, config] of Object.entries(settings.repos)) {
     requireValue(/^[\w.-]+\/[\w.-]+$/.test(repo), 'Invalid repo key');

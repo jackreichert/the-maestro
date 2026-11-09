@@ -90,6 +90,20 @@ test('invalid hook input and settings exit nonzero, without printing input conte
   assert.equal(cli(f, 'rebuild').status, 1);
 });
 
+test('PR line budget defaults to 1000 and configured limits cannot exceed it', (t) => {
+  const f = fixture(t);
+  assert.equal(f.settings.pr_budget.max_changed_code_lines, 1000);
+
+  const settings = {paths: {ledger_root: path.join(f.temp, 'ledger'), vault_root: path.join(f.temp, 'vault')}};
+  for (const limit of [500, 1000]) {
+    fs.writeFileSync(f.config, JSON.stringify({...settings, pr_budget: {max_changed_code_lines: limit}}));
+    assert.equal(loadSettings(path.join(project, 'settings.json'), f.config).settings.pr_budget.max_changed_code_lines, limit);
+  }
+
+  fs.writeFileSync(f.config, JSON.stringify({...settings, pr_budget: {max_changed_code_lines: 1001}}));
+  assert.throws(() => loadSettings(path.join(project, 'settings.json'), f.config), /Invalid PR budget/);
+});
+
 test('hash conflict is rejected; exact prepared payload is idempotent', (t) => {
   const f = fixture(t);
   const payload = prepare(f, input());

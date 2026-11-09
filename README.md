@@ -31,11 +31,11 @@ Agents and the CLI merge defaults with local overrides recursively, preserving e
 |---|---|
 | `schema_version` | Integer `1`; reject unsupported versions |
 | `paths` | Exact keys in defaults; absolute directory paths or `null`. Resolve `~` before saving; ask for required unset paths. Check existence/access before use; don't create unasked |
-| `pr_budget` | Positive integer limits; changed code lines cannot exceed 400. A wider file tier requires explicit user configuration; mechanical separation still applies |
+| `pr_budget` | Positive integer limits; default hard cap is 1,000 changed code lines. Aim for 500. More than 1,000 in a PR requires explicit per-PR user approval; settings cannot raise the cap. Mechanical separation still applies |
 | `repos` | Exact `owner/repo` keys; each value may contain only `branch_flow`, `environments`, `max_code_files` |
 | `repos.*.branch_flow` | `maintained-staging` or `repo-specific`; verify actual maintenance and repo instructions before using. Missing means inspect/ask |
 | `repos.*.environments` | Environment-name → branch-name strings. Labels, not proof of deployment |
-| `repos.*.max_code_files` | Optional positive integer file-tier override; never raises the line limit |
+| `repos.*.max_code_files` | Optional positive integer file-tier override; never raises the 1,000-line hard limit |
 
 For verified maintained-staging repos, flow remains `staging` → feature → `develop`, test on the staging platform, then the same feature → `staging` → `release/yyyymmdd.x` → `main`. Repo-specific flows come from repo guidance; do not guess.
 
