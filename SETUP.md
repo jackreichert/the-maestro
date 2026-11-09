@@ -6,15 +6,18 @@ This runbook grants no installation permission. Never read secret files or migra
 
 - Read [README](./README.md), [settings](./README.md#settings), and [Maestro](./SKILL.md).
 - Ask for harness, workspace/user scope, absolute source/destination, vault/ledger/container paths, and approval for exact registration/settings/hook changes. Read-only inspection is fine; preserve unrelated settings/files.
+- Confirm the installing user's Git author identities, repository branch flow and optional integrations. No Git/PR write permissions are pre-granted: ask for desired actions and record any explicit scoped standing grants through Ledger. Do not copy another installation's grants, identity or hook paths.
 - Inspect existing registrations and competing writers. Stop on collisions; disable old hooks/instructions only with approval. Do not remove old memory. Preserve only the specific prior registrations/settings needed for reversal, never copy secrets.
 
 ## 2. Configure and register
 
 - Verify Node 24 and `node:sqlite`; run `npm test` in the bundle. No dependencies need installing. Resolve the actual Node executable to an absolute path for hooks.
+- For optional GitHub features, verify `gh` and authentication for the installing user's account. Missing GitHub access must not block local memory/tickets; the footer reports unavailable PR data. Jira is optional and requires separately configured tooling/access.
 - After approval, configure `~/.config/the-maestro/settings.json` (or an explicit `--settings` override), preserving valid existing values. Persistence requires existing, owner-controlled, separate ledger/vault roots; ask before creating them. Settings files and in-root paths cannot be symlinks; no secrets in config.
 - Claude Code workspace: `<container>/.claude/skills/the-maestro`; user: `~/.claude/skills/the-maestro`. Use an approved symlink to the complete repo or copy the bundle, excluding `.git` and prohibited files. Preserve relative links; do not flatten child skills.
 - For existing installations, keep explicit `--settings` paths until migration is approved. Update installed skill links to match the skill name only with approval; check for legacy-name collisions first. Repository naming changes do not migrate registrations or storage.
 - Check current target-harness skill documentation and discovery/symlink support. Keep frontmatter unchanged. This is not a packaged plugin; child skills are explicitly read, not independent slash commands.
+- Outside Claude Code, use the harness's supported skill registration and agent/model preferences. Do not copy Claude hooks, agent type names or terminal assumptions as if they were portable. Manual memory commands remain available; automatic turn coverage is not supplied for other harnesses.
 
 ## 3. Optional Claude Code hooks
 

@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 The reusable knowledge component of [Muninn](../README.md#muninn).
 
-Human-readable onboarding and reusable repo memory, not a search log. Newcomers and Haiku scouts share an entry point.
+Human-readable onboarding and reusable repo memory, not a search log. Newcomers and read-only scouts share an entry point.
 
 ## Organize by meaning
 
@@ -23,7 +23,7 @@ Human-readable onboarding and reusable repo memory, not a search log. Newcomers 
 1. Search library terms/aliases; inspect titles and **Read when**.
 2. Verify sources in code: read owning files/methods and trace affected flow.
 3. On a miss, search code, then retry library with discovered symbols/subsystems. Report search scope/unresolved links.
-4. Brief behavior, reuse candidates, constraints, evidence, uncertainty. Haiku suits substantial independent scouting; keep short lookups/continuous traces in-thread.
+4. Brief behavior, reuse candidates, constraints, evidence, uncertainty. Use an available read-only agent for substantial independent scouting; keep short lookups/continuous traces in-thread.
 5. Patch verified discoveries, stale claims, missing explanations, or broken links only. Read-only scouts propose patches to the writer; no extra maintenance agent.
 
 ## Maintain useful knowledge
@@ -40,4 +40,4 @@ For `Stop`, follow [Ledger's checkpoint contract](../ledger/SKILL.md) and [persi
 
 Prefer small Mermaid flow diagrams. UML/Graphify is optional for complex/unfamiliar boundaries; scope safely and verify relationships. Maps support prose, never replace it or regenerate every turn.
 
-Acceptance: newcomer/fresh Haiku finds the right subsystem, understands behavior, and locates verified build/test guidance without reading the whole repo.
+Acceptance: a newcomer/fresh agent finds the right subsystem, understands behavior, and locates verified build/test guidance without reading the whole repo.

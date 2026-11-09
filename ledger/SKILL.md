@@ -48,6 +48,6 @@ Search names/aliases/repo; read brief, topic events after its watermark, then ne
 
 Follow [Podium recovery](../podium/SKILL.md#updates-and-recovery) for live task, priority and ownership checks; retrieve only the selected topic's uncovered events and needed library context. Briefs are recorded evidence, not live status or permission. Checkpoint before handoff; autocompact thresholds belong to the harness.
 
-Acceptance: fresh Haiku recovers rationale and a newer correction; a fresh session resumes the correct task with minimal context, retrieves a learning, and avoids concurrent writers. Test duplicate flushes, failed writes, and missing capture separately.
+Acceptance: a fresh agent recovers rationale and a newer correction; a fresh session resumes the correct task with minimal context, retrieves a learning, and avoids concurrent writers. Test duplicate flushes, failed writes, and missing capture separately.
 
 Runtime tests use synthetic roots and hook subprocesses. Actual harness delivery and fresh-agent recovery remain unverified until an authorized rehearsal; no zero-loss guarantee.

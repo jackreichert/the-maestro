@@ -28,6 +28,18 @@ Muninn is the umbrella name, not a fourth store or a separate workflow. Componen
 
 ## Setup
 
+This is a configurable workflow bundle, not a zero-configuration app. No author-specific account, vault, service or permission is required or included.
+
+| Capability | Requirements |
+|---|---|
+| Workflow skills | A harness that supports skills or explicit Markdown loading; use its own discovery/agent conventions |
+| Muninn CLI | Node 24+ with `node:sqlite`; existing, separate writable ledger/vault directories and local settings. A vault is a Markdown directory, not an Obsidian service requirement |
+| Automatic turn tracking and footer | Optional Claude Code integration; approve registration and rehearse in that harness. No equivalent is supplied for Copilot or other harnesses |
+| GitHub PR operations/footer counts | Optional GitHub CLI (`gh`), authenticated to the installing user's account with access to the relevant repositories |
+| Jira publication | Optional user-provided Jira tooling/access; local tickets need no Jira account |
+
+No package installation is needed for the CLI. Select your own models, branch flow, paths and permissions. Tool/hook availability and terminal link rendering vary by harness/platform; the test suite is not certification of every environment.
+
 Give an installation agent [SETUP.md](./SETUP.md). It confirms scope/permissions, registers the whole bundle, configures optional hooks, and checks discovery. It does not migrate old memory. See [persistence commands](./reference/persistence.md) for preparation, retries, recovery, and limits.
 
 Root Maestro supports discovery; child skills currently have `disable-model-invocation: true`. Maestro explicitly reads them as needed. Linking the bundle does not expose each nested skill as an independent slash command; plugin packaging is separate future work.
@@ -52,7 +64,7 @@ Agents and the CLI merge defaults with local overrides recursively, preserving e
 | `repos.*.environments` | Environment-name → branch-name strings. Labels, not proof of deployment |
 | `repos.*.max_code_files` | Optional positive integer file-tier override; never raises the 1,000-line hard limit |
 
-For verified maintained-staging repos, flow remains `staging` → feature → `develop`, test on the staging platform, then the same feature → `staging` → `release/yyyymmdd.x` → `main`. Repo-specific flows come from repo guidance; do not guess.
+The `maintained-staging` flow is an opt-in preset, not a universal deployment policy. Confirm its branch and environment mapping with the user/repo before applying it. Otherwise use `repo-specific` and follow repo guidance; do not guess.
 
 Example local overrides (placeholder repo only):
 
@@ -60,14 +72,13 @@ Example local overrides (placeholder repo only):
 {
   "schema_version": 1,
   "paths": {
-    "vault_root": "/Users/example/Documents/WorkVault",
-    "ledger_root": "/Users/example/Documents/WorkLedger",
-    "container_root": "/Users/example/projects"
+    "vault_root": "/absolute/path/to/vault",
+    "ledger_root": "/absolute/path/to/ledger",
+    "container_root": "/absolute/path/to/projects"
   },
   "repos": {
     "example/sample": {
-      "branch_flow": "maintained-staging",
-      "environments": {"staging": "develop", "production": "main"}
+      "branch_flow": "repo-specific"
     }
   }
 }

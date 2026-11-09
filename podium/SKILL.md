@@ -39,4 +39,4 @@ Current coordination, not history. Podium owns priorities/workspace state; [Ledg
 
 The [persistence CLI](../reference/persistence.md) supplies revision-checked patches and resolve-before-removal guards, not answer matching or automatic PR sync. No live vault/hook installation is implied.
 
-Acceptance: fresh Haiku finds priority/next step, recovers rationale, and avoids live writers. Runtime tests cover durable resolution/removal, overflow leftovers, repeats/conflicts and partial failures; rehearse ID/quoted/vault matching, ambiguity and fresh-session recovery in the target harness.
+Acceptance: a fresh agent finds priority/next step, recovers rationale, and avoids live writers. Runtime tests cover durable resolution/removal, overflow leftovers, repeats/conflicts and partial failures; rehearse ID/quoted/vault matching, ambiguity and fresh-session recovery in the target harness.
