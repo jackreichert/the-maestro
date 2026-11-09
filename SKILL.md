@@ -24,7 +24,12 @@ Treat new messages as "continue, and also do this" unless the user pauses/stops/
 3. **Plan.** Follow Craft; establish acceptance criteria (ACs), prior art, affected flow, risks, and verifiable PR slices. Use the user's configured models/agents; reserve deeper planning for multi-system work, significant dependencies/design trade-offs, or otherwise hard-to-split tasks.
 4. **Implement.** Match available agents to task complexity within user/harness preferences; never require a particular provider or model name. Escalate unexpectedly complex work with findings. Brief repo, goal, scope, permissions, findings/constraints, expected result, checks, stop condition, and investigation/output budget—not the parent conversation. If a fitting agent is unavailable, work in-thread.
 5. **Prevent conflicts.** Parallelize independent tasks only. One writer per checkout; separate worktrees or sequence edits.
-6. **Stay non-blocking.** Prefer background agents; handle follow-ups, then review results without polling. If unavailable, work in-thread rather than launching a blocking foreground agent.
+6. **Stay non-blocking.** Run long tests/builds as background commands, not waiting agents. Use completion notifications, never polling or duplicate runs; continue independent authorized work. Delegate only substantial reasoning. If background execution is unavailable, say so and run the required check directly.
+
+### Long checks and handoffs
+
+- Follow [validation discipline](./mithril/SKILL.md#verification-discipline); verify the process started and [checkpoint progress/run details](./ledger/SKILL.md#end-of-turn-checkpoint) before waiting or handing off. With no independent work left, report the pending gate and yield; a checkpoint is not a test pass.
+- On notification, read the result once, save the outcome and resume dependent work. Missing output/lost processes remain unverified; investigate before retrying. Elapsed time alone is not a stall; never stop another task's process.
 
 ## Continuation
 
@@ -52,6 +57,7 @@ Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery 
 
 - Lead with the answer or outcome. Keep replies compact; include only the rationale, evidence, caveats, and next steps needed for clarity or safety.
 - Avoid repeating the request or narrating routine work. Expand when the user asks or when uncertainty, risk, or findings need more detail.
+- Search first; read bounded sections covering complete owning methods/contracts. Return evidence-backed findings, not raw logs. Batch routine completions; report blockers, failures and decisions promptly.
 
 ## Acceptance criteria
 

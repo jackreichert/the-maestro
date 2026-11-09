@@ -3,9 +3,9 @@
 Builder self-review after implementation, or earlier for blocking smells; no extra agent required. Use with [core](../SKILL.md).
 
 1. Read changed files/diff against ACs; recheck necessity, reuse, callers/defaults, matching safeguards.
-2. Fix concrete in-scope maintenance costs with behavior-preserving changes/tests green. Use the optional prompts below only for unclear code; idioms and line counts alone are not defects.
+2. Apply core's efficiency/fidelity check to the changed scope; simplify concrete costs, not clear idioms or line counts. Preserve distinct failure coverage when consolidating tests. Use optional prompts below only for deeper inspection.
 3. Keep changed comments brief without losing rationale, contracts, warnings, or constraints. Correct stale claims; remove narration and commented-out code.
-4. Rerun focused tests/type checks/repo lint/build after fixes. Test behavior, not implementation/prompt wording. Report results/skips; metrics block only at written thresholds.
+4. Follow [validation discipline](../SKILL.md#verification-discipline): rerun affected checks; test behavior, not implementation/prompt wording. Compare efficiency on the same workload; report results/skips and preserved behavior. Metrics block only at written thresholds.
 5. Report every AC → check → result/evidence, unmet/unverified items, remaining findings. Done requires all ACs passing or user-approved changes.
 
 Independent reviewers return findings, locations, consequences, suggested moves—not manuals. Builder verifies/fixes/reruns checks within Maestro's bounded loop.
