@@ -8,7 +8,7 @@ import {memoryHealth} from './turns.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
-let local = path.join(os.homedir(), '.config/the-maestro-redux/settings.json');
+let local = path.join(os.homedir(), '.config/the-maestro/settings.json');
 
 function statuslineInput() {
   const text = fs.readFileSync(0, 'utf8');
@@ -31,7 +31,7 @@ try {
   try {
     context = loadStatuslineSettings(path.join(root, '..', 'settings.json'), local);
   } catch (error) {
-    console.error(`Redux settings unavailable: ${error.code ?? error.message}`);
+    console.error(`Maestro settings unavailable: ${error.code ?? error.message}`);
   }
   let decisions = null;
   if (context?.ledger) {

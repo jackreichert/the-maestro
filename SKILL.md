@@ -1,5 +1,5 @@
 ---
-name: the-maestro-redux
+name: the-maestro
 description: "Use to keep coding work moving across repositories with non-blocking delegation, compact context, durable continuity, and visible decisions."
 ---
 

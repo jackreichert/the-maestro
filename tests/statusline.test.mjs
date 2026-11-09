@@ -118,7 +118,7 @@ test('status line names unavailable fields and omits invalid negative metrics', 
   assert.equal(line, 'Maestro | PRs here unavailable | My open PRs unavailable | Session cost unavailable | Context unavailable | Decisions unavailable | Memory unavailable | Podium unavailable');
 });
 
-test('Podium link prefers Redux page, falls back to workspace page, and rejects symlinks', (t) => {
+test('Podium link prefers canonical page, falls back to workspace page, and rejects symlinks', (t) => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.vault, 'Podium'));
   const page = path.join(f.vault, 'Podium', 'README.md');

@@ -36,7 +36,9 @@ The optional [Claude Code status line](./SETUP.md#4-optional-claude-code-status-
 
 ## Settings
 
-[settings.json](./settings.json) contains public defaults. Local overrides live at `~/.config/the-maestro-redux/settings.json`, outside the repo. Never store secrets, credentials, personal data, current priorities, or permissions in settings.
+[settings.json](./settings.json) contains public defaults. Local overrides live at `~/.config/the-maestro/settings.json`, outside the repo. Never store secrets, credentials, personal data, current priorities, or permissions in settings.
+
+Existing installations using another config location must keep passing its absolute path with `--settings` until an approved migration. Changing the package/skill name does not move local configuration, registrations or storage.
 
 Agents and the CLI merge defaults with local overrides recursively, preserving explicit `null`. An absent local file means defaults; unreadable/invalid files or unknown keys fail explicitly. CLI `--settings /absolute/file.json` selects a different override. Every persistence command requires existing, separate ledger/vault roots; `container_root` may remain unset. Budgets/branch flows guide agents, not automatic Git enforcement. Settings never authorize actions.
 

@@ -9,7 +9,7 @@ import {currentTurn, finishTurn, prepareTurn, startTurn} from './turns.mjs';
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const args = process.argv.slice(2);
 const command = args.shift();
-let local = path.join(os.homedir(), '.config/the-maestro-redux/settings.json');
+let local = path.join(os.homedir(), '.config/the-maestro/settings.json');
 
 function stdinJson() {
   const text = fs.readFileSync(0, 'utf8');
