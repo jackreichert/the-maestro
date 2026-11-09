@@ -6,23 +6,26 @@ Load when writing a PR title/description or reconciling merges. For preparation,
 
 - Review the complete diff against the intended base, not just the latest commit. Describe the actual change and user-visible outcome, not the work session. Separate implemented behavior, proposals and unverified claims.
 - Title: concise, specific outcome in the repo's convention; include the ticket key when required. Avoid vague titles such as "updates" or "fixes".
-- Body: lead with **why**, summarize meaningful behavior changes, then give reviewer navigation, validation, risks and rollback. Use the repo template; otherwise use this compact outline and omit irrelevant sections:
+- Body: use the order below, adapting to repo templates. Keep acceptance criteria distinct from verified results; never imply unrun checks passed. Omit optional details that add no review value.
 
 ```markdown
-## Why
-Problem, impact and intended outcome. Link the team-accessible issue/spec.
+<Paragraph 1: what this PR does, for whom and why; relevant issue/spec link.>
 
-## What changed
-Behavior and boundaries; non-obvious tradeoffs. Name useful review starting points.
+<Paragraph 2: what done looks like—checkable outcomes and important preserved behavior for this slice.>
+
+## Reviewer guide
+- Start here: linked entry points, logic, wiring and tests in review order, with brief reasons.
+- Look closely: key decisions, invariants, failure paths and reviewer questions.
+- When relevant: skim-safe generated/mechanical changes, exclusions and linked dependencies. Skim-safe never exempts author review; deferred work must not leave this slice unsafe.
 
 ## Validation
-Exact checks and actual results; explicitly state unrun checks and remaining gaps.
+Commands, actual results, tested revision, unrun checks and remaining gates.
 
 ## Risks and rollback
-Compatibility, data/config/deployment effects and reversal steps, when relevant.
+Risk level/why, affected surfaces, worst credible failure/detection, compatibility or irreversible steps; reversal/flag and deploy order where relevant.
 ```
 
-- Add before/after screenshots for visible UI changes when useful; diagrams only when they clarify a flow. Link dependencies/twins and required merge order. Avoid file-by-file narration, pasted logs and boilerplate checklists claiming work not done.
+- Write compactly in the author's voice. Add screenshots, trimmed synthetic evidence or diagrams only when useful. Let GitHub show file/line/commit counts; avoid stale tallies, file-by-file narration, pasted logs and boilerplate claims.
 - No private vault/bead IDs, local paths, sensitive data or AI attribution. Inspect the final title/body before publication and read back the draft afterward.
 
 ## Publication

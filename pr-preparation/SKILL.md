@@ -12,6 +12,7 @@ Prepare draft PRs and reconcile open ones; never merge or mark ready for review.
 
 - Use the requested repos/PRs; otherwise use the user's open PRs in the active repo. Clarify ambiguous multi-repo scope. A request to "check open PRs" includes the feedback workflow below, not just a status summary.
 - Verify repository, open state, head/base branches and SHAs, branch ownership, draft state, checks, reviews/approval SHAs, mergeability, and dependencies/twins. Read the complete base-to-head diff and repo instructions before editing.
+- Verify [slice completeness and size](../SKILL.md#pr-size) against the intended base: one coherent outcome, required wiring/tests/docs included, existing behavior preserved, and no later PR needed to make this merge safe. Unmerged prerequisites block readiness; passing only with the rest of a stack is insufficient.
 - Fetch **all pages** of review threads/replies, review summaries and PR conversation comments, including outdated/unresolved threads. Do not rely on `reviewDecision`, the latest review, or a truncated comment list. Failed/missing reads mean unknown, not clean.
 
 ## 2. Disposition every comment
@@ -28,6 +29,7 @@ Prepare draft PRs and reconcile open ones; never merge or mark ready for review.
 - Conflicts block readiness. Inspect the base/head conflict and preserve both sides' intended behavior; never choose an entire side blindly. Use an already authorized merge/rebase strategy, or ask before those operations. Validate the combined result.
 - Before commits/pushes, verify ownership and permissions, preserve unrelated work, and check approval invalidation. Use [the branch policy](../SKILL.md#branch-flow); publication of a new PR still requires permission and must be draft-only.
 - Before publishing or updating every PR, complete [the simplification self-review](../mithril/reference/after-coding.md). Preserve scope, behavior, safeguards and coverage; report safe simplifications or that none were found.
+- Use [the PR body structure](../reference/prs.md#write-for-the-reviewer); keep the description current when the diff or validation changes.
 - No force-push permission ships with this skill. Obtain explicit approval or verify the current user's scoped standing grant for **user-owned, unprotected feature branches backing an open PR**. This does not authorize rewriting others' commits, shared/protected branches, or an otherwise unapproved reset/rebase/merge.
 - Fetch and inspect the exact remote head immediately before rewriting it; stop on unexpected/unaccounted-for changes. Push only the intended branch to its verified PR head remote/ref with `--force-with-lease=<ref>:<observed-sha>`, never plain `--force`. A failed lease requires fresh inspection, not a blind retry. Confirm the PR remains open and owned before pushing; verify its remote SHA afterward.
 

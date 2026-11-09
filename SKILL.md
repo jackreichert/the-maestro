@@ -81,9 +81,10 @@ Read [PR preparation](./pr-preparation/SKILL.md) when preparing PRs, checking op
 
 ## PR size
 
+- Each slice must be self-contained and safe to merge into its intended base: buildable, tested, backward-compatible where required, and usable if delivery stops there. Ideally deliver one complete feature or a coherent, complete aspect of one, including its wiring, tests and relevant docs. Never leave broken intermediate behavior or require a later PR to make the merged slice safe.
 - Aim for **at most 500 changed code lines** (adds + deletes) across at most 5 code files against the intended base. If a larger slice is justified, up to 1,000 lines is acceptable.
 - Exclude tests/config/docs; include migrations/SQL. Put lockfiles, generated/vendor files, and pure renames in separate mechanical PRs, which may carry tests/config/docs.
-- Above 1,000 lines, stop and ask the user for an explicit per-PR override; otherwise split into ordered, independently passing PRs usable if the stack stops. Configured limits cannot exceed 1,000; wider file tiers do not raise the line limit or waive mechanical separation.
+- Above 1,000 lines, stop and ask the user for an explicit per-PR override; otherwise split at complete behavior boundaries, not arbitrary line counts. Smaller PRs are welcome; never pad to 500. Dependencies must already be in the intended base before a dependent slice is mergeable; a passing stack alone is insufficient. Configured limits cannot exceed 1,000; wider file tiers do not raise the line limit or waive mechanical separation.
 
 ## Craft
 
