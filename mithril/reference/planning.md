@@ -9,4 +9,5 @@ For project shaping or technical documents, also use [Planning](../../planning/S
 - Apply core's full-context trace to relevant files/methods; flag unresolved links.
 - Establish domain shape/invariants before logic. Prefer existing types/validated constructors that exclude invalid states; model alternatives explicitly, not ambiguous flags/temporary fields. Preserve clear local designs; no speculative type hierarchies.
 - Identify dependencies/risks/test gaps; read matching runtime safeguards before choosing boundaries/migrations. Refactor first only when safe implementation requires it.
+- Before coding, check base/target heads, divergence and integration order for conflicts/rework. Preserve branch policy; ask before changing it. Plan focused checks, required broader suites and isolated resources.
 - Order independently verifiable slices within Maestro's PR budget. Brief ACs/checks, invariants, reuse, scope/permissions, findings, uncertainty.

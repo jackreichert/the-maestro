@@ -17,6 +17,7 @@ Guidance, not automated enforcement. Keep core across phases; reread after conte
 ## While coding
 
 - **Scope.** Each line serves the request/coupled fix. Match style; remove newly unused code, report unrelated debt. No defenses for states verified contracts exclude.
+- **Efficiency/fidelity.** Remove unnecessary code, computation, I/O, dependencies and prose without losing behavior, correctness, error visibility, meaning or maintainability. Verify claimed gains; fewer lines alone are not an improvement.
 - **Comments.** Keep comments brief; explain non-obvious rationale, contracts, warnings, or constraints, not what the code already says. Don't add comments by default.
 - **Size/cohesion.** Files: 500 lines soft; propose meaningful split or justify cohesion above it. Methods: inspect at 20-30 lines or 3+ parameters; 60 lines soft, flag >100. Split responsibilities, not counts; avoid shallow helper chains. Repo thresholds override these advisory limits.
 - **SOLID.** SRP: one change reason. OCP: extend real variation, preserve policy. LSP: preserve substitute contracts. ISP: focused client interfaces. DIP: policy uses stable boundaries, not concrete I/O. Prefer composition/injection; no needless interfaces or dependency cycles.
@@ -27,9 +28,12 @@ Guidance, not automated enforcement. Keep core across phases; reread after conte
 ## Load by phase
 
 - **Planning:** read [planning](./reference/planning.md) for ACs, prior art, domain shape, verifiable slices.
-- **After coding:** builder follows [review steps](./reference/after-coding.md), fixes in-scope findings, reruns checks; simplification prompts are optional. No agent merely for this phase.
+- **After coding:** follow [review steps](./reference/after-coding.md), including simplification/efficiency. Fix in-scope findings and rerun affected checks; no extra agent required.
 - Shared state, remote calls, caches, queries, migrations, config/deployment, operations: read matching [runtime safeguards](./reference/safeguards.md) only.
 
 ## Verification discipline
 
 - Test behavior slices with unit tests catching plausible wrong implementations. Observe expected behavioral failure before production edits—not setup/import failure—then add enough code to pass. Acceptance tests complement unit tests. Characterize uncovered behavior before refactoring; keep tests green and structural cleanup separate from behavior changes. Report exceptions/gaps.
+- Start narrow; combine related selectors. Broaden for repo policy, affected behavior or evidence, not each reviewer/fix. Reuse results only for unchanged code, dependencies, configuration and relevant environment; rerun affected checks after changes.
+- Keep tested files stable; concurrent edits need an authorized isolated checkout/worktree. Isolate shared databases, ports, containers and other external state or sequence conflicting runs. Bind results to the tested snapshot, including dirty changes, not completion-time HEAD.
+- Follow [Maestro's long-check workflow](../SKILL.md#long-checks-and-handoffs); required validation still gates completion/publication.
