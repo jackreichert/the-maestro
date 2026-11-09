@@ -177,7 +177,7 @@ function settingsJson(file, optional) {
   }
 }
 
-export function loadSettings(defaultFile, localFile) {
+function readSettings(defaultFile, localFile) {
   const base = settingsJson(defaultFile, false);
   const local = settingsJson(localFile, true);
   keys(base, ['schema_version', 'paths', 'pr_budget', 'repos'], ['schema_version', 'paths', 'pr_budget', 'repos']);
@@ -204,9 +204,26 @@ export function loadSettings(defaultFile, localFile) {
       requireValue(Object.entries(config.environments).every(([key, value]) => key && typeof value === 'string' && value.length > 0), 'Invalid environment mapping');
     }
   }
-  const ledger = rootDirectory(settings.paths.ledger_root);
-  const vault = rootDirectory(settings.paths.vault_root);
+  return settings;
+}
+
+function requireSeparateRoots(ledger, vault) {
   requireValue(ledger !== vault && !ledger.startsWith(`${vault}${path.sep}`) && !vault.startsWith(`${ledger}${path.sep}`),
     'Ledger and vault roots must be separate, non-overlapping directories');
+}
+
+export function loadSettings(defaultFile, localFile) {
+  const settings = readSettings(defaultFile, localFile);
+  const ledger = rootDirectory(settings.paths.ledger_root);
+  const vault = rootDirectory(settings.paths.vault_root);
+  requireSeparateRoots(ledger, vault);
+  return {settings, ledger, vault};
+}
+
+export function loadStatuslineSettings(defaultFile, localFile) {
+  const settings = readSettings(defaultFile, localFile);
+  const ledger = settings.paths.ledger_root === null ? null : rootDirectory(settings.paths.ledger_root);
+  const vault = settings.paths.vault_root === null ? null : rootDirectory(settings.paths.vault_root);
+  if (ledger && vault) requireSeparateRoots(ledger, vault);
   return {settings, ledger, vault};
 }

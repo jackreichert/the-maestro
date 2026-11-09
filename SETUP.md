@@ -49,7 +49,24 @@ Both entry points consume Claude JSON on stdin and flush stable pending IDs for 
 
 Stop is not an API-error hook. Interrupted turns may never deliver it; save important decisions immediately. No StopFailure handler is installed by this runbook.
 
-## 4. Rehearse before live memory
+## 4. Optional Claude Code status line
+
+The status line is separate from Stop/PreCompact hooks. It updates in the Claude Code UI when assistant messages arrive; it does not append text to chat replies.
+
+After explicit approval, merge this setting into the selected Claude Code settings file. Replace placeholders with verified absolute paths and preserve existing settings:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "\"/absolute/node\" \"/absolute/bundle/scripts/statusline.mjs\" --settings \"/absolute/settings.json\""
+  }
+}
+```
+
+The script shows PRs authored by the current user in the active repository (draft, changes requested, and approved/mergeable) plus their total open PR count across GitHub. It also shows Claude Code's estimated session cost and context percentage, unresolved Ledger questions, and an OSC 8 Podium file link when the terminal supports it. It prefers `Podium/README.md`, then falls back to `Projects/<container-name>/Status/The-Podium.md`. PR state comes from `gh`; the ledger and Podium sections require their configured roots. Missing roots or data are shown as unavailable. The cost is Claude Code's estimate, not a billing statement.
+
+## 5. Rehearse before live memory
 
 - Use approved isolated test roots first. Confirm root skill discovery in a fresh session; linking files alone is not proof. Check every relative link and selective child-skill loading.
 - Prepare a synthetic checkpoint with the actual session ID before responding. Verify **actual** Stop delivery/read-back for ledger, Podium and library, then compaction before Stop, repeated delivery, revision conflict, partial failure and safe retry. Subprocess tests do not prove lifecycle delivery.
@@ -57,6 +74,6 @@ Stop is not an API-error hook. Interrupted turns may never deliver it; save impo
 - Refresh a topic brief, append a correction, and verify a fresh agent recovers rationale plus the newer event. Validate ownership and permissions independently of old receipts.
 - Report results and gaps. Do not enable live roots until the user accepts the rehearsal. No zero-loss guarantee, loops, watchers, scheduled retros or automatic PR sync.
 
-## 5. Handoff and rollback
+## 6. Handoff and rollback
 
 Report source/destination, local config, exact hook changes, validation and untested limits. Rollback needs approval: remove only these registrations/hooks, restore preserved values, and leave vault/ledger history and unrelated files intact. Never broadly delete skill/config directories or steal writer locks.

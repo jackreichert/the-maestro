@@ -1,6 +1,6 @@
 # Maestro 2.0
 
-Modular agent workflows for a multi-repo workspace, with a dependency-free Node 24 persistence CLI, SQLite/FTS topic index, and Claude Code Stop/PreCompact entry point. No plugin manifest, automatic installer, loops, or watchers. Actual harness delivery requires a separately approved installation and rehearsal.
+Modular agent workflows for a multi-repo workspace, with a dependency-free Node 24 persistence CLI, SQLite/FTS topic index, Claude Code status line, and Stop/PreCompact entry point. No plugin manifest, automatic installer, loops, or watchers. Actual harness delivery requires a separately approved installation and rehearsal.
 
 ## Skills
 
@@ -20,6 +20,8 @@ Modular agent workflows for a multi-repo workspace, with a dependency-free Node 
 Give an installation agent [SETUP.md](./SETUP.md). It confirms scope/permissions, registers the whole bundle, configures optional hooks, and checks discovery. It does not migrate old memory. See [persistence commands](./reference/persistence.md) for preparation, retries, recovery, and limits.
 
 Root Maestro supports discovery; child skills currently have `disable-model-invocation: true`. Maestro explicitly reads them as needed. Linking the bundle does not expose each nested skill as an independent slash command; plugin packaging is separate future work.
+
+The optional [Claude Code status line](./SETUP.md#4-optional-claude-code-status-line) displays current-repo PR actions, the user's total open PR count, session cost, context use, unresolved ledger questions, and a Podium link. It updates in the UI when assistant messages arrive; it does not modify reply text.
 
 ## Settings
 
