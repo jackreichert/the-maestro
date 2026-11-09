@@ -4,7 +4,7 @@ Builder self-review after implementation, or earlier for blocking smells; no ext
 
 1. Read changed files/diff against ACs; recheck necessity, reuse, callers/defaults, matching safeguards.
 2. Inspect smells below; fix concrete in-scope maintenance costs with minimal behavior-preserving changes/tests green. Respect local idioms: records, loops, switches, inheritance, delegation can be appropriate. Smells signal investigation, not defects.
-3. Shorten changed comments without losing clarity or rationale/contracts/warnings/constraints. Correct stale claims, remove narration/commented-out code, update docs.
+3. Keep changed comments brief without losing rationale, contracts, warnings, or constraints. Correct stale claims; remove narration and commented-out code.
 4. Rerun focused tests/type checks/repo lint/build after fixes. Test behavior, not implementation/prompt wording. Report results/skips; metrics block only at written thresholds.
 5. Report every AC → check → result/evidence, unmet/unverified items, remaining findings. Done requires all ACs passing or user-approved changes.
 

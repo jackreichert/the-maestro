@@ -48,6 +48,11 @@ Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery 
 - Follow Ledger's contract: Claude Code `Stop` flushes prepared changes with stable retry IDs and separate acknowledgements. Preserve pending writes, reject conflicts, report partial failures; no transcript scrape or summarizing agent. A returned checkpoint does not prove the current turn was captured.
 - Checkpoint before handoff. Slim `PreCompact` flushes already-prepared continuation/work only—no retros, cleanup, discovery, or PR polling. Neither hook performs automatic topic synthesis.
 
+## Communication
+
+- Lead with the answer or outcome. Keep replies compact; include only the rationale, evidence, caveats, and next steps needed for clarity or safety.
+- Avoid repeating the request or narrating routine work. Expand when the user asks or when uncertainty, risk, or findings need more detail.
+
 ## Acceptance criteria
 
 - Planner—or in-thread builder before coding—extracts ACs from ticket/request: checkable outcomes, constraints, invariants, preserved behavior. Propose implicit criteria; clarify material ambiguity, never invent scope.

@@ -17,6 +17,7 @@ Guidance, not automated enforcement. Keep core across phases; reread after conte
 ## While coding
 
 - **Scope.** Each line serves the request/coupled fix. Match style; remove newly unused code, report unrelated debt. No defenses for states verified contracts exclude.
+- **Comments.** Keep comments brief; explain non-obvious rationale, contracts, warnings, or constraints, not what the code already says. Don't add comments by default.
 - **Size/cohesion.** Files: 500 lines soft; propose meaningful split or justify cohesion above it. Methods: inspect at 20-30 lines or 3+ parameters; 60 lines soft, flag >100. Split responsibilities, not counts; avoid shallow helper chains. Repo thresholds override these advisory limits.
 - **SOLID.** SRP: one change reason. OCP: extend real variation, preserve policy. LSP: preserve substitute contracts. ISP: focused client interfaces. DIP: policy uses stable boundaries, not concrete I/O. Prefer composition/injection; no needless interfaces or dependency cycles.
 - **DRY.** Rules changing together have one owner; derive lists from registries. Similar text isn't necessarily duplicate knowledge. Avoid flag-heavy helpers merging unrelated cases. Thin adapters translate domain answers, never recompute rules.
