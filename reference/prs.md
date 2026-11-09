@@ -1,17 +1,38 @@
-# PR lifecycle
+# PR writing and lifecycle
 
-Load for PR preparation, feedback, readiness, or merge reconciliation. Follow [Maestro's branch flow and size budget](../SKILL.md); inspect repo rules. Read-only checks grant no write permission.
+Load when writing a PR title/description or reconciling merges. For preparation, open-PR checks, feedback, conflicts and readiness, read [PR preparation](../pr-preparation/SKILL.md). Follow [Maestro's branch flow and size budget](../SKILL.md) and repo templates.
 
-## Prepare and verify
+## Write for the reviewer
 
-- Draft PRs only, with authorized publication. Include context, reviewer guide, risks, rollback, actual validation, and relevant source links; diagrams only when helpful. No private vault/bead IDs, sensitive data, or AI attribution.
-- Record repo, head/base branch and SHA, draft state, required checks, review decisions/approval SHAs, unresolved human/bot threads, mergeability, dependencies, and observation time. Missing/failed reads mean unknown, not ready.
-- Before permitted pushes, check approval invalidation. Before readiness claims, re-read remote state: expected local/remote head match, checks on that head, threads, dependencies, mergeability. State remaining review/check gates. Ready to merge additionally requires all required checks/current approvals and no blocking threads/dependencies. Ready for user review is not ready to merge; neither permits promotion/merge.
+- Review the complete diff against the intended base, not just the latest commit. Describe the actual change and user-visible outcome, not the work session. Separate implemented behavior, proposals and unverified claims.
+- Title: concise, specific outcome in the repo's convention; include the ticket key when required. Avoid vague titles such as "updates" or "fixes".
+- Body: lead with **why**, summarize meaningful behavior changes, then give reviewer navigation, validation, risks and rollback. Use the repo template; otherwise use this compact outline and omit irrelevant sections:
 
-## Feedback and dependencies
+```markdown
+## Why
+Problem, impact and intended outcome. Link the team-accessible issue/spec.
 
-- Batch related review comments per repo/PR. Verify each against code; fix valid in-scope findings and rerun checks. Explain declined findings with evidence; broader changes need approval. Posting/resolving threads needs permission; never resolve human threads on their behalf.
+## What changed
+Behavior and boundaries; non-obvious tradeoffs. Name useful review starting points.
+
+## Validation
+Exact checks and actual results; explicitly state unrun checks and remaining gaps.
+
+## Risks and rollback
+Compatibility, data/config/deployment effects and reversal steps, when relevant.
+```
+
+- Add before/after screenshots for visible UI changes when useful; diagrams only when they clarify a flow. Link dependencies/twins and required merge order. Avoid file-by-file narration, pasted logs and boilerplate checklists claiming work not done.
+- No private vault/bead IDs, local paths, sensitive data or AI attribution. Inspect the final title/body before publication and read back the draft afterward.
+
+## Publication
+
+- Draft PRs only, with authorized publication. Confirm repository, base/head and existing PRs before creating one; don't duplicate an existing draft. Prefer `gh` for GitHub operations; creating a PR never grants merge/promotion permission.
+- Follow [PR preparation](../pr-preparation/SKILL.md) before publishing or claiming readiness; unresolved feedback or conflicts block merge readiness.
+
+## Dependencies and merge reconciliation
+
 - Link develop/staging twins and stacks; confirm each base and merge order. Same-feature staging promotion waits for develop-platform validation. Never equate a merged twin with completion of the other; recheck ancestry/head changes before acting.
 - Once a merge is observed, verify merged SHA/target and reconcile related PRs, tickets, Podium, and ledger. Record testing/deployment evidence separately; merge is not deployment. Tracker writes need approval; cleanup follows [Retro](../retro/SKILL.md), never automatic deletion.
 
-No PR poller or readiness tool is supplied. Acceptance when tooling exists: detect changed heads/stale approvals, failed or missing checks, unresolved threads, twin/stack blockers, and partial post-merge updates.
+No PR poller or automated readiness tool is supplied; the preparation skill directs the agent's checks.

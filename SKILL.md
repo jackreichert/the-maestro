@@ -42,11 +42,11 @@ Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery 
 
 ## Memory
 
+**[Muninn](./README.md#muninn)** is the combined memory system: Ledger, Library and Podium.
+
 - Ownership: tickets own intent; [Podium](./podium/SKILL.md) owns priorities, streams, status, PRs, gates, and resume pointers; [Ledger](./ledger/SKILL.md) owns durable beads/checkpoints; [Library](./library/SKILL.md) owns reusable repo knowledge. Read the relevant skill; pass bead/page links in briefs.
 - Fresh start/after compaction: read slim Podium, validate live ownership/state, then retrieve only the selected task's topic updates and library context. No competing ledger dashboard or always-loaded learnings.
-- Before responding/compacting, use [persistence commands](./reference/persistence.md) to prepare safe changes with actual session/stable turn IDs; retain the returned payload for retries. If identity/capture is unavailable, report it. Skip unchanged surfaces; prepare and flush high-value decisions immediately. Podium needs evidence/preserved priorities; library patches need verified knowledge.
-- Follow Ledger's contract: Claude Code `Stop` flushes prepared changes with stable retry IDs and separate acknowledgements. Preserve pending writes, reject conflicts, report partial failures; no transcript scrape or summarizing agent. A returned checkpoint does not prove the current turn was captured.
-- Checkpoint before handoff. Slim `PreCompact` flushes already-prepared continuation/work only—no retros, cleanup, discovery, or PR polling. Neither hook performs automatic topic synthesis.
+- Follow [Ledger's checkpoint contract](./ledger/SKILL.md#end-of-turn-checkpoint) automatically before finishing or compacting; save high-value decisions immediately. Never ask the user to request routine memory updates. Keep requested writes and actual acknowledgements distinct; no raw transcript capture or inferred success.
 
 ## Communication
 
@@ -65,11 +65,11 @@ Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery 
 - Release: `staging` → `release/yyyymmdd.x` → `main`. No direct `staging` → `main` deploy PR.
 - Check maintenance via repo guidance/release activity, not existence/age alone. Absent/stale `staging`: use documented repo flow; clarify uncertainty. Label branches versus environments explicitly in briefs/evidence/Podium.
 - Within authorized work, verified user-owned, unprotected branches allow staging by explicit path, commits, pushes to their own remote, and creating feature branches from the correct base without further approval. Verify ownership from every commit since divergence against the user's confirmed author identity; mixed authorship means shared. Empty branches count as owned only when the user or agent created them on the user's behalf; uncertainty requires asking.
-- Protected branches (`main`, `staging`, `develop`, plus repo-specific protections) and shared branches remain off-limits for direct writes. Reset, rebase, merge, cherry-pick, revert, force-push, and bulk staging still need explicit permission, even on owned branches. Never rewrite another person's commits.
+- Protected branches (`main`, `staging`, `develop`, plus repo-specific protections) and shared branches remain off-limits for direct writes. Reset, rebase, merge, cherry-pick, revert, and bulk staging still need explicit permission, even on owned branches. Standing force-push permission applies only to verified user-owned, unprotected feature branches backing an open PR, using an explicit expected-SHA `--force-with-lease`; follow [PR preparation safeguards](./pr-preparation/SKILL.md#3-fix-conflicts-and-publish-safely). Other force-pushes require permission. Never rewrite another person's commits.
 - PR publication requires permission. Draft PRs only; user merges/promotes. After a commit or push, report the branch, changed files, and actual validation results.
 - Never add AI attribution to commits: no AI `Co-Authored-By` trailers or "Generated with", "Created by", "Assisted by", or equivalent credits. Inspect the complete commit message before committing and remove any attribution inserted by tools/templates. Preserve the user's author/committer identity.
 
-Read [PR lifecycle](./reference/prs.md) for PR preparation, feedback, readiness, and post-merge reconciliation.
+Read [PR preparation](./pr-preparation/SKILL.md) when preparing PRs, checking open PRs, addressing feedback/conflicts or checking readiness. It owns bot dispositions, human-review gates and publication checks. Read [PR writing and lifecycle](./reference/prs.md) for titles/descriptions and post-merge reconciliation.
 
 ## PR size
 

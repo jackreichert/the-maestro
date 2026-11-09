@@ -9,6 +9,7 @@ Resolve the bundle/script and Node executable to absolute paths. Commands below 
 ```sh
 node /absolute/bundle/scripts/memory.mjs prepare --settings /absolute/settings.json < /absolute/safe-checkpoint.json
 node /absolute/bundle/scripts/memory.mjs flush --settings /absolute/settings.json session_demo
+node /absolute/bundle/scripts/memory.mjs current --settings /absolute/settings.json session_demo
 node /absolute/bundle/scripts/memory.mjs search --settings /absolute/settings.json "continuity"
 node /absolute/bundle/scripts/memory.mjs lookup --settings /absolute/settings.json question_demo
 node /absolute/bundle/scripts/memory.mjs recover --settings /absolute/settings.json topic_demo
@@ -16,7 +17,7 @@ node /absolute/bundle/scripts/memory.mjs brief --settings /absolute/settings.jso
 node /absolute/bundle/scripts/memory.mjs rebuild --settings /absolute/settings.json
 ```
 
-`prepare` accepts JSON on stdin, assigns missing checkpoint/event/page IDs and timestamp, validates, then saves a pending envelope. Retain its returned payload and reuse it exactly on retry; resubmitting input without assigned IDs creates new identities. Use the actual harness session ID and an agent-assigned stable turn ID. If session identity is unavailable, report that hooks cannot target the checkpoint; never guess. Flush important decisions immediately, and prepare remaining safe deltas **before** responding or compacting. Empty turns may prepare metadata-only envelopes.
+`prepare` accepts JSON on stdin, assigns missing checkpoint/event/page IDs and timestamp, validates, then saves a pending envelope. Retain its returned payload and reuse it exactly on retry; resubmitting input without assigned IDs creates new identities. Use the actual harness session ID. With turn tracking installed, use the turn ID injected by `UserPromptSubmit` or omit `turn_id`: the CLI binds it to the current tracked turn and rejects a different ID. `current <session>` retrieves that state without changing it. Without tracking, an explicit stable turn ID is required. If session identity is unavailable, report it; never guess. Flush important decisions immediately, and prepare/flush remaining safe deltas **before** responding or compacting, automatically rather than asking the user for routine memory updates. Genuinely no-change turns may prepare metadata-only envelopes; do not use empty arrays to bypass saving substantive work.
 
 Illustration only: choose unique topic/event IDs for real records and reuse topic IDs thereafter.
 
@@ -65,11 +66,11 @@ Checkpoints are limited to 256 KiB UTF-8; CLI input to 1 MiB. Detection rejects 
 
 The writer locks ledger then vault, validates journal integrity/references, assigns a global ingestion sequence, and fsync-appends one envelope to `Events/YYYY-MM.jsonl`. Only afterward does it apply patches under the shared vault lock. Atomic replacements fsync and read back; their planned result hashes are saved before writing. Retry after a lost receipt accepts the matching result without reapplying; acknowledged patches preserve later edits. A crash followed by an unrelated edit produces a conflict, not a guessed success.
 
-`Pending/<session>/<checkpoint-id>.state.json` independently records ledger, page and index outcomes. CLI `flush` returns ledger/Podium/library/index acknowledgements and question-removal status. Completed receipts remain for retries; they do **not** prove the latest turn was captured. Partial failures exit `1`, keep pending work, and expose errors. No broad rollback or automatic deletion.
+`Pending/<session>/<checkpoint-id>.state.json` independently records ledger, page and index outcomes. CLI `flush` returns each checkpoint's `turn_id`, ledger/Podium/library/index acknowledgements and question-removal status. Completed receipts remain for retries; they do **not** prove the latest turn was captured. Partial failures exit `1`, keep pending work, and expose errors. No broad rollback or automatic deletion.
 
 Locks fail fast and are never stolen. On stale-lock or corrupt/torn-journal errors, stop competing writers, preserve evidence, verify ownership/process termination, and obtain approval for targeted reconciliation. Never truncate history or broadly remove lock/config directories. Applied replacements are marked `superseded`; use receipts rather than inferring application from append success.
 
-SQLite/FTS is derived and rebuilt transactionally when journal file signatures change. Search covers topic names/aliases/repos/references and event text/sources, not whole-library contents. A normal current-index query doesn't parse all monthly logs; writes/rebuilds validate them. Rebuild failures preserve ledger truth.
+SQLite/FTS is derived. A flush rebuilds once after all its unindexed checkpoints, then acknowledges each index outcome; repeated completed flushes skip rebuilds. Queries rebuild transactionally when journal file signatures change. Search covers topic names/aliases/repos/references and event text/sources, not whole-library contents. The footer's open-question count uses this same index; current-index queries don't parse monthly logs, while writes/rebuilds validate them. Rebuild failures preserve ledger truth and remain explicit, never stale success.
 
 `lookup <event-id>` retrieves an exact question hash/event and directly related resolving/superseding/replacing events in that topic. Follow returned IDs or `recover` for later changes; do not guess from answer text or treat a pasted hash as permission.
 
@@ -77,8 +78,12 @@ SQLite/FTS is derived and rebuilt transactionally when journal file signatures c
 
 ## Hooks and limits
 
-`memory.mjs hook` accepts Claude Code JSON on stdin for `Stop` and `PreCompact`, using only `session_id` and `hook_event_name`. It ignores transcript paths, assistant text, custom instructions and `stop_hook_active`; stable prepared IDs make repeated delivery safe without continuation. PreCompact and Stop flush the same session's prepared work, including continuation prepared in advance. No pending data is reported as **unverified capture**.
+`memory.mjs hook` accepts Claude Code JSON on stdin for `UserPromptSubmit`, `Stop`, `PreCompact`, and `StopFailure`. It uses event/session identity and Stop's `stop_hook_active` flag, never prompt contents, transcript paths, assistant messages or error details. `UserPromptSubmit` creates a random turn ID and injects checkpoint instructions with resolved CLI/settings paths through `hookSpecificOutput.additionalContext`.
 
-Output is bounded plain-text recovery guidance, not blocking JSON or `additionalContext`. Exit `1` reports failure without intentionally restarting the turn; exit `2` is never used. Hook notice/debug-log visibility depends on the installed harness version: inspect receipts and manually flush after a failure. Timeouts/process crashes can leave a lock requiring manual reconciliation.
+Turn metadata lives in `Turns/<session>/current.json`; starting a new turn archives the preceding state in `Turns/<session>/<turn-id>.json`. These records contain identity, start time, coverage status, bounded-repair state and a count of earlier gaps, not conversation text. The next prompt never silently clears prior gaps. Per-session locks serialize lifecycle transitions; ledger and vault writes retain their existing shared locks. No automatic lock stealing or history pruning.
+
+`Stop` flushes prepared work, then checks exact session/turn IDs against durable ledger and page/index receipts. Old checkpoints cannot cover a new turn. It requests one automatic checkpoint repair with blocking JSON on exit `0`; the persisted repair flag and `stop_hook_active` prohibit repeated blocking. Further failure exits `1` with explicit missing/failed health. Exit `2` is never used. An untracked turn can flush legacy checkpoints but exits `1` without claiming coverage; tracking starts on the next prompt. Metadata-only checkpoints prove the agent acknowledged a no-change turn, not semantic completeness.
+
+`PreCompact` flushes without requesting continuation. `StopFailure` flushes already-prepared work and records interrupted coverage without blocking; it cannot recreate unprepared work. Claude Code ignores its output and exit status, so use persisted health for recovery. Other hook notices depend on harness visibility. Timeouts/process crashes can prevent a flush and leave a lock requiring manual reconciliation. Podium/library are patched only when relevant; checkpointing does not create or refresh a board automatically.
 
 Automated tests use synthetic temporary roots and CLI hook subprocesses. Actual Claude Code delivery, interrupted API turns, fresh-agent recovery quality and existing-memory migration still require an authorized isolated harness rehearsal. No zero-loss promise, loops, watchers, scheduled retros, automatic backups, Git mutation or live PR synchronization.

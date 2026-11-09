@@ -4,6 +4,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {loadStatuslineSettings, requireValue} from './storage.mjs';
 import {fetchPullRequests, openQuestionCount, podiumLink, renderStatusLine} from './lib/statusline.mjs';
+import {memoryHealth} from './turns.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -49,12 +50,21 @@ try {
     }
   }
 
+  let memory = 'Memory unavailable';
+  if (context?.ledger) {
+    try {
+      memory = memoryHealth(context, input?.session_id);
+    } catch (error) {
+      console.error(`Memory health unavailable: ${error.code ?? error.message}`);
+    }
+  }
   console.log(renderStatusLine({
     input,
     sessionPullRequests: prs.sessionPullRequests,
     allOpenCount: prs.allOpenCount,
     decisions,
     podiumUrl,
+    memory,
   }));
   if (prs.sessionError) console.error(`Session-repo PR status unavailable: ${prs.sessionError}`);
   if (prs.allOpenError) console.error(`Open-PR count unavailable: ${prs.allOpenError}`);

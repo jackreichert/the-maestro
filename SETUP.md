@@ -26,7 +26,21 @@ Illustration: replace each `/absolute/...` with a verified absolute path, includ
 ```json
 {
   "hooks": {
+    "UserPromptSubmit": [{
+      "hooks": [{
+        "type": "command",
+        "command": "\"/absolute/node\" \"/absolute/bundle/scripts/memory.mjs\" hook --settings \"/absolute/settings.json\"",
+        "timeout": 30
+      }]
+    }],
     "Stop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "\"/absolute/node\" \"/absolute/bundle/scripts/memory.mjs\" hook --settings \"/absolute/settings.json\"",
+        "timeout": 30
+      }]
+    }],
+    "StopFailure": [{
       "hooks": [{
         "type": "command",
         "command": "\"/absolute/node\" \"/absolute/bundle/scripts/memory.mjs\" hook --settings \"/absolute/settings.json\"",
@@ -45,9 +59,11 @@ Illustration: replace each `/absolute/...` with a verified absolute path, includ
 }
 ```
 
-Both entry points consume Claude JSON on stdin and flush stable pending IDs for that session. Do not make them asynchronous or add blocking/continuation output. They emit bounded plain-text recovery guidance; PreCompact stdout may become compaction instructions. Partial failures exit `1`, not `2`; inspect receipts/debug logs because harness notification visibility varies. No prepared checkpoint means unverified capture, not success.
+Keep all four hooks synchronous. The [runtime contract](./reference/persistence.md#hooks-and-limits) defines injected instructions, current-turn coverage, bounded repair, interruption and exit codes; do not override it with additional continuation loops.
 
-Stop is not an API-error hook. Interrupted turns may never deliver it; save important decisions immediately. No StopFailure handler is installed by this runbook.
+After separate permission approval, allow the exact resolved Node/script prefixes for `prepare`, `flush`, `current`, `search`, `lookup`, and `recover`, plus a `Read` rule for the contract document. Use the same single-quoted command paths injected by the hook; Claude Code absolute `Read` paths use `//`. Do not grant unrestricted Bash/Read or bypass deny rules. Without these permissions, agents may need tool approval; a guard cannot grant it.
+
+Start a fresh Claude Code session after registration; tracking begins at the next delivered prompt. A manual hook run proves the command works, not lifecycle delivery. Rehearse below before relying on live memory.
 
 ## 4. Optional Claude Code status line
 
@@ -64,12 +80,13 @@ After explicit approval, merge this setting into the selected Claude Code settin
 }
 ```
 
-The script shows PRs authored by the current user in the active repository (draft, changes requested, and approved/mergeable) plus their total open PR count across GitHub. It also shows Claude Code's estimated session cost and context percentage, unresolved Ledger questions, and an OSC 8 Podium file link when the terminal supports it. It prefers `Podium/README.md`, then falls back to `Projects/<container-name>/Status/The-Podium.md`. PR state comes from `gh`; the ledger and Podium sections require their configured roots. Missing roots or data are shown as unavailable. The cost is Claude Code's estimate, not a billing statement.
+The script shows PRs authored by the current user in the active repository (draft, changes requested, and approved/mergeable) plus their total open PR count across GitHub. It also shows Claude Code's estimated session cost and context percentage, unresolved Ledger questions, current-turn memory health, and an OSC 8 Podium file link when the terminal supports it. Memory is pending, saved, checkpoint missing, write failed, interrupted, or untracked; earlier coverage gaps stay counted after a later turn succeeds. Saved means requested writes were acknowledged, not that every relevant fact was captured. It prefers `Podium/README.md`, then falls back to `Projects/<container-name>/Status/The-Podium.md`. PR state comes from `gh`; the ledger and Podium sections require their configured roots. Missing roots or data are shown as unavailable. The cost is Claude Code's estimate, not a billing statement.
 
 ## 5. Rehearse before live memory
 
 - Use approved isolated test roots first. Confirm root skill discovery in a fresh session; linking files alone is not proof. Check every relative link and selective child-skill loading.
 - Prepare a synthetic checkpoint with the actual session ID before responding. Verify **actual** Stop delivery/read-back for ledger, Podium and library, then compaction before Stop, repeated delivery, revision conflict, partial failure and safe retry. Subprocess tests do not prove lifecycle delivery.
+- Submit another prompt without preparing a checkpoint: the prior turn's receipts must not satisfy it. Verify the Stop guard requests automatic repair once, allows a successful repair to finish, and leaves failure visible without repeated continuation. Rehearse StopFailure in isolation; a forced hook subprocess is not proof of actual API-error delivery.
 - Resolve a synthetic hash-linked question and confirm its decision precedes removal from every open Podium list. Rehearse quoted/vault matching and ambiguity in the agent, not the writer.
 - Refresh a topic brief, append a correction, and verify a fresh agent recovers rationale plus the newer event. Validate ownership and permissions independently of old receipts.
 - Report results and gaps. Do not enable live roots until the user accepts the rehearsal. No zero-loss guarantee, loops, watchers, scheduled retros or automatic PR sync.

@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Library
 
+The reusable knowledge component of [Muninn](../README.md#muninn).
+
 Human-readable onboarding and reusable repo memory, not a search log. Newcomers and Haiku scouts share an entry point.
 
 ## Organize by meaning

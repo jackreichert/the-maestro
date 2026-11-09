@@ -27,7 +27,7 @@ Guidance, not automated enforcement. Keep core across phases; reread after conte
 ## Load by phase
 
 - **Planning:** read [planning](./reference/planning.md) for ACs, prior art, domain shape, verifiable slices.
-- **After coding:** builder reads [simplification/smells](./reference/after-coding.md), fixes in-scope findings, reruns checks; earlier for blocking smells. No agent merely for this phase.
+- **After coding:** builder follows [review steps](./reference/after-coding.md), fixes in-scope findings, reruns checks; simplification prompts are optional. No agent merely for this phase.
 - Shared state, remote calls, caches, queries, migrations, config/deployment, operations: read matching [runtime safeguards](./reference/safeguards.md) only.
 
 ## Verification discipline

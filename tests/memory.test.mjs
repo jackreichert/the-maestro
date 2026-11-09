@@ -1,27 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import {spawn, spawnSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
+import {spawn} from 'node:child_process';
 import test from 'node:test';
 import {loadSettings, hash, readJson, withLock} from '../scripts/storage.mjs';
 import {flush, lookup, prepare, readJournal, recover, refreshBrief, search} from '../scripts/ledger.mjs';
-
-const project = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const cliPath = path.join(project, 'scripts/memory.mjs');
-
-function fixture(t) {
-  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-memory-')));
-  t.after(() => fs.rmSync(temp, {recursive: true, force: true}));
-  const ledger = path.join(temp, 'ledger');
-  const vault = path.join(temp, 'vault');
-  fs.mkdirSync(ledger);
-  fs.mkdirSync(vault);
-  const settings = path.join(temp, 'settings.json');
-  fs.writeFileSync(settings, JSON.stringify({paths: {ledger_root: ledger, vault_root: vault}}));
-  return {...loadSettings(path.join(project, 'settings.json'), settings), temp, config: settings};
-}
+import {cliPath, fixture, memoryCli as cli, project} from './helpers.mjs';
 
 function input(overrides = {}) {
   return {
@@ -32,12 +16,6 @@ function input(overrides = {}) {
   };
 }
 
-function cli(f, command, args = [], stdin) {
-  return spawnSync(process.execPath, [cliPath, command, '--settings', f.config, ...args], {
-    input: stdin === undefined ? undefined : JSON.stringify(stdin), encoding: 'utf8',
-  });
-}
-
 function newPage(id, surface, target, text) {
   return {id, surface, path: target, expected_sha256: null, changes: [{before: '', after: text}],
     ...(surface === 'library' ? {verified: true} : {})};
@@ -45,7 +23,9 @@ function newPage(id, surface, target, text) {
 
 test('prepare, Stop and PreCompact persist three surfaces; repeated calls do not duplicate', (t) => {
   const f = fixture(t);
-  const request = input({pages: [
+  assert.equal(cli(f, 'hook', [], {hook_event_name: 'UserPromptSubmit', session_id: 'session-1'}).status, 0);
+  const {turn} = JSON.parse(cli(f, 'current', ['session-1']).stdout);
+  const request = input({turn_id: turn.turn_id, pages: [
     newPage('podium-1', 'podium', 'Podium/README.md', '# Podium\nNext: verify memory.\n'),
     newPage('library-1', 'library', 'Projects/sample/Knowledge/writer.md', '# Writer\nOne writer sequences append.\n'),
   ]});
@@ -61,6 +41,7 @@ test('prepare, Stop and PreCompact persist three surfaces; repeated calls do not
     assert.ok(run.stdout.length < 10000);
     assert.doesNotMatch(run.stdout, /additionalContext|"decision"/);
     const receipt = JSON.parse(cli(f, 'flush', ['session-1']).stdout).checkpoints[0];
+    assert.equal(receipt.turn_id, turn.turn_id);
     assert.equal(receipt.ledger, 'applied');
     assert.equal(receipt.podium, 'applied');
     assert.equal(receipt.library, 'applied');
@@ -73,9 +54,9 @@ test('hook scopes session and explicitly reports no capture, ignoring transcript
   const f = fixture(t);
   prepare(f, input());
   const run = cli(f, 'hook', [], {hook_event_name: 'Stop', session_id: 'other', transcript_path: '/not-readable'});
-  assert.equal(run.status, 0);
-  assert.match(run.stdout, /no-prepared-delta/);
-  assert.match(run.stderr, /NOT verified/);
+  assert.equal(run.status, 1);
+  assert.match(run.stdout, /untracked turn/);
+  assert.match(run.stdout, /NOT verified/);
   assert.equal(readJournal(f.ledger).length, 0);
 });
 
@@ -232,6 +213,56 @@ test('index failure is separate and retried; recovery includes a correction newe
   assert.equal(recover(f, 'memory').uncovered.length, 2);
 });
 
+test('one flush rebuilds the index once for a batch and skips it on repeat delivery', (t) => {
+  const f = fixture(t);
+  for (let i = 1; i <= 3; i += 1) {
+    prepare(f, input({events: [{...input().events[0], id: `batch-${i}`}]}));
+  }
+  let rebuilds = 0;
+  const fault = (point) => {if (point === 'before-index') rebuilds += 1;};
+  const result = flush(f, 'session-1', {fault});
+  assert.equal(rebuilds, 1);
+  assert.equal(result.checkpoints.length, 3);
+  assert.ok(result.checkpoints.every((receipt) => receipt.index === 'applied' && receipt.errors.length === 0));
+  assert.equal(search(f, 'append sequencing').length, 3);
+  flush(f, 'session-1', {fault});
+  assert.equal(rebuilds, 1);
+});
+
+test('batch index failure acknowledges no checkpoint index until a successful retry', (t) => {
+  const f = fixture(t);
+  for (let i = 1; i <= 2; i += 1) {
+    prepare(f, input({events: [{...input().events[0], id: `batch-${i}`}]}));
+  }
+  const failed = flush(f, 'session-1', {fault(point) {
+    if (point === 'before-index') throw new Error('Batch index unavailable');
+  }});
+  assert.equal(readJournal(f.ledger).length, 2);
+  assert.ok(failed.checkpoints.every((receipt) => receipt.ledger === 'applied' && receipt.index === 'failed'));
+  let rebuilds = 0;
+  const retried = flush(f, 'session-1', {fault(point) {if (point === 'before-index') rebuilds += 1;}});
+  assert.equal(rebuilds, 1);
+  assert.ok(retried.checkpoints.every((receipt) => receipt.index === 'applied' && receipt.errors.length === 0));
+  assert.equal(readJournal(f.ledger).length, 2);
+});
+
+test('a later append crash leaves the whole batch recoverable before its single index rebuild', (t) => {
+  const f = fixture(t);
+  for (let i = 1; i <= 2; i += 1) {
+    prepare(f, input({events: [{...input().events[0], id: `crash-${i}`}]}));
+  }
+  let appends = 0;
+  assert.throws(() => flush(f, 'session-1', {fault(point) {
+    if (point === 'after-append' && ++appends === 2) throw new Error('Second append crash');
+  }}), /Second append crash/);
+  assert.equal(readJournal(f.ledger).length, 2);
+  let rebuilds = 0;
+  const retried = flush(f, 'session-1', {fault(point) {if (point === 'before-index') rebuilds += 1;}});
+  assert.equal(rebuilds, 1);
+  assert.ok(retried.checkpoints.every((receipt) => receipt.ledger === 'applied' && receipt.index === 'applied'));
+  assert.equal(readJournal(f.ledger).length, 2);
+});
+
 test('torn or corrupt journal rows block writes instead of being skipped', (t) => {
   const f = fixture(t);
   prepare(f, input());
@@ -352,7 +383,7 @@ test('append failure blocks dependent pages and a retry applies them', (t) => {
   assert.equal(flush(f, 'session-1').checkpoints[0].podium, 'applied');
 });
 
-test('hook failure stays nonblocking with plain bounded output and never ingests assistant text', (t) => {
+test('untracked hook failure reports bounded output and never ingests assistant text', (t) => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.vault, 'Podium'));
   fs.writeFileSync(path.join(f.vault, 'Podium/README.md'), 'User edit');

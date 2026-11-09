@@ -1,8 +1,8 @@
 import {spawnSync} from 'node:child_process';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {readJournal} from '../ledger.mjs';
 import {readText, scopedPath} from '../storage.mjs';
+export {openQuestionCount} from '../ledger.mjs';
 
 export function summarizePullRequests(pullRequests) {
   if (!Array.isArray(pullRequests)) throw new Error('Expected pull request array');
@@ -14,17 +14,6 @@ export function summarizePullRequests(pullRequests) {
     else if (pr.reviewDecision === 'APPROVED' && pr.mergeStateStatus === 'CLEAN') summary.approvedMergeable += 1;
   }
   return summary;
-}
-
-export function countOpenQuestions(rows) {
-  if (!Array.isArray(rows)) throw new Error('Expected journal rows');
-  const events = rows.flatMap((row) => row.payload.events);
-  const resolved = new Set(events.flatMap((event) => event.resolves ?? []));
-  return events.filter((event) => event.kind === 'question' && !resolved.has(event.id)).length;
-}
-
-export function openQuestionCount(ledgerRoot) {
-  return countOpenQuestions(readJournal(ledgerRoot));
 }
 
 export function podiumLink(vaultRoot, containerRoot = null) {
@@ -144,7 +133,7 @@ function costText(value) {
   return Number.isFinite(value) && value >= 0 ? `Session $${value.toFixed(2)} est.` : 'Session cost unavailable';
 }
 
-export function renderStatusLine({input, sessionPullRequests, allOpenCount, decisions, podiumUrl}) {
+export function renderStatusLine({input, sessionPullRequests, allOpenCount, decisions, podiumUrl, memory = 'Memory unavailable'}) {
   const podium = podiumUrl
     ? `\u001b]8;;${podiumUrl}\u001b\\Podium\u001b]8;;\u001b\\`
     : 'Podium unavailable';
@@ -157,6 +146,7 @@ export function renderStatusLine({input, sessionPullRequests, allOpenCount, deci
     costText(input?.cost?.total_cost_usd),
     contextText(input?.context_window?.used_percentage),
     decisionText,
+    memory,
     podium,
   ].join(' | ');
 }

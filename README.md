@@ -7,6 +7,7 @@ Modular agent workflows for a multi-repo workspace, with a dependency-free Node 
 | Skill | Responsibility |
 |---|---|
 | [Maestro](./SKILL.md) | Dispatch, continuity, branch flow, PR budgets |
+| [PR preparation](./pr-preparation/SKILL.md) | PR writing, feedback disposition, human-review gates, conflicts and readiness |
 | [Planning](./planning/SKILL.md) | Project shaping, delivery plans, technical designs |
 | [Mithril](./mithril/SKILL.md) | Coding discipline and phase-specific checks |
 | [Xenophon](./xenophon/SKILL.md) | Local tickets and approved Jira publication |
@@ -15,13 +16,23 @@ Modular agent workflows for a multi-repo workspace, with a dependency-free Node 
 | [Library](./library/SKILL.md) | Verified repo onboarding and reusable knowledge |
 | [Retro](./retro/SKILL.md) | On-demand review with selected improvement plugins |
 
+## Muninn
+
+**Muninn** is Maestro's combined memory system:
+
+- **[Ledger](./ledger/SKILL.md):** what happened and why.
+- **[Library](./library/SKILL.md):** reusable, verified knowledge.
+- **[Podium](./podium/SKILL.md):** what matters now and what happens next.
+
+Muninn is the umbrella name, not a fourth store or a separate workflow. Component names, commands, settings and storage paths stay unchanged.
+
 ## Setup
 
 Give an installation agent [SETUP.md](./SETUP.md). It confirms scope/permissions, registers the whole bundle, configures optional hooks, and checks discovery. It does not migrate old memory. See [persistence commands](./reference/persistence.md) for preparation, retries, recovery, and limits.
 
 Root Maestro supports discovery; child skills currently have `disable-model-invocation: true`. Maestro explicitly reads them as needed. Linking the bundle does not expose each nested skill as an independent slash command; plugin packaging is separate future work.
 
-The optional [Claude Code status line](./SETUP.md#4-optional-claude-code-status-line) displays current-repo PR actions, the user's total open PR count, session cost, context use, unresolved ledger questions, and a Podium link. It updates in the UI when assistant messages arrive; it does not modify reply text.
+The optional [Claude Code status line](./SETUP.md#4-optional-claude-code-status-line) displays current-repo PR actions, the user's total open PR count, session cost, context use, unresolved ledger questions, current-turn memory health, and a Podium link. It updates in the UI when assistant messages arrive; it does not modify reply text.
 
 ## Settings
 
@@ -66,4 +77,4 @@ Podium owns changing priorities; ledger owns scoped decisions/permissions; local
 
 Run `npm test` with Node 24; no dependency installation is needed. Synthetic tests cover deduplication, partial failures, conflicts, locks/concurrent writers, question removal, index/brief recovery, input guards and hook subprocesses. Installation additionally requires fresh-session discovery, actual hook delivery and recovery checks in the target harness.
 
-Retros run on demand. Hooks flush only prepared safe deltas; they never scrape conversations or guarantee zero loss. Preserve old memory until the replacement passes an isolated harness rehearsal; never run competing writers/instruction sets in one session.
+Retros run on demand. Optional Claude Code hooks track each prompt, inject automatic checkpoint instructions, verify current-turn receipts at Stop, and request at most one repair when missing/failed. StopFailure flushes prepared work and marks interruption. Hooks never scrape conversations, synthesize missing knowledge or guarantee zero loss; Podium/library writes are relevant deltas only. Preserve old memory until the replacement passes an isolated harness rehearsal; never run competing writers/instruction sets in one session.

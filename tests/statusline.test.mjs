@@ -1,24 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import {countOpenQuestions, fetchPullRequests, podiumLink, renderStatusLine, summarizePullRequests} from '../scripts/lib/statusline.mjs';
+import {fetchPullRequests, openQuestionCount, podiumLink, renderStatusLine, summarizePullRequests} from '../scripts/lib/statusline.mjs';
 import {loadStatuslineSettings} from '../scripts/storage.mjs';
-
-const project = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-
-function fixture(t) {
-  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-statusline-')));
-  t.after(() => fs.rmSync(temp, {recursive: true, force: true}));
-  const ledger = path.join(temp, 'ledger');
-  const vault = path.join(temp, 'vault');
-  fs.mkdirSync(ledger);
-  fs.mkdirSync(vault);
-  const settings = path.join(temp, 'settings.json');
-  return {temp, ledger, vault, settings};
-}
+import {flush, prepare} from '../scripts/ledger.mjs';
+import {fixture, project} from './helpers.mjs';
 
 test('PR summary counts only drafts, requested changes, and approved mergeable PRs', () => {
   assert.deepEqual(summarizePullRequests([
@@ -30,14 +17,39 @@ test('PR summary counts only drafts, requested changes, and approved mergeable P
   ]), {drafts: 1, changesRequested: 1, approvedMergeable: 1});
 });
 
-test('open decision count excludes questions resolved by an event', () => {
-  const rows = [{payload: {events: [
-    {id: 'q1', kind: 'question'},
-    {id: 'q2', kind: 'question'},
-    {id: 'answer', kind: 'decision', resolves: ['q1']},
-    {id: 'blocker', kind: 'blocker'},
-  ]}}];
-  assert.equal(countOpenQuestions(rows), 1);
+test('footer uses the current index without rereading journals, and revalidates changed journals', (t) => {
+  const f = fixture(t);
+  prepare(f, {
+    session_id: 'sample-session', turn_id: 'sample-turn',
+    topics: [{id: 'sample', name: 'Sample', aliases: [], repos: [], references: []}],
+    events: [
+      {id: 'question', topic_id: 'sample', kind: 'question', summary: 'One writer?', sources: []},
+      {id: 'question-10', topic_id: 'sample', kind: 'question', summary: 'Which writer?', sources: []},
+      {topic_id: 'sample', kind: 'blocker', summary: 'Waiting for an owner.', sources: []},
+    ],
+  });
+  flush(f, 'sample-session');
+  const read = fs.readFileSync;
+  let journalReads = 0;
+  t.mock.method(fs, 'readFileSync', (file, ...args) => {
+    if (typeof file === 'string' && file.endsWith('.jsonl')) journalReads += 1;
+    return read(file, ...args);
+  });
+  assert.equal(openQuestionCount(f.ledger), 2);
+  assert.equal(openQuestionCount(f.ledger), 2);
+  assert.equal(journalReads, 0);
+
+  prepare(f, {session_id: 'sample-session', turn_id: 'next-turn',
+    events: [{topic_id: 'sample', kind: 'decision', summary: 'One writer.', sources: [], resolves: ['question']}]});
+  flush(f, 'sample-session');
+  assert.equal(openQuestionCount(f.ledger), 1);
+  prepare(f, {session_id: 'sample-session', turn_id: 'last-turn',
+    events: [{topic_id: 'sample', kind: 'decision', summary: 'Use the shared writer.', sources: [], resolves: ['question-10']}]});
+  flush(f, 'sample-session', {fault(point) {if (point === 'before-index') throw new Error('Index interrupted');}});
+  assert.equal(openQuestionCount(f.ledger), 0);
+  const journal = path.join(f.ledger, 'Events', fs.readdirSync(path.join(f.ledger, 'Events'))[0]);
+  fs.appendFileSync(journal, '{torn');
+  assert.throws(() => openQuestionCount(f.ledger), /Incomplete journal/);
 });
 
 test('PR lookup returns current-repo actions and a global open count', () => {
@@ -88,6 +100,7 @@ test('status line shows live session metrics, PR action counts, decisions, and a
     ],
     allOpenCount: 7,
     decisions: 2,
+    memory: 'Memory saved',
     podiumUrl: 'file:///tmp/Work%20Vault/Podium/README.md',
   });
   assert.match(line, /PRs here 1 draft, 1 approved\/mergeable/);
@@ -95,13 +108,14 @@ test('status line shows live session metrics, PR action counts, decisions, and a
   assert.match(line, /Session \$1\.24 est\./);
   assert.match(line, /Context 62%/);
   assert.match(line, /Decisions 2/);
+  assert.match(line, /Memory saved/);
   assert.match(line, /\u001b]8;;file:\/\/\/tmp\/Work%20Vault\/Podium\/README\.md\u001b\\Podium\u001b]8;;\u001b\\/);
 });
 
 test('status line names unavailable fields and omits invalid negative metrics', () => {
   const line = renderStatusLine({input: {cost: {total_cost_usd: -1}, context_window: {used_percentage: null}},
     sessionPullRequests: null, allOpenCount: null, decisions: null, podiumUrl: null});
-  assert.equal(line, 'Maestro | PRs here unavailable | My open PRs unavailable | Session cost unavailable | Context unavailable | Decisions unavailable | Podium unavailable');
+  assert.equal(line, 'Maestro | PRs here unavailable | My open PRs unavailable | Session cost unavailable | Context unavailable | Decisions unavailable | Memory unavailable | Podium unavailable');
 });
 
 test('Podium link prefers Redux page, falls back to workspace page, and rejects symlinks', (t) => {
@@ -127,13 +141,12 @@ test('Podium link prefers Redux page, falls back to workspace page, and rejects 
 
 test('status-line settings permit unset persistence roots but validate configured roots', (t) => {
   const f = fixture(t);
-  fs.writeFileSync(f.settings, JSON.stringify({paths: {ledger_root: f.ledger, vault_root: f.vault}}));
-  const configured = loadStatuslineSettings(path.join(project, 'settings.json'), f.settings);
+  const configured = loadStatuslineSettings(path.join(project, 'settings.json'), f.config);
   assert.equal(configured.ledger, f.ledger);
   assert.equal(configured.vault, f.vault);
 
-  fs.writeFileSync(f.settings, JSON.stringify({paths: {ledger_root: null, vault_root: null}}));
-  const unset = loadStatuslineSettings(path.join(project, 'settings.json'), f.settings);
+  fs.writeFileSync(f.config, JSON.stringify({paths: {ledger_root: null, vault_root: null}}));
+  const unset = loadStatuslineSettings(path.join(project, 'settings.json'), f.config);
   assert.equal(unset.ledger, null);
   assert.equal(unset.vault, null);
 });

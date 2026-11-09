@@ -212,22 +212,11 @@ function flushOne(context, relative, fault, rows) {
     rows.push(committed);
     fault('after-append', payload);
   }
-  const alreadyApplied = state.ledger === 'applied' && state.index === 'applied'
-    && payload.pages.every((page) => ['applied', 'superseded'].includes(state.pages[page.id]?.status));
   state.ledger = 'applied';
   state.seq = committed.seq;
   saveState();
   const questions = rows.flatMap((row) => row.payload.events).filter((event) => event.kind === 'question').map((event) => event.id);
   applyPages(context, payload, state, saveState, fault, questions, rows);
-  if (!alreadyApplied) try {
-    fault('before-index', payload);
-    rebuild(context, rows);
-    state.index = 'applied';
-    delete state.index_error;
-  } catch (error) {
-    state.index = 'failed';
-    state.index_error = error.message;
-  }
   saveState();
 }
 
@@ -245,7 +234,7 @@ function podiumText(context) {
 function receipt(payload, state) {
   const incompleteQuestions = Object.values(state.question_removals ?? {}).includes('failed');
   return {
-    id: payload.id, seq: state.seq, ledger: state.ledger, question_removals: state.question_removals ?? {},
+    id: payload.id, turn_id: payload.turn_id, seq: state.seq, ledger: state.ledger, question_removals: state.question_removals ?? {},
     podium: incompleteQuestions ? 'failed' : surfaceState(payload, state, 'podium'), library: surfaceState(payload, state, 'library'),
     index: state.index, errors: [...Object.values(state.pages).filter((page) => page.status === 'failed').map((page) => page.error),
       ...(state.index_error ? [state.index_error] : []),
@@ -283,6 +272,22 @@ export function flush(context, session, {fault = () => {}} = {}) {
       statePath: relative.replace(/\.json$/, '.state.json'),
       state: readJson(context.ledger, relative.replace(/\.json$/, '.state.json')),
     }));
+    const unindexed = completed.filter(({state}) => state.index !== 'applied');
+    if (unindexed.length) {
+      let error;
+      try {
+        fault('before-index', unindexed[0].payload);
+        rebuild(context, rows);
+      } catch (failure) {
+        error = failure.code ?? failure.message;
+      }
+      for (const {statePath, state} of unindexed) {
+        state.index = error ? 'failed' : 'applied';
+        if (error) state.index_error = error;
+        else delete state.index_error;
+        writeJson(context.ledger, statePath, state);
+      }
+    }
     if (completed.some(({payload}) => payload.pages.some((page) => page.resolves?.length))) {
       let text;
       let error;
@@ -381,6 +386,21 @@ function currentDatabase(context) {
     if (db) db.close();
     throw error;
   }
+}
+
+export function openQuestionCount(ledgerRoot) {
+  const context = {ledger: ledgerRoot};
+  return withLock(ledgerRoot, () => {
+    const db = currentDatabase(context);
+    try {
+      return db.prepare(`SELECT COUNT(*) AS count FROM events AS question
+        WHERE json_extract(question.json, '$.kind') = 'question'
+        AND NOT EXISTS (
+          SELECT 1 FROM events AS answer, json_each(answer.json, '$.resolves') AS resolution
+          WHERE resolution.value = question.id
+        )`).get().count;
+    } finally { db.close(); }
+  });
 }
 
 export function search(context, term) {

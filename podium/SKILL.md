@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Podium
 
+The current coordination component of [Muninn](../README.md#muninn).
+
 Current coordination, not history. Podium owns priorities/workspace state; [Ledger](../ledger/SKILL.md) owns outcomes/decisions/rationale; tickets own intent/acceptance criteria; [Library](../library/SKILL.md) owns reusable knowledge. Link, don't duplicate.
 
 ## Slim landing page
