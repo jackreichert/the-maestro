@@ -1,6 +1,6 @@
 # Maestro 2.0
 
-Modular agent workflows for a multi-repo workspace, with a dependency-free Node 24 persistence CLI, SQLite/FTS topic index, Claude Code status line, and Stop/PreCompact entry point. No plugin manifest, automatic installer, loops, or watchers. Actual harness delivery requires a separately approved installation and rehearsal.
+Modular agent workflows for a multi-repo workspace, with a dependency-free Node 24 persistence CLI, SQLite/FTS topic index, Claude Code status line, and Stop/PreCompact entry point. No plugin manifest or automatic installer. An [opt-in session event loop](./reference/events.md) handles selected PRs, reminders and command completion; actual harness delivery requires a separately approved installation and rehearsal.
 
 ## Skills
 
@@ -35,6 +35,7 @@ This is a configurable workflow bundle, not a zero-configuration app. No author-
 | Workflow skills | A harness that supports skills or explicit Markdown loading; use its own discovery/agent conventions |
 | Muninn CLI | Node 24+ with `node:sqlite`; existing, separate writable ledger/vault directories and local settings. A vault is a Markdown directory, not an Obsidian service requirement |
 | Automatic turn tracking and footer | Optional Claude Code integration; approve registration and rehearse in that harness. No equivalent is supplied for Copilot or other harnesses |
+| Session events | Optional native Claude Code on macOS/Linux with `asyncRewake`; private local state root, separately approved hooks/ack permission and bounded idle coverage |
 | GitHub PR operations/footer counts | Optional GitHub CLI (`gh`), authenticated to the installing user's account with access to the relevant repositories |
 | Jira publication | Optional user-provided Jira tooling/access; local tickets need no Jira account |
 

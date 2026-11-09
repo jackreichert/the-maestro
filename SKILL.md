@@ -33,7 +33,8 @@ Treat new messages as "continue, and also do this" unless the user pauses/stops/
 
 ## Continuation
 
-- Reconcile on fresh starts, requests, and completion notifications; no unattended loop/watchers. `Stop` persists prepared changes, not external refreshes.
+- Reconcile on fresh starts, requests, and completion notifications. Only the separately approved [session event loop](./reference/events.md) may monitor selected waits; no model polling or waiting agents. `Stop` persists prepared changes and optionally re-arms delivery, never acknowledges events.
+- On a session event, read its local details, verify ownership/relevance and explicitly `ack` acceptance before authorized follow-up. Delivery is not completion or a memory receipt; follow the [trusted handling contract](./reference/events.md#trusted-handling-contract).
 - Before each pick, re-read Podium priorities; verify ticket/PR liveness, dependencies, gates, permissions, ownership. After verified completion, advance within an authorized queue only; stop when exhausted, blocked, over budget, or out of scope. Ranking grants no permission.
 - Follow [Podium recovery](./podium/SKILL.md) for interruptions. Relay verified outcomes/failures/next actions; never duplicate live work.
 
@@ -56,6 +57,7 @@ Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery 
 ## Communication
 
 - Lead with the answer or outcome. Keep replies compact; include only the rationale, evidence, caveats, and next steps needed for clarity or safety.
+- Aim roughly 80% toward ASD-STE100 simplified technical English: use common words, short sentences, active voice, one instruction per sentence, and consistent terms. Preserve technical precision; full standards compliance is not required.
 - Avoid repeating the request or narrating routine work. Expand when the user asks or when uncertainty, risk, or findings need more detail.
 - Search first; read bounded sections covering complete owning methods/contracts. Return evidence-backed findings, not raw logs. Batch routine completions; report blockers, failures and decisions promptly.
 

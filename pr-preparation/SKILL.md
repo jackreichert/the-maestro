@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # PR preparation
 
-Prepare draft PRs and reconcile open ones; never merge or mark ready for review. Follow [branch ownership and size limits](../SKILL.md#branch-flow) and [PR writing guidance](../reference/prs.md). Prefer `gh`. This is an on-request workflow, not a poller.
+Prepare draft PRs and reconcile open ones; never merge or mark ready for review. Follow [branch ownership and size limits](../SKILL.md#branch-flow) and [PR writing guidance](../reference/prs.md). Prefer `gh`. This is an on-request workflow, not a poller. Optional [session events](../reference/events.md) notify about selected PRs but never replace this review or grant permission to act on feedback.
 
 ## 1. Establish scope and evidence
 
@@ -27,6 +27,7 @@ Prepare draft PRs and reconcile open ones; never merge or mark ready for review.
 
 - Conflicts block readiness. Inspect the base/head conflict and preserve both sides' intended behavior; never choose an entire side blindly. Use an already authorized merge/rebase strategy, or ask before those operations. Validate the combined result.
 - Before commits/pushes, verify ownership and permissions, preserve unrelated work, and check approval invalidation. Use [the branch policy](../SKILL.md#branch-flow); publication of a new PR still requires permission and must be draft-only.
+- Before publishing or updating every PR, complete [the simplification self-review](../mithril/reference/after-coding.md). Preserve scope, behavior, safeguards and coverage; report safe simplifications or that none were found.
 - No force-push permission ships with this skill. Obtain explicit approval or verify the current user's scoped standing grant for **user-owned, unprotected feature branches backing an open PR**. This does not authorize rewriting others' commits, shared/protected branches, or an otherwise unapproved reset/rebase/merge.
 - Fetch and inspect the exact remote head immediately before rewriting it; stop on unexpected/unaccounted-for changes. Push only the intended branch to its verified PR head remote/ref with `--force-with-lease=<ref>:<observed-sha>`, never plain `--force`. A failed lease requires fresh inspection, not a blind retry. Confirm the PR remains open and owned before pushing; verify its remote SHA afterward.
 

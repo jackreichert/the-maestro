@@ -8,15 +8,16 @@ selected_stream: "<stream-id or null>"
 
 ## Priorities / streams
 
-| Rank | Stream / outcome | Repos | Phase / status | Blocker | Next action | Beads |
-|---|---|---|---|---|---|---|
-| <rank> | <stable ID, name, outcome> | <repo links> | <observed state/time> | <blocker or none> | <action/owner> | <topic/event references> |
+| Rank | Stream / outcome | Tickets | Repos | Phase / status | Blocker | Next action | Beads |
+|---|---|---|---|---|---|---|---|
+| <rank> | <stable ID, name, outcome> | <linked Xenophon IDs or untracked> | <repo links> | <observed state/time> | <blocker or none> | <action/owner> | <topic/event references> |
 
 <Optional stream detail: agreed appetite, review/end trigger, cut-first scope.>
 
 ## Resume
 
 - Task / stream: <selected task/stream ID>
+- Tickets: <linked Xenophon task/parent IDs or untracked>
 - Location: <repo, worktree, branch>
 - Ownership observed: <owner/time; revalidate before writing>
 - Last verified: <step/evidence/time>
@@ -30,9 +31,9 @@ selected_stream: "<stream-id or null>"
 
 #### <Repo>
 
-| PR / purpose | Target | Review / CI | Dependency | Next action / owner | Checked |
-|---|---|---|---|---|---|
-| <link, purpose> | <branch> | <observed or unknown> | <link or none> | <action, owner> | <UTC timestamp> |
+| PR / purpose | Tickets | Target | Review / CI | Dependency | Next action / owner | Checked |
+|---|---|---|---|---|---|---|
+| <link, purpose> | <linked Xenophon IDs or untracked> | <branch> | <observed or unknown> | <link or none> | <action, owner> | <UTC timestamp> |
 
 ## Decisions needed
 
@@ -42,15 +43,16 @@ selected_stream: "<stream-id or null>"
   - Context / options: <decision essentials>
   - Recommendation: <choice/rationale/tradeoff>
   - Blocks: <work; real deadline only>
+  - Tickets: <linked Xenophon IDs or untracked>
   - Beads: <references>
   - Checked: <sources investigated before asking>
   - Answer: <user-editable; read on request, not automatically>
 
 ## Waiting on others
 
-| Stream | Waiting for | Owner | Follow-up trigger | Beads |
-|---|---|---|---|---|
-| <ID> | <dependency> | <owner> | <date or event> | <references> |
+| Stream | Tickets | Waiting for | Owner | Follow-up trigger | Beads |
+|---|---|---|---|---|---|
+| <ID> | <linked Xenophon IDs or untracked> | <dependency> | <owner> | <date or event> | <references> |
 
 ## More
 

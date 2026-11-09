@@ -69,6 +69,10 @@ After separate permission approval, allow the exact resolved Node/script prefixe
 
 Start a fresh Claude Code session after registration; tracking begins at the next delivered prompt. A manual hook run proves the command works, not lifecycle delivery. Rehearse below before relying on live memory.
 
+### Optional session events
+
+Session monitoring is separate from the four synchronous memory hooks. Only after explicit approval, follow the [event installation and coverage contract](./reference/events.md#installation-and-coverage): private local root, additional asyncRewake listeners, synchronous SessionEnd, narrow explicit-ack permission and isolated live rehearsal. Preserve existing memory hooks. Listener timeouts bound idle coverage; installing this is not permission for autonomous PR/Git changes. No event hooks are installed by this repository.
+
 ## 4. Optional Claude Code status line
 
 The status line is separate from Stop/PreCompact hooks. It updates in the Claude Code UI when assistant messages arrive; it does not append text to chat replies.

@@ -14,6 +14,7 @@ Current coordination, not history. Podium owns priorities/workspace state; [Ledg
 
 - Resolve `VAULT_ROOT` from [settings](../README.md#settings); ask if unset. Entry: `Podium/README.md`; overflow: `Podium/Streams/<stream-id>.md`. Reuse existing records, not a second dashboard.
 - Use [the template](./template.md). User-ranked streams: stable ID, outcome, repos, phase/status, blocker, next action, bead pointers. A bead is a ledger event ID/topic brief, not a new format.
+- Link existing [Xenophon](../xenophon/SKILL.md) tickets by their exact IDs on streams/work items, PRs, blocked questions, waiting items and resume pointers. Use the most specific task, plus its parent when useful; verify the active/archive note exists. Ticket IDs identify intent/ACs, not ledger beads or external issue keys. If no ticket exists, say `untracked`; never invent IDs or infer mappings from similar titles.
 - PRs grouped by stream, then repo: link, purpose, target branch, observed review/CI, dependency, next action/owner, checked time. Implementation, merge, QA, staging, production differ; unknown is not success.
 - User questions by stream: associated ledger question hash; one-way (irreversible/costly) or two-way (reversible within stated limits) gate; context, options, recommendation/tradeoff, blocked work, beads, what was checked. Only real deadlines; reversibility grants no permission.
 - Waiting on others: owner/follow-up trigger. Resume: selected stream/task, repo/worktree/branch, last verified step, verification owed, next step. Observe ownership separately; old pages cannot prove live leases.
@@ -32,7 +33,7 @@ Current coordination, not history. Podium owns priorities/workspace state; [Ledg
 
 - Prepare changed fields with checkpoint ID, expected revision, source beads, observation times. Preserve unrelated edits/user priorities; never infer reprioritization.
 - Follow [Ledger's checkpoint contract](../ledger/SKILL.md): `Stop` applies prepared updates under a shared Podium writer lock, checks revision, reads back, and acknowledges separately. Persist new beads first. Conflicts stay pending, not last-writer-wins; partial failure cannot imply other surfaces succeeded.
-- Fresh start/after compaction: read landing page, select requested/already-selected task, retrieve only relevant bead updates/library context. Validate freshness, live ownership, worktree/branch, execution state; reconcile stale/missing state, never guess.
+- Fresh start/after compaction: read landing page, select requested/already-selected task, follow its ticket for intent/ACs and retrieve relevant bead updates/library context. Validate ticket links, freshness, live ownership, worktree/branch and execution state; reconcile stale/missing state, never guess.
 - Interrupted work: check last evidence, branch/head, worktree, dirty/untracked/unpushed changes, agent state/ownership. Preserve work; reconcile missing paths/uncertain owners. No automatic lock stealing, forced cleanup, duplicate dispatch; worktree creation/restarts need applicable authorization.
 - Refresh relevant PR/external state on request or before acting; retain checked times and flag unavailable/stale evidence. No idle refresh/watchers.
 - No whole-board rewrite/PR polling in hooks. Slim `PreCompact` flushes prepared continuation only; retros, cleanup, discovery, PR refresh are separate.

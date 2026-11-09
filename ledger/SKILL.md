@@ -18,6 +18,13 @@ Topic memory and continuation evidence, not transcripts or a dashboard. [Podium]
 - Distinguish decisions/proposals and facts/hypotheses. Explicit references supersede conclusions, resolve blockers/questions, or replace next actions; chronology does not. `topic.json` projects identity, aliases, repos, and references from explicit envelope metadata. Reuse IDs through the index; don't manually overwrite generated metadata.
 - No raw prompts/responses, secrets, or personal data; exclude `.env*`/`ssm-*.json`. Store safe evidence locations, not sensitive contents.
 
+## Multiple windows
+
+- Each window uses its actual harness session ID and current turn ID; never reuse another window's identity. Shared ledger entries may interleave normally: a new sequence or different session ID is not a conflict, corruption or reason to stop.
+- Use session/turn IDs to identify your own pending writes and receipts; use topic/repo references to recover relevant knowledge from any session. Other sessions' receipts never acknowledge your turn.
+- Reconcile new entries when resuming or before dependent actions, not by continuously polling. Coordinate only real overlap: incompatible decisions, competing edits or the same task/worktree. Do not overwrite or duplicate another window's work.
+- Session identity is attribution, not an exclusive task claim; no task-lock registry is required. Existing short storage locks still serialize writes, and page revision checks still protect edits.
+
 ## Commitments and permissions
 
 - User-stated commitments name trigger, action, owner, scope, evidence; clarify missing conditions. Temporary instructions name session/window/expiry; durable rules name topic/repo/workspace. Never broaden scope or infer permanence.
