@@ -34,9 +34,9 @@ Use vault-relative `[[note/path|Label]]` links for vault notes (`\|` in tables);
 
 #### <Repo>
 
-| PR / purpose | Tickets | Target | Review / CI | Dependency | Next action / owner | Checked |
-|---|---|---|---|---|---|---|
-| <link, purpose> | <linked Xenophon IDs or untracked> | <branch> | <observed or unknown> | <link or none> | <action, owner> | <UTC timestamp> |
+| PR / purpose | Jira | Tickets | Target | Review / CI | Dependency | Next action / owner | Checked |
+|---|---|---|---|---|---|---|---|
+| <link, purpose> | <linked issue keys, unlinked or unknown> | <linked Xenophon IDs or untracked> | <branch> | <observed or unknown> | <link or none> | <action, owner> | <UTC timestamp> |
 
 ## Decisions needed
 
