@@ -6,6 +6,8 @@ selected_stream: "<stream-id or null>"
 
 # Podium
 
+Use vault-relative `[[note/path|Label]]` links for vault notes (`\|` in tables); retain HTTPS for PRs/issues. Verify note targets.
+
 ## Priorities / streams
 
 | Rank | Stream / outcome | Tickets | Repos | Phase / status | Blocker | Next action | Beads |

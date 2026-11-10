@@ -93,16 +93,16 @@ test('status line shows only the open PR count and preserves session metrics and
     allOpenCount: 41,
     decisions: 2,
     memory: 'Memory saved',
-    podiumUrl: 'file:///tmp/Work%20Vault/Podium/README.md',
+    podiumUrl: 'obsidian://open?path=%2Ftmp%2FWork%20Vault%2FPodium%2FREADME.md',
   });
-  assert.ok(line.startsWith('\u{1F3BC} Maestro | \u001b]8;;file:///tmp/Work%20Vault/Podium/README.md\u001b\\Podium\u001b]8;;\u001b\\ | '));
+  assert.ok(line.startsWith('\u{1F3BC} Maestro | \u001b]8;;obsidian://open?path=%2Ftmp%2FWork%20Vault%2FPodium%2FREADME.md\u001b\\Podium\u001b]8;;\u001b\\ | '));
   assert.match(line, /Open PRs 41 \|/);
   assert.doesNotMatch(line, /PRs here|github\.com|My open PRs|Open PRs 41:/);
   assert.match(line, /Session \$1\.24 est\./);
   assert.match(line, /Context 62%/);
   assert.match(line, /Decisions 2/);
   assert.match(line, /Memory saved/);
-  assert.match(line, /\u001b]8;;file:\/\/\/tmp\/Work%20Vault\/Podium\/README\.md\u001b\\Podium\u001b]8;;\u001b\\/);
+  assert.match(line, /\u001b]8;;obsidian:\/\/open\?path=%2Ftmp%2FWork%20Vault%2FPodium%2FREADME\.md\u001b\\Podium\u001b]8;;\u001b\\/);
   assert.match(renderStatusLine({input: {}, allOpenCount: 0}), /Open PRs 0 \|/);
 });
 
@@ -117,14 +117,14 @@ test('Podium link prefers canonical page, falls back to workspace page, and reje
   fs.mkdirSync(path.join(f.vault, 'Podium'));
   const page = path.join(f.vault, 'Podium', 'README.md');
   fs.writeFileSync(page, '# Podium\n');
-  assert.equal(podiumLink(f.vault), new URL(`file://${page}`).href);
+  assert.equal(podiumLink(f.vault), `obsidian://open?path=${encodeURIComponent(page)}`);
 
   fs.rmSync(page);
   const legacy = path.join(f.vault, 'Projects', 'sample', 'Status');
   fs.mkdirSync(legacy, {recursive: true});
   const legacyPage = path.join(legacy, 'The-Podium.md');
   fs.writeFileSync(legacyPage, '# Workspace Podium\n');
-  assert.equal(podiumLink(f.vault, '/workspace/sample'), new URL(`file://${legacyPage}`).href);
+  assert.equal(podiumLink(f.vault, '/workspace/sample'), `obsidian://open?path=${encodeURIComponent(legacyPage)}`);
 
   const external = path.join(f.temp, 'outside.md');
   fs.writeFileSync(external, 'not a podium');
