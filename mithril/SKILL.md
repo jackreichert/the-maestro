@@ -10,8 +10,8 @@ Guidance, not automated enforcement. Keep core across phases; reread after conte
 
 ## Before editing
 
-- **Brief.** Read acceptance criteria (ACs), invariants, checks; establish missing criteria with planner/user. Surface assumptions/ambiguity; never silently change scope.
-- **Necessity/reuse.** Check config/helpers/packages/siblings; reuse or explain why not. Never bypass canonical resolvers or duplicate rules. No speculative layers/options; check new dependencies for overlap, maintenance, provenance.
+- **Brief.** Read acceptance criteria (ACs), invariants, checks; establish missing criteria with planner/user. Surface assumptions; clarify ambiguity that changes the solution, never silently change scope. For non-trivial work, give a short `step -> verification` plan; no separate document is required.
+- **Necessity/reuse.** Check config/helpers/packages/siblings; reuse or explain why not. Recommend a materially simpler approach before building when it meets the same requirements; explain tradeoffs and get approval for scope changes. Never bypass canonical resolvers or duplicate rules. No speculative layers/options; check new dependencies for overlap, maintenance, provenance.
 - **Full context.** Read changed files/owning methods in full, chunking large files. Trace entry through callers/helpers, validation, transformation, I/O, outputs/side effects, failures, tests. Flag unresolved links; names/hits/hunks aren't enough.
 
 ## While coding

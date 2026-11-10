@@ -96,7 +96,7 @@ Successful saves show `Muninn Nov 10 13:43`: the last checkpoint acknowledgement
 
 Gap counts stay recorded but not in the footer. They count earlier turns not marked saved when the next prompt began, including pending turns—not proven data loss. Put relevant diagnostics in Podium's Resume section during normal coordination updates; the footer does not write them. Checkpoints acknowledge requested writes, not complete fact capture.
 
-The Podium link prefers `Podium/README.md`, then falls back to `Projects/<container-name>/Status/The-Podium.md`. PR state comes from `gh`; the ledger and Podium sections require their configured roots. Missing roots or data are shown as unavailable. Failed or invalid PR responses are reported on stderr rather than displayed as a zero count. The cost is Claude Code's estimate, not a billing statement.
+The Podium link opens Obsidian using `obsidian://open?path=<encoded absolute note path>`, preferring `Podium/README.md`, then `Projects/<container-name>/Status/The-Podium.md`. Obsidian must be installed with the vault registered, and the terminal must allow OSC 8 custom-scheme links; verify a click in the target terminal. Vault-note links inside Podium use Obsidian wikilinks; PR/web links remain HTTPS. PR state comes from `gh`; the ledger and Podium sections require their configured roots. Missing roots or data are shown as unavailable. Failed or invalid PR responses are reported on stderr rather than displayed as a zero count. The cost is Claude Code's estimate, not a billing statement.
 
 ## 5. Rehearse before live memory
 

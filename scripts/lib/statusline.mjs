@@ -1,6 +1,5 @@
 import {spawnSync} from 'node:child_process';
 import path from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {readText, scopedPath} from '../storage.mjs';
 export {openQuestionCount} from '../ledger.mjs';
 
@@ -13,7 +12,7 @@ export function podiumLink(vaultRoot, containerRoot = null) {
   }
   for (const relative of candidates) {
     const file = scopedPath(vaultRoot, relative);
-    if (readText(vaultRoot, relative) !== null) return pathToFileURL(file).href;
+    if (readText(vaultRoot, relative) !== null) return `obsidian://open?path=${encodeURIComponent(file)}`;
   }
   return null;
 }
