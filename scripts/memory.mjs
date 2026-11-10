@@ -17,10 +17,20 @@ function stdinJson() {
   try { return JSON.parse(text); } catch { throw new Error('Invalid input JSON'); }
 }
 
-function checkpointInstructions(state) {
+function checkpointInstructions(state, repair = false) {
   const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
   const cli = `${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))}`;
   const settings = `--settings ${quote(local)}`;
+  if (repair) {
+    return `Save THIS turn's missing or failed checkpoint within existing permissions. ` +
+      `Run ${cli} prepare ${settings} with JSON on stdin ` +
+      `{"session_id":"${state.session_id}","turn_id":"${state.turn_id}","topics":[],"events":[],"pages":[]}. ` +
+      'Include safe outcomes/decisions and relevant Podium/Library patches; empty arrays are only for genuinely no-change turns. ' +
+      `Schema and conflict recovery: ${quote(path.join(root, 'reference/persistence.md'))}. ` +
+      `Then run ${cli} flush ${settings} ${quote(state.session_id)} and verify current-turn receipts and affected pages. ` +
+      'Reuse prepared payloads on retry; reconcile conflicts without overwriting newer edits or stealing locks. ' +
+      'Never read transcripts or store personal data or secrets.';
+  }
   return `Maestro memory: session_id=${state.session_id}, turn_id=${state.turn_id}. ` +
     'Podium is the single source of truth for persistent current state; context notes, plans and handoffs link there instead of maintaining competing status files. ' +
     'Ledger stores history and rationale, Library reusable knowledge, and checkpoint records technical receipts. ' +
@@ -58,15 +68,14 @@ function hook(input, context) {
     ? `Maestro memory: turn ${state.turn_id}; ${state.status}; ${receipts.length} current-turn receipts; ${incomplete} incomplete.`
     : `Maestro memory: session ${input.session_id}; untracked turn; ${result?.checkpoints.length ?? 0} historical checkpoint receipts; ${incomplete} incomplete.`;
   if (block) {
-    console.log(JSON.stringify({decision: 'block', reason: `${notice} ${failure ?? ''} ${checkpointInstructions(state)} ` +
-      'Old receipts do not cover this turn. Repair within existing permissions only; do not overwrite conflicts or steal locks. ' +
-      'This guard allows one automatic repair attempt, then reports any unresolved gap without looping.'}));
+    console.log(JSON.stringify({decision: 'block', reason: `${notice} ${failure ? `${failure} ` : ''}${checkpointInstructions(state, true)} ` +
+      'One automatic repair attempt only; unresolved gaps remain visible without looping.'}));
   } else {
     console.log(`${notice} Only prepared deltas are covered; complete turn capture is NOT verified.`);
     if (failure || incomplete || !state || state.status !== 'saved') process.exitCode = 1;
   }
   if (failure) console.error(`Memory flush failed: ${failure}`);
-  if (!state || state.status !== 'saved') {
+  if (!block && (!state || state.status !== 'saved')) {
     console.error('Memory coverage incomplete; inspect turn state and receipts. No conversation capture is inferred.');
   }
 }

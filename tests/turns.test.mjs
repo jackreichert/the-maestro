@@ -45,11 +45,23 @@ test('prompt hook injects current-turn commands without persisting prompt or tra
 
 test('missing checkpoint gets exactly one persisted automatic repair attempt', (t) => {
   const f = fixture(t);
-  startTurn(f, session);
+  const prompt = run(f, 'UserPromptSubmit');
+  const instructions = JSON.parse(prompt.stdout).hookSpecificOutput.additionalContext;
+  const state = currentTurn(f, session);
   const first = run(f, 'Stop');
   assert.equal(first.status, 0, first.stderr);
   assert.equal(JSON.parse(first.stdout).decision, 'block');
-  assert.match(JSON.parse(first.stdout).reason, /Do this automatically/);
+  const reason = JSON.parse(first.stdout).reason;
+  assert.ok(reason.length < instructions.length * 0.6, 'Repair must not replay the full prompt instructions');
+  assert.ok(reason.includes(cli) && reason.includes(f.config));
+  assert.ok(reason.includes(state.turn_id) && reason.includes(session));
+  assert.match(reason, /prepare/);
+  assert.match(reason, /flush/);
+  assert.match(reason, /no-change/);
+  assert.match(reason, /permissions/);
+  assert.match(reason, /receipts/);
+  assert.doesNotMatch(reason, /For every user question|Podium is the single source/);
+  assert.equal(first.stderr, '', 'Missing capture should use the repair decision, not a second error channel');
   assert.equal(currentTurn(f, session).repair_requested, true);
   for (const extra of [{stop_hook_active: true}, {}, {stop_hook_active: true}]) {
     const repeated = run(f, 'Stop', extra);
