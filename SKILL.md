@@ -79,7 +79,7 @@ Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery 
 
 Read [PR preparation](./pr-preparation/SKILL.md) when preparing PRs, checking open PRs, addressing feedback/conflicts or checking readiness. It owns bot dispositions, human-review gates and publication checks. Read [PR writing and lifecycle](./reference/prs.md) for titles/descriptions and post-merge reconciliation.
 
-When asked for a list of PRs, group by repository heading and use copy-paste-friendly bullets: `- <full PR URL> — <short description>`. Put the link first on each line; no tables or extra commentary inside the list unless requested.
+When asked for a list of PRs, use plain, copy-paste-friendly lines: repository name, then one `<full PR URL> - <short description>` per line, with a blank line between repositories. Order repositories and PRs by ideal merge order based on verified dependencies; flag unknown dependencies or cross-repo interleaving briefly outside the list. No bullets, heading markup, tables or extra commentary inside the list unless requested.
 
 ## PR size
 
