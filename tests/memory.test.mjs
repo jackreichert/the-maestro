@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import {spawn} from 'node:child_process';
 import test from 'node:test';
-import {loadSettings, hash, readJson, withLock} from '../scripts/storage.mjs';
+import {loadSettings, hash, readJson, recoverWriterLock, withLock, writerLockStatus} from '../scripts/storage.mjs';
 import {flush, lookup, prepare, readJournal, recover, refreshBrief, search} from '../scripts/ledger.mjs';
 import {cliPath, fixture, memoryCli as cli, project} from './helpers.mjs';
 
@@ -417,6 +418,7 @@ test('UTF-8, journal identities and SQLite sidecars are guarded', (t) => {
 
 test('process crash leaves a lock that is never automatically stolen', async (t) => {
   const f = fixture(t);
+  prepare(f, input({pages: [newPage('recover-page', 'podium', 'Podium/README.md', 'Recovered synthetic board')]}));
   const moduleUrl = new URL('../scripts/storage.mjs', import.meta.url).href;
   const script = `import {withLock} from ${JSON.stringify(moduleUrl)}; withLock(${JSON.stringify(f.ledger)}, () => process.kill(process.pid, 'SIGKILL'));`;
   const ended = await new Promise((resolve, reject) => {
@@ -427,6 +429,48 @@ test('process crash leaves a lock that is never automatically stolen', async (t)
   assert.equal(ended.signal, 'SIGKILL');
   assert.ok(fs.existsSync(path.join(f.ledger, '.writer.lock/owner.json')));
   assert.throws(() => flush(f, 'session-1'), /Writer lock held/);
+  const status = cli(f, 'lock-status', ['ledger']);
+  assert.equal(status.status, 0, status.stderr);
+  const {status: state, owner} = JSON.parse(status.stdout);
+  assert.equal(state, 'abandoned');
+  fs.writeFileSync(path.join(f.ledger, '.writer.lock/unexpected'), 'preserve');
+  assert.throws(() => recoverWriterLock(f.ledger, owner), /Unexpected lock contents/);
+  fs.unlinkSync(path.join(f.ledger, '.writer.lock/unexpected'));
+  const wrong = cli(f, 'unlock', ['ledger', String(owner.pid), '2020-01-01T00:00:00.000Z']);
+  assert.equal(wrong.status, 1);
+  assert.ok(fs.existsSync(path.join(f.ledger, '.writer.lock/owner.json')));
+  const result = cli(f, 'unlock', ['ledger', String(owner.pid), owner.started]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).status, 'recovered');
+  assert.equal(readJournal(f.ledger).length, 0, 'Unlock must not replay prepared operations');
+  assert.equal(flush(f, 'session-1').checkpoints[0].podium, 'applied');
+  assert.equal(fs.readFileSync(path.join(f.vault, 'Podium/README.md'), 'utf8'), 'Recovered synthetic board');
+  assert.equal(readJournal(f.ledger).length, 1);
+});
+
+test('explicit lock recovery preserves live, foreign, missing-owner and unexpected-content locks', (t) => {
+  const f = fixture(t);
+  withLock(f.ledger, () => {
+    assert.equal(writerLockStatus(f.ledger).status, 'live');
+    const owner = readJson(f.ledger, '.writer.lock/owner.json');
+    assert.throws(() => recoverWriterLock(f.ledger, owner), /live\/unknown/);
+    assert.ok(fs.existsSync(path.join(f.ledger, '.writer.lock/owner.json')));
+  });
+  const lock = path.join(f.ledger, '.writer.lock');
+  fs.mkdirSync(lock);
+  assert.equal(writerLockStatus(f.ledger).status, 'unknown');
+  assert.throws(() => recoverWriterLock(f.ledger, {}), /live\/unknown/);
+  fs.writeFileSync(path.join(lock, 'owner.json'), JSON.stringify({pid: process.pid,
+    host: `${os.hostname()}-foreign`, started: new Date().toISOString()}));
+  assert.equal(writerLockStatus(f.ledger).status, 'unknown');
+  assert.throws(() => recoverWriterLock(f.ledger, {}), /live\/unknown/);
+  fs.unlinkSync(path.join(lock, 'owner.json'));
+  fs.rmdirSync(lock);
+  withLock(f.ledger, () => {
+    assert.throws(() => withLock(f.ledger, () => assert.fail('Writer entered during recovery')), /recovery in progress/);
+  }, '.writer-recovery.lock');
+  assert.equal(writerLockStatus(f.ledger).status, 'unlocked');
+  assert.equal(cli(f, 'lock-status', ['../escape']).status, 1);
 });
 
 test('question IDs are exact tokens, not prefixes of other questions', (t) => {

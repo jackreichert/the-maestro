@@ -116,21 +116,59 @@ export function atomicWrite(root, relative, text) {
 
 export const writeJson = (root, relative, value) => atomicWrite(root, relative, `${JSON.stringify(value, null, 2)}\n`);
 
-export function withLock(root, action) {
-  const lock = scopedPath(root, '.writer.lock');
+export function withLock(root, action, name = '.writer.lock') {
+  const lock = scopedPath(root, name);
+  const recovery = scopedPath(root, '.writer-recovery.lock');
+  if (name === '.writer.lock') requireValue(!fs.existsSync(recovery), 'Writer recovery in progress; retry later');
   try {
     fs.mkdirSync(lock, {mode: 0o700});
   } catch (error) {
-    if (error.code === 'EEXIST') throw new Error('Writer lock held; retry later or reconcile stale ownership manually');
+    if (error.code === 'EEXIST') {
+      const state = name === '.writer.lock' ? writerLockStatus(root).status : 'recovery in progress';
+      throw new Error(`Writer lock held (${state}); inspect with lock-status; abandoned owners require approved explicit unlock`);
+    }
     throw error;
   }
   try {
+    if (name === '.writer.lock') requireValue(!fs.existsSync(recovery), 'Writer recovery in progress; retry later');
     fs.writeFileSync(path.join(lock, 'owner.json'), JSON.stringify({pid: process.pid, host: os.hostname(), started: new Date().toISOString()}), {flag: 'wx', mode: 0o600});
     return action();
   } finally {
     if (fs.existsSync(path.join(lock, 'owner.json'))) fs.unlinkSync(path.join(lock, 'owner.json'));
     fs.rmdirSync(lock);
   }
+}
+
+export function writerLockStatus(root) {
+  const lock = scopedPath(root, '.writer.lock');
+  if (!fs.existsSync(lock)) return {status: 'unlocked'};
+  const owner = readJson(root, '.writer.lock/owner.json');
+  if (!owner || !Number.isSafeInteger(owner.pid) || owner.pid <= 0
+    || typeof owner.started !== 'string' || !Number.isFinite(Date.parse(owner.started))
+    || owner.host !== os.hostname()) return {status: 'unknown', owner};
+  try {
+    process.kill(owner.pid, 0);
+    return {status: 'live', owner};
+  } catch (error) {
+    if (error.code === 'ESRCH') return {status: 'abandoned', owner};
+    throw error;
+  }
+}
+
+export function recoverWriterLock(root, expected) {
+  return withLock(root, () => {
+    const {status, owner} = writerLockStatus(root);
+    requireValue(status === 'abandoned', 'Recovery requires a confirmed dead local owner; live/unknown locks are preserved');
+    requireValue(owner.pid === expected.pid && owner.started === expected.started,
+      'Lock owner changed; inspect again before authorizing recovery');
+    const lock = scopedPath(root, '.writer.lock');
+    const entries = fs.readdirSync(lock);
+    requireValue(entries.length === 1 && entries[0] === 'owner.json', 'Unexpected lock contents; manual reconciliation required');
+    fs.unlinkSync(scopedPath(root, '.writer.lock/owner.json'));
+    fs.rmdirSync(lock);
+    syncDirectory(root);
+    return {status: 'recovered', owner};
+  }, '.writer-recovery.lock');
 }
 
 export function appendLine(root, relative, value) {
