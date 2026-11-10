@@ -43,6 +43,7 @@ function checkpointInstructions(state, repair = false) {
     'Empty arrays are only for genuinely no-change turns. ' +
     'For changes to active PRs, blockers, next actions or open questions, read Podium/README.md and the relevant stream page, ' +
     'then include revision-checked Podium patches in pages; ledger events alone do not update Podium. ' +
+    'Refresh edited-page updated dates and affected landing/stream summaries, status, blockers and next actions together; preserve rank and unrelated edits. Keep pass, partial and not-run distinct. Do not ask permission for routine coupled corrections backed by verified evidence. ' +
     'Keep only PRs in the work currently in progress, not every open PR. Use verified PR links, observed review/CI and checked times; mark unavailable evidence explicitly. ' +
     'Show questions with their ledger event IDs; record the resolving decision before removing them. ' +
     'Preserve user priorities, unrelated edits and newer updates from other sessions. Include relevant verified reusable library patches. ' +

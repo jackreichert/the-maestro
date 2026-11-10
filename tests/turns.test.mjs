@@ -35,6 +35,10 @@ test('prompt hook injects current-turn commands without persisting prompt or tra
   assert.match(output.additionalContext, /changes to active PRs, blockers, next actions or open questions/);
   assert.match(output.additionalContext, /include revision-checked Podium patches in pages/);
   assert.match(output.additionalContext, /ledger events alone do not update Podium/);
+  assert.match(output.additionalContext, /Refresh edited-page updated dates and affected landing\/stream summaries, status, blockers and next actions together/);
+  assert.match(output.additionalContext, /preserve rank and unrelated edits/);
+  assert.match(output.additionalContext, /Keep pass, partial and not-run distinct/);
+  assert.match(output.additionalContext, /Do not ask permission for routine coupled corrections backed by verified evidence/);
   assert.match(output.additionalContext, /only PRs in the work currently in progress, not every open PR/);
   assert.match(output.additionalContext, /questions with their ledger event IDs/);
   assert.match(output.additionalContext, /read back the affected Podium sections/);

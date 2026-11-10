@@ -35,6 +35,7 @@ Podium is the single source of truth for persistent current state: priorities, a
 ## Updates and recovery
 
 - Prepare changed fields with checkpoint ID, expected revision, source beads, observation times. Preserve unrelated edits/user priorities; never infer reprioritization.
+- Update the coherent status, not just selected rows: refresh the edited page's `updated` date and reconcile affected landing/stream summaries, status, blockers and next actions with verified evidence. Keep pass, partial and not-run counts distinct; partial is not passed. Preserve rank and unrelated content. Routine coupled corrections need no extra permission; ask only when evidence or a material decision is missing.
 - Current-state changes require corresponding Podium patches, not just ledger events. Read back the affected sections after applying them; a saved checkpoint does not by itself prove the board is current.
 - Follow [Ledger's checkpoint contract](../ledger/SKILL.md): `Stop` applies prepared updates under a shared Podium writer lock, checks revision, reads back, and acknowledges separately. Persist new beads first. Conflicts stay pending, not last-writer-wins; partial failure cannot imply other surfaces succeeded.
 - Fresh start/after compaction: read landing page, select requested/already-selected task, follow its ticket for intent/ACs and retrieve relevant bead updates/library context. Validate ticket links, freshness, live ownership, worktree/branch and execution state; reconcile stale/missing state, never guess.
