@@ -13,12 +13,15 @@ function directory(session) {
 export function currentTurn(context, session) {
   const state = readJson(context.ledger, `${directory(session)}/current.json`);
   if (!state) return null;
-  keys(state, ['version', 'session_id', 'turn_id', 'started_at', 'status', 'repair_requested', 'previous_gaps'],
+  keys(state, ['version', 'session_id', 'turn_id', 'started_at', 'status', 'repair_requested', 'previous_gaps', 'last_checkpoint_at'],
     ['version', 'session_id', 'turn_id', 'started_at', 'status', 'repair_requested', 'previous_gaps']);
   requireValue(state.version === 1 && state.session_id === session && identifier(state.turn_id)
     && typeof state.started_at === 'string' && Number.isFinite(Date.parse(state.started_at))
     && states.includes(state.status) && typeof state.repair_requested === 'boolean'
     && Number.isSafeInteger(state.previous_gaps) && state.previous_gaps >= 0, 'Invalid turn tracking state');
+  requireValue(state.last_checkpoint_at === undefined || state.last_checkpoint_at === null
+    || (typeof state.last_checkpoint_at === 'string' && Number.isFinite(Date.parse(state.last_checkpoint_at))),
+  'Invalid last checkpoint timestamp');
   return state;
 }
 
@@ -44,6 +47,7 @@ export function startTurn(context, session) {
       status: 'pending',
       repair_requested: false,
       previous_gaps: (previous?.previous_gaps ?? 0) + (previous && previous.status !== 'saved' ? 1 : 0),
+      last_checkpoint_at: previous?.last_checkpoint_at ?? null,
     };
     saveTurn(context, state);
     return state;
@@ -88,10 +92,14 @@ export function finishTurn(context, input) {
     if (!state) return {state: null, result, failure, block: false, receipts: []};
     const receipts = result?.checkpoints.filter((receipt) => receipt.turn_id === state.turn_id) ?? [];
     const incomplete = result?.checkpoints.some((receipt) => receipt.errors.length > 0);
+    const wasSaved = state.status === 'saved';
     if (input.hook_event_name === 'StopFailure') state.status = 'interrupted';
     else if (failure || incomplete) state.status = 'write-failed';
     else if (complete(receipts)) state.status = 'saved';
     else state.status = 'missing';
+    if (state.status === 'saved' && (!wasSaved || !state.last_checkpoint_at)) {
+      state.last_checkpoint_at = new Date().toISOString();
+    }
 
     const block = input.hook_event_name === 'Stop' && state.status !== 'saved'
       && !state.repair_requested && input.stop_hook_active !== true;
@@ -107,11 +115,21 @@ export function memoryHealth(context, session) {
   if (!state) return 'Memory untracked';
   const labels = {
     pending: 'pending',
-    saved: 'saved',
     missing: 'checkpoint missing',
     'write-failed': 'write failed',
     interrupted: 'interrupted',
   };
-  const gaps = state.previous_gaps ? `; ${state.previous_gaps} earlier gaps` : '';
-  return `Memory ${labels[state.status]}${gaps}`;
+  const checkpoint = state.last_checkpoint_at
+    ? `Muninn ${checkpointTime(state.last_checkpoint_at)}`
+    : 'Muninn unknown';
+  if (state.status === 'saved') return checkpoint;
+  return `${state.last_checkpoint_at ? `${checkpoint}; ` : ''}Memory ${labels[state.status]}`;
+}
+
+function checkpointTime(timestamp) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(timestamp)).map(({type, value}) => [type, value]));
+  return `${parts.month} ${parts.day} ${parts.hour}:${parts.minute}`;
 }

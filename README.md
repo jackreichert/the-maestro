@@ -26,6 +26,8 @@ Modular agent workflows for a multi-repo workspace, with a dependency-free Node 
 
 Muninn is the umbrella name, not a fourth store or a separate workflow. Component names, commands, settings and storage paths stay unchanged.
 
+Podium is the single source of truth for persistent current state: priorities, active PRs, open questions, blockers, next actions and resume pointers. Context notes, plans and handoffs link there rather than duplicate status; checkpoint records are technical receipts. User questions in chat, forms or Podium include context, options with tradeoffs, and a recommendation with why. State unknowns; when factual clarification has no defensible recommendation, explain the information needed and why.
+
 ## Setup
 
 This is a configurable workflow bundle, not a zero-configuration app. No author-specific account, vault, service or permission is required or included.
@@ -36,7 +38,7 @@ This is a configurable workflow bundle, not a zero-configuration app. No author-
 | Muninn CLI | Node 24+ with `node:sqlite`; existing, separate writable ledger/vault directories and local settings. A vault is a Markdown directory, not an Obsidian service requirement |
 | Automatic turn tracking and footer | Optional Claude Code integration; approve registration and rehearse in that harness. No equivalent is supplied for Copilot or other harnesses |
 | Session events | Optional native Claude Code on macOS/Linux with `asyncRewake`; private local state root, separately approved hooks/ack permission and bounded idle coverage |
-| GitHub PR operations/footer counts | Optional GitHub CLI (`gh`), authenticated to the installing user's account with access to the relevant repositories |
+| GitHub PR operations/footer count | Optional GitHub CLI (`gh`), authenticated to the installing user's account with access to the relevant repositories |
 | Jira publication | Optional user-provided Jira tooling/access; local tickets need no Jira account |
 
 No package installation is needed for the CLI. Select your own models, branch flow, paths and permissions. Tool/hook availability and terminal link rendering vary by harness/platform; the test suite is not certification of every environment.
@@ -45,7 +47,9 @@ Give an installation agent [SETUP.md](./SETUP.md). It confirms scope/permissions
 
 Root Maestro supports discovery; child skills currently have `disable-model-invocation: true`. Maestro explicitly reads them as needed. Linking the bundle does not expose each nested skill as an independent slash command; plugin packaging is separate future work.
 
-The optional [Claude Code status line](./SETUP.md#4-optional-claude-code-status-line) displays current-repo PR actions, the user's total open PR count, session cost, context use, unresolved ledger questions, current-turn memory health, and a Podium link. It updates in the UI when assistant messages arrive; it does not modify reply text.
+The optional [Claude Code status line](./SETUP.md#4-optional-claude-code-status-line) shows the authenticated user's total open PR count across GitHub, session cost, context use, unresolved ledger questions, checkpoint health and a Podium link. Podium lists only active work, not every open PR. The line updates when assistant messages arrive without modifying reply text.
+
+The prompt/repair hook instructs the agent to patch changed Podium state with revision checks and read it back after flushing. Ledger-only saves do not update the board or prove it current. This is agent-driven coordination, not automatic GitHub synchronization.
 
 ## Settings
 

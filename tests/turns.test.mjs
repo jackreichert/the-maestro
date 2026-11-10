@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import {spawnSync} from 'node:child_process';
 import test from 'node:test';
 import {prepare, readJournal} from '../scripts/ledger.mjs';
 import {readJson} from '../scripts/storage.mjs';
@@ -27,6 +28,16 @@ test('prompt hook injects current-turn commands without persisting prompt or tra
   assert.match(output.additionalContext, new RegExp(state.turn_id));
   assert.ok(output.additionalContext.includes(cli));
   assert.ok(output.additionalContext.includes(f.config));
+  assert.match(output.additionalContext, /Podium is the single source of truth for persistent current state/);
+  assert.match(output.additionalContext, /instead of maintaining competing status files/);
+  assert.match(output.additionalContext, /question in chat, question forms or Podium, include context, concrete options and material tradeoffs, plus a recommendation and why/);
+  assert.match(output.additionalContext, /factual clarification with no defensible recommendation/);
+  assert.match(output.additionalContext, /changes to active PRs, blockers, next actions or open questions/);
+  assert.match(output.additionalContext, /include revision-checked Podium patches in pages/);
+  assert.match(output.additionalContext, /ledger events alone do not update Podium/);
+  assert.match(output.additionalContext, /only PRs in the work currently in progress, not every open PR/);
+  assert.match(output.additionalContext, /questions with their ledger event IDs/);
+  assert.match(output.additionalContext, /read back the affected Podium sections/);
   assert.doesNotMatch(JSON.stringify(state) + result.stdout, /synthetic-private/);
   assert.equal(memoryHealth(f, session), 'Memory pending');
   assert.equal(readJournal(f.ledger).length, 0);
@@ -71,7 +82,7 @@ test('repair checkpoint binds to current turn and repeated Stop does not duplica
     assert.doesNotMatch(result.stdout, /"decision"/);
   }
   assert.equal(readJournal(f.ledger).length, 1);
-  assert.equal(memoryHealth(f, session), 'Memory saved');
+  assert.match(memoryHealth(f, session), /^Muninn [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}$/);
 });
 
 test('old checkpoints and wrong-turn deltas cannot satisfy a new turn', (t) => {
@@ -88,6 +99,57 @@ test('old checkpoints and wrong-turn deltas cannot satisfy a new turn', (t) => {
   assert.equal(readJournal(f.ledger).length, 1);
 });
 
+test('last checkpoint records acknowledgement time, survives new turns, and does not advance on repeats or failures', (t) => {
+  const f = fixture(t);
+  t.mock.timers.enable({apis: ['Date'], now: new Date('2026-11-10T11:36:00Z')});
+  startTurn(f, session);
+  checkpoint(f);
+  t.mock.timers.tick(1000);
+  finishTurn(f, {hook_event_name: 'Stop', session_id: session});
+  assert.equal(currentTurn(f, session).last_checkpoint_at, '2026-11-10T11:36:01.000Z');
+  const savedLabel = memoryHealth(f, session);
+  assert.match(savedLabel, /^Muninn [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}$/);
+  t.mock.timers.tick(60000);
+  finishTurn(f, {hook_event_name: 'Stop', session_id: session});
+  assert.equal(currentTurn(f, session).last_checkpoint_at, '2026-11-10T11:36:01.000Z');
+  startTurn(f, session);
+  assert.equal(memoryHealth(f, session), `${savedLabel}; Memory pending`);
+  finishTurn(f, {hook_event_name: 'StopFailure', session_id: session});
+  assert.equal(memoryHealth(f, session), `${savedLabel}; Memory interrupted`);
+});
+
+test('checkpoint display follows the local timezone and daylight saving without displaying stored gaps', (t) => {
+  const f = fixture(t);
+  const state = startTurn(f, session);
+  const script = `import {memoryHealth} from ${JSON.stringify(new URL('../scripts/turns.mjs', import.meta.url).href)};
+    console.log(memoryHealth(${JSON.stringify({ledger: f.ledger})}, ${JSON.stringify(session)}));`;
+  for (const [timestamp, zone, expected] of [
+    ['2026-11-10T11:36:01Z', 'Asia/Jerusalem', 'Nov 10 13:36'],
+    ['2026-07-10T11:36:01Z', 'Asia/Jerusalem', 'Jul 10 14:36'],
+    ['2026-11-10T01:36:01Z', 'America/New_York', 'Nov 9 20:36'],
+  ]) {
+    fs.writeFileSync(path.join(f.ledger, `Turns/${session}/current.json`),
+      JSON.stringify({...state, status: 'saved', last_checkpoint_at: timestamp, previous_gaps: 3}));
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script],
+      {encoding: 'utf8', env: {...process.env, TZ: zone}});
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), `Muninn ${expected}`);
+    assert.equal(currentTurn(f, session).previous_gaps, 3);
+  }
+});
+
+test('legacy saved states show unknown time rather than inventing a checkpoint timestamp', (t) => {
+  const f = fixture(t);
+  const state = startTurn(f, session);
+  delete state.last_checkpoint_at;
+  state.status = 'saved';
+  fs.writeFileSync(path.join(f.ledger, `Turns/${session}/current.json`), JSON.stringify(state));
+  assert.equal(memoryHealth(f, session), 'Muninn unknown');
+  fs.writeFileSync(path.join(f.ledger, `Turns/${session}/current.json`),
+    JSON.stringify({...state, last_checkpoint_at: 'invalid'}));
+  assert.throws(() => memoryHealth(f, session), /Invalid last checkpoint timestamp/);
+});
+
 test('PreCompact saves prepared deltas without blocking and missing capture remains visible', (t) => {
   const f = fixture(t);
   startTurn(f, session);
@@ -98,7 +160,7 @@ test('PreCompact saves prepared deltas without blocking and missing capture rema
   checkpoint(f);
   const saved = run(f, 'PreCompact');
   assert.equal(saved.status, 0, saved.stderr);
-  assert.equal(memoryHealth(f, session), 'Memory saved');
+  assert.match(memoryHealth(f, session), /^Muninn [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}$/);
 });
 
 test('StopFailure flushes prepared work, records interruption and never ingests error details', (t) => {
@@ -119,7 +181,9 @@ test('StopFailure flushes prepared work, records interruption and never ingests 
   assert.doesNotMatch(JSON.stringify(archived), /synthetic/);
   checkpoint(f);
   assert.equal(run(f, 'Stop').status, 0);
-  assert.equal(memoryHealth(f, session), 'Memory saved; 1 earlier gaps');
+  assert.match(memoryHealth(f, session), /^Muninn [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}$/);
+  assert.doesNotMatch(memoryHealth(f, session), /gaps/);
+  assert.equal(currentTurn(f, session).previous_gaps, 1);
 });
 
 test('failed turns without prepared work do not invent a checkpoint', (t) => {

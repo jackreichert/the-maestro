@@ -2,20 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import {fetchPullRequests, openQuestionCount, podiumLink, renderStatusLine, summarizePullRequests} from '../scripts/lib/statusline.mjs';
+import {fetchPullRequests, openQuestionCount, podiumLink, renderStatusLine} from '../scripts/lib/statusline.mjs';
 import {loadStatuslineSettings} from '../scripts/storage.mjs';
 import {flush, prepare} from '../scripts/ledger.mjs';
 import {fixture, project} from './helpers.mjs';
 
-test('PR summary counts only drafts, requested changes, and approved mergeable PRs', () => {
-  assert.deepEqual(summarizePullRequests([
-    {isDraft: true, reviewDecision: null, mergeStateStatus: 'DIRTY'},
-    {isDraft: false, reviewDecision: 'CHANGES_REQUESTED', mergeStateStatus: 'CLEAN'},
-    {isDraft: false, reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN'},
-    {isDraft: false, reviewDecision: 'APPROVED', mergeStateStatus: 'DIRTY'},
-    {isDraft: false, reviewDecision: 'REVIEW_REQUIRED', mergeStateStatus: 'CLEAN'},
-  ]), {drafts: 1, changesRequested: 1, approvedMergeable: 1});
-});
+function prCount(totalCount) {
+  return {data: {viewer: {pullRequests: {totalCount}}}};
+}
 
 test('footer uses the current index without rereading journals, and revalidates changed journals', (t) => {
   const f = fixture(t);
@@ -52,70 +46,70 @@ test('footer uses the current index without rereading journals, and revalidates 
   assert.throws(() => openQuestionCount(f.ledger), /Incomplete journal/);
 });
 
-test('PR lookup returns current-repo actions and a global open count', () => {
+test('PR lookup counts all authored open PRs without repository discovery or result limits', () => {
   const invocations = [];
-  const stdout = JSON.stringify({data: {
-    allOpen: {issueCount: 7},
-    workspace: {issueCount: 2, nodes: [
-      {isDraft: true, reviewDecision: null, mergeStateStatus: 'DIRTY'},
-      {isDraft: false, reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN'},
-    ]},
-  }});
+  const stdout = JSON.stringify(prCount(1501));
   const result = fetchPullRequests({
     cwd: process.cwd(),
   }, (command, args, options) => {
     invocations.push({command, args, options});
-    if (args[0] === 'repo') return {status: 0, stdout: 'example-org/sample-repo\n'};
     return {status: 0, stdout};
   });
-  assert.equal(result.sessionError, null);
-  assert.equal(result.allOpenError, null);
-  assert.equal(result.allOpenCount, 7);
-  assert.deepEqual(result.sessionPullRequests, [
-    {isDraft: true, reviewDecision: null, mergeStateStatus: 'DIRTY'},
-    {isDraft: false, reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN'},
-  ]);
-  assert.deepEqual(invocations.map(({args}) => args[0]), ['repo', 'api']);
-  const query = invocations[1];
-  assert.ok(query.args.some((arg) => arg.includes('author:@me repo:example-org/sample-repo')));
+  assert.deepEqual(result, {allOpenCount: 1501, error: null});
+  assert.equal(invocations.length, 1);
+  const [query] = invocations;
+  assert.equal(query.command, 'gh');
+  assert.deepEqual(query.args.slice(0, 3), ['api', 'graphql', '-f']);
+  assert.match(query.args[3], /viewer\s*\{\s*pullRequests\(states: OPEN\) \{ totalCount \}/);
+  assert.doesNotMatch(query.args[3], /search|nodes|first:|isDraft|reviewDecision|mergeStateStatus/);
   assert.equal(query.options.cwd, process.cwd());
-  assert.equal(query.options.timeout, 2000);
-
-  const failure = fetchPullRequests({}, (command, args) => (
-    args[0] === 'repo'
-      ? {status: 1, stdout: '', stderr: 'not printed'}
-      : {status: 0, stdout: JSON.stringify({data: {allOpen: {issueCount: 4}}})}
-  ));
-  assert.match(failure.sessionError, /gh repo view exited 1/);
-  assert.equal(failure.allOpenCount, 4);
-  assert.equal(failure.allOpenError, null);
+  assert.equal(query.options.timeout, 10000);
 });
 
-test('status line shows live session metrics, PR action counts, decisions, and a clickable Podium link', () => {
+test('PR lookup distinguishes zero open PRs from GitHub errors and invalid counts', () => {
+  const empty = fetchPullRequests({}, () => ({status: 0, stdout: JSON.stringify(prCount(0))}));
+  assert.deepEqual(empty, {allOpenCount: 0, error: null});
+  for (const result of [
+    {status: 1, stdout: '', stderr: 'not printed'},
+    {status: null, error: {code: 'ETIMEDOUT'}},
+    {status: 0, stdout: '{invalid'},
+    {status: 0, stdout: '[]'},
+    {status: 0, stdout: JSON.stringify(prCount(-1))},
+    {status: 0, stdout: JSON.stringify(prCount(1.5))},
+    {status: 0, stdout: JSON.stringify(prCount('41'))},
+    {status: 0, stdout: JSON.stringify(prCount(null))},
+    {status: 0, stdout: JSON.stringify({data: {viewer: null}})},
+    {status: 0, stdout: JSON.stringify({...prCount(41), errors: [{message: 'Denied'}]})},
+  ]) {
+    const failure = fetchPullRequests({}, () => result);
+    assert.equal(failure.allOpenCount, null);
+    assert.ok(failure.error);
+  }
+});
+
+test('status line shows only the open PR count and preserves session metrics and Podium link', () => {
   const line = renderStatusLine({
     input: {cost: {total_cost_usd: 1.239}, context_window: {used_percentage: 61.6}},
-    sessionPullRequests: [
-      {isDraft: true, reviewDecision: null, mergeStateStatus: 'DIRTY'},
-      {isDraft: false, reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN'},
-    ],
-    allOpenCount: 7,
+    allOpenCount: 41,
     decisions: 2,
     memory: 'Memory saved',
     podiumUrl: 'file:///tmp/Work%20Vault/Podium/README.md',
   });
-  assert.match(line, /PRs here 1 draft, 1 approved\/mergeable/);
-  assert.match(line, /My open PRs 7/);
+  assert.ok(line.startsWith('\u{1F3BC} Maestro | \u001b]8;;file:///tmp/Work%20Vault/Podium/README.md\u001b\\Podium\u001b]8;;\u001b\\ | '));
+  assert.match(line, /Open PRs 41 \|/);
+  assert.doesNotMatch(line, /PRs here|github\.com|My open PRs|Open PRs 41:/);
   assert.match(line, /Session \$1\.24 est\./);
   assert.match(line, /Context 62%/);
   assert.match(line, /Decisions 2/);
   assert.match(line, /Memory saved/);
   assert.match(line, /\u001b]8;;file:\/\/\/tmp\/Work%20Vault\/Podium\/README\.md\u001b\\Podium\u001b]8;;\u001b\\/);
+  assert.match(renderStatusLine({input: {}, allOpenCount: 0}), /Open PRs 0 \|/);
 });
 
 test('status line names unavailable fields and omits invalid negative metrics', () => {
   const line = renderStatusLine({input: {cost: {total_cost_usd: -1}, context_window: {used_percentage: null}},
-    sessionPullRequests: null, allOpenCount: null, decisions: null, podiumUrl: null});
-  assert.equal(line, 'Maestro | PRs here unavailable | My open PRs unavailable | Session cost unavailable | Context unavailable | Decisions unavailable | Memory unavailable | Podium unavailable');
+    allOpenCount: null, decisions: null, podiumUrl: null});
+  assert.equal(line, '\u{1F3BC} Maestro | Podium unavailable | Open PRs unavailable | Session cost unavailable | Context unavailable | Decisions unavailable | Memory unavailable');
 });
 
 test('Podium link prefers canonical page, falls back to workspace page, and rejects symlinks', (t) => {

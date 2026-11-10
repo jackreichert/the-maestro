@@ -22,14 +22,23 @@ function checkpointInstructions(state) {
   const cli = `${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))}`;
   const settings = `--settings ${quote(local)}`;
   return `Maestro memory: session_id=${state.session_id}, turn_id=${state.turn_id}. ` +
+    'Podium is the single source of truth for persistent current state; context notes, plans and handoffs link there instead of maintaining competing status files. ' +
+    'Ledger stores history and rationale, Library reusable knowledge, and checkpoint records technical receipts. ' +
+    'For every user question in chat, question forms or Podium, include context, concrete options and material tradeoffs, plus a recommendation and why. ' +
+    'State unknowns; for factual clarification with no defensible recommendation, explain the information needed and why. ' +
     `Before finishing, prepare a safe checkpoint for THIS turn using ${cli} prepare ${settings} with JSON on stdin ` +
     `{"session_id":"${state.session_id}","turn_id":"${state.turn_id}","topics":[],"events":[],"pages":[]}, ` +
-    'replacing the arrays with relevant safe decisions, outcomes, rationale, evidence and next actions. ' +
+    'using relevant safe decisions, outcomes, rationale, evidence and next actions. ' +
     `When needed, read ${quote(path.join(root, 'reference/persistence.md'))} for the schema and patch rules; reuse existing topics via search. ` +
-    'Empty arrays are only for a genuinely no-change turn, never to bypass saving substantive work. ' +
-    'Include changed Podium coordination and verified reusable library patches only when relevant; preserve existing edits. ' +
+    'Empty arrays are only for genuinely no-change turns. ' +
+    'For changes to active PRs, blockers, next actions or open questions, read Podium/README.md and the relevant stream page, ' +
+    'then include revision-checked Podium patches in pages; ledger events alone do not update Podium. ' +
+    'Keep only PRs in the work currently in progress, not every open PR. Use verified PR links, observed review/CI and checked times; mark unavailable evidence explicitly. ' +
+    'Show questions with their ledger event IDs; record the resolving decision before removing them. ' +
+    'Preserve user priorities, unrelated edits and newer updates from other sessions. Include relevant verified reusable library patches. ' +
     `Then run ${cli} flush ${settings} ${quote(state.session_id)} and verify each receipt before finishing. ` +
-    'Do this automatically; do not ask the user to request routine memory updates. ' +
+    'For changed coordination, read back the affected Podium sections to verify PRs and questions; a saved ledger receipt does not prove board freshness. ' +
+    'Do this automatically; routine memory updates need no user reminder. ' +
     'Never read transcripts or store raw prompts, personal data or secrets.';
 }
 

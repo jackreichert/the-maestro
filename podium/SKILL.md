@@ -8,15 +8,16 @@ disable-model-invocation: true
 
 The current coordination component of [Muninn](../README.md#muninn).
 
-Current coordination, not history. Podium owns priorities/workspace state; [Ledger](../ledger/SKILL.md) owns outcomes/decisions/rationale; tickets own intent/acceptance criteria; [Library](../library/SKILL.md) owns reusable knowledge. Link, don't duplicate.
+Podium is the single source of truth for persistent current state: priorities, active PRs, open questions, blockers, next actions and resume pointers. Context notes, plans and handoffs link to its landing/stream pages rather than duplicate status. Plans/tickets own design and intent/acceptance criteria; [Ledger](../ledger/SKILL.md) owns history, outcomes, decisions and rationale; [Library](../library/SKILL.md) owns reusable knowledge. Checkpoint records are technical receipts, not another work board.
 
 ## Slim landing page
 
 - Resolve `VAULT_ROOT` from [settings](../README.md#settings); ask if unset. Entry: `Podium/README.md`; overflow: `Podium/Streams/<stream-id>.md`. Reuse existing records, not a second dashboard.
 - Use [the template](./template.md). User-ranked streams: stable ID, outcome, repos, phase/status, blocker, next action, bead pointers. A bead is a ledger event ID/topic brief, not a new format.
 - Link existing [Xenophon](../xenophon/SKILL.md) tickets by their exact IDs on streams/work items, PRs, blocked questions, waiting items and resume pointers. Use the most specific task, plus its parent when useful; verify the active/archive note exists. Ticket IDs identify intent/ACs, not ledger beads or external issue keys. If no ticket exists, say `untracked`; never invent IDs or infer mappings from similar titles.
-- PRs grouped by stream, then repo: link, purpose, target branch, observed review/CI, dependency, next action/owner, checked time. Implementation, merge, QA, staging, production differ; unknown is not success.
-- User questions by stream: associated ledger question hash; one-way (irreversible/costly) or two-way (reversible within stated limits) gate; context, options, recommendation/tradeoff, blocked work, beads, what was checked. Only real deadlines; reversibility grants no permission.
+- Only PRs in active work, grouped by stream, then repo: link, purpose, target branch, observed review/CI, dependency, next action/owner, checked time. Being open is not enough to include a PR. Implementation, merge, QA, staging, production differ; unknown is not success.
+- Every question to the user, in chat, question forms or Podium, includes context, concrete options and material tradeoffs, plus a recommendation and why. State unknowns rather than guessing; if factual clarification has no defensible recommendation, explain the information needed and why.
+- Group questions by stream with their ledger question hash, blocked work, beads, checked evidence and gate: one-way (irreversible/costly) or two-way (reversible within stated limits). Only real deadlines; reversibility grants no permission.
 - Waiting on others: owner/follow-up trigger. Resume: selected stream/task, repo/worktree/branch, last verified step, verification owed, next step. Observe ownership separately; old pages cannot prove live leases.
 - Target 500-1,000 tokens. Show overflow counts/stream links; never silently omit active work. Keep history/rationale in beads.
 - Optional appetite: agreed time/cost budget, end/review trigger, cut-first scope. At the limit, ask to rescope, stop, or re-bet; never extend silently.
@@ -32,6 +33,7 @@ Current coordination, not history. Podium owns priorities/workspace state; [Ledg
 ## Updates and recovery
 
 - Prepare changed fields with checkpoint ID, expected revision, source beads, observation times. Preserve unrelated edits/user priorities; never infer reprioritization.
+- Current-state changes require corresponding Podium patches, not just ledger events. Read back the affected sections after applying them; a saved checkpoint does not by itself prove the board is current.
 - Follow [Ledger's checkpoint contract](../ledger/SKILL.md): `Stop` applies prepared updates under a shared Podium writer lock, checks revision, reads back, and acknowledges separately. Persist new beads first. Conflicts stay pending, not last-writer-wins; partial failure cannot imply other surfaces succeeded.
 - Fresh start/after compaction: read landing page, select requested/already-selected task, follow its ticket for intent/ACs and retrieve relevant bead updates/library context. Validate ticket links, freshness, live ownership, worktree/branch and execution state; reconcile stale/missing state, never guess.
 - Interrupted work: check last evidence, branch/head, worktree, dirty/untracked/unpushed changes, agent state/ownership. Preserve work; reconcile missing paths/uncertain owners. No automatic lock stealing, forced cleanup, duplicate dispatch; worktree creation/restarts need applicable authorization.

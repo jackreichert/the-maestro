@@ -77,6 +77,8 @@ Session monitoring is separate from the four synchronous memory hooks. Only afte
 
 The status line is separate from Stop/PreCompact hooks. It updates in the Claude Code UI when assistant messages arrive; it does not append text to chat replies.
 
+The Podium link appears immediately after `Maestro` so it remains visible when the terminal truncates the status line.
+
 After explicit approval, merge this setting into the selected Claude Code settings file. Replace placeholders with verified absolute paths and preserve existing settings:
 
 ```json
@@ -88,7 +90,13 @@ After explicit approval, merge this setting into the selected Claude Code settin
 }
 ```
 
-The script shows PRs authored by the current user in the active repository (draft, changes requested, and approved/mergeable) plus their total open PR count across GitHub. It also shows Claude Code's estimated session cost and context percentage, unresolved Ledger questions, current-turn memory health, and an OSC 8 Podium file link when the terminal supports it. Memory is pending, saved, checkpoint missing, write failed, interrupted, or untracked; earlier coverage gaps stay counted after a later turn succeeds. Saved means requested writes were acknowledged, not that every relevant fact was captured. It prefers `Podium/README.md`, then falls back to `Projects/<container-name>/Status/The-Podium.md`. PR state comes from `gh`; the ledger and Podium sections require their configured roots. Missing roots or data are shown as unavailable. The cost is Claude Code's estimate, not a billing statement.
+The footer shows the authenticated user's total authored open PRs across GitHub, including drafts: `Open PRs 41`. It queries the PR connection total without fetching PRs, requiring a local repository, or using GitHub search's result limit. Podium lists active work, not every open PR. Other fields show estimated session cost, context use, unresolved Ledger questions, checkpoint health and an OSC 8 Podium link on supported terminals.
+
+Successful saves show `Muninn Nov 10 13:43`: the last checkpoint acknowledgement in local time, with daylight-saving adjustments, an English abbreviated month and 24-hour minutes. The display omits year, seconds and timezone; storage remains UTC. The timestamp carries across turns within the session and does not advance on repeated Stop hooks. Older saved records without a time show `Muninn unknown`. Pending, missing, failed and interrupted states remain visible beside the last known checkpoint.
+
+Gap counts stay recorded but not in the footer. They count earlier turns not marked saved when the next prompt began, including pending turns—not proven data loss. Put relevant diagnostics in Podium's Resume section during normal coordination updates; the footer does not write them. Checkpoints acknowledge requested writes, not complete fact capture.
+
+The Podium link prefers `Podium/README.md`, then falls back to `Projects/<container-name>/Status/The-Podium.md`. PR state comes from `gh`; the ledger and Podium sections require their configured roots. Missing roots or data are shown as unavailable. Failed or invalid PR responses are reported on stderr rather than displayed as a zero count. The cost is Claude Code's estimate, not a billing statement.
 
 ## 5. Rehearse before live memory
 

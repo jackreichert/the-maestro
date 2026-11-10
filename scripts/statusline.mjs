@@ -60,14 +60,12 @@ try {
   }
   console.log(renderStatusLine({
     input,
-    sessionPullRequests: prs.sessionPullRequests,
     allOpenCount: prs.allOpenCount,
     decisions,
     podiumUrl,
     memory,
   }));
-  if (prs.sessionError) console.error(`Session-repo PR status unavailable: ${prs.sessionError}`);
-  if (prs.allOpenError) console.error(`Open-PR count unavailable: ${prs.allOpenError}`);
+  if (prs.error) console.error(`Open-PR count unavailable: ${prs.error}`);
 } catch (error) {
   console.error(`Maestro status line unavailable: ${error.code ?? error.message}`);
   console.log('Maestro status line unavailable');

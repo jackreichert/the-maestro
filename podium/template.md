@@ -24,6 +24,7 @@ selected_stream: "<stream-id or null>"
 - Verification owed: <remaining checks>
 - Next: <concrete action>
 - Context: <bead/library links>
+- Checkpoint gaps, if any: <session, count, observed turn statuses/times, verification owed; unconfirmed saves are not proof of lost content>
 
 ## Open PRs
 
@@ -40,8 +41,9 @@ selected_stream: "<stream-id or null>"
 ### <Stream ID / name>
 
 - **<Ledger question hash>: <question>** — <one-way / two-way gate and reversibility limits>
-  - Context / options: <decision essentials>
-  - Recommendation: <choice/rationale/tradeoff>
+  - Context: <why this decision is needed now, evidence and unknowns>
+  - Options: <concrete choices and material tradeoffs>
+  - Recommendation and why: <preferred choice, rationale and main downside; if none is defensible, explain what information is needed and why>
   - Blocks: <work; real deadline only>
   - Tickets: <linked Xenophon IDs or untracked>
   - Beads: <references>

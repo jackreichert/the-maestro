@@ -50,7 +50,7 @@ test('relocated runtime uses a fresh home config without installed hooks or GitH
 
   const footer = run('statusline.mjs', [], {session_id: 'fresh-session'});
   assert.equal(footer.status, 0, footer.stderr);
-  assert.match(footer.stdout, /Memory saved/);
+  assert.match(footer.stdout, /Muninn [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}(?: \||\n)/);
   assert.match(footer.stdout, /Decisions 0/);
   assert.match(footer.stderr, /Open-PR count unavailable: ENOENT/);
   assert.doesNotMatch(footer.stderr, /settings unavailable/);
