@@ -35,11 +35,13 @@ export function validateEnvelope(input) {
       && [topic.aliases, topic.repos, topic.references].every(strings), 'Invalid topic');
   }
   for (const event of input.events) {
-    keys(event, ['id', 'topic_id', 'kind', 'summary', 'sources', 'details', 'resolves', 'supersedes', 'replaces'],
+    keys(event, ['id', 'short_ref', 'topic_id', 'kind', 'summary', 'sources', 'details', 'resolves', 'supersedes', 'replaces'],
       ['id', 'topic_id', 'kind', 'summary', 'sources']);
     requireValue(identifier(event.id) && identifier(event.topic_id) && kinds.includes(event.kind)
       && typeof event.summary === 'string' && event.summary.length > 0 && strings(event.sources), 'Invalid event');
     requireValue(event.details === undefined || typeof event.details === 'string', 'Invalid event details');
+    requireValue(event.short_ref === undefined || (typeof event.short_ref === 'string'
+      && /^[a-zA-Z0-9]{4}$/.test(event.short_ref)), 'Invalid short event reference');
     for (const key of ['resolves', 'supersedes', 'replaces']) {
       requireValue(event[key] === undefined || (strings(event[key]) && event[key].every(identifier)), 'Invalid event relationship');
     }

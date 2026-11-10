@@ -291,6 +291,9 @@ test('held locks fail fast; independent process writers produce unique global se
     if (result.code !== 0) assert.equal(cli(f, 'flush', [result.session]).status, 0);
   }
   assert.deepEqual(readJournal(f.ledger).map((row) => row.seq), [1, 2, 3]);
+  const refs = readJournal(f.ledger).flatMap(row => row.payload.events.map(event => event.short_ref));
+  assert.equal(new Set(refs).size, refs.length);
+  for (const ref of refs) assert.match(ref, /^[a-zA-Z0-9]{4}$/);
 });
 
 test('replacement patches apply dollar characters literally and reject ambiguous matches', (t) => {

@@ -79,6 +79,8 @@ Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery 
 
 Read [PR preparation](./pr-preparation/SKILL.md) when preparing PRs, checking open PRs, addressing feedback/conflicts or checking readiness. It owns bot dispositions, human-review gates and publication checks. Read [PR writing and lifecycle](./reference/prs.md) for titles/descriptions and post-merge reconciliation.
 
+When asked for a list of PRs, group by repository heading and use copy-paste-friendly bullets: `- <full PR URL> — <short description>`. Put the link first on each line; no tables or extra commentary inside the list unless requested.
+
 ## PR size
 
 - Each slice must be self-contained and safe to merge into its intended base: buildable, tested, backward-compatible where required, and usable if delivery stops there. Ideally deliver one complete feature or a coherent, complete aspect of one, including its wiring, tests and relevant docs. Never leave broken intermediate behavior or require a later PR to make the merged slice safe.
