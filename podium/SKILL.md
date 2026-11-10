@@ -8,6 +8,8 @@ disable-model-invocation: true
 
 The current coordination component of [Muninn](../README.md#muninn).
 
+`disable-model-invocation: true` controls automatic skill invocation, not Podium availability or page writes. Maestro reads this skill explicitly. Do not skip updates because of that field; report a concrete path/access/configuration error if a page cannot be updated.
+
 Podium is the single source of truth for persistent current state: priorities, active PRs, open questions, blockers, next actions and resume pointers. Context notes, plans and handoffs link to its landing/stream pages rather than duplicate status. Plans/tickets own design and intent/acceptance criteria; [Ledger](../ledger/SKILL.md) owns history, outcomes, decisions and rationale; [Library](../library/SKILL.md) owns reusable knowledge. Checkpoint records are technical receipts, not another work board.
 
 ## Slim landing page
