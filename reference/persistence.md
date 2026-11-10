@@ -72,7 +72,21 @@ The writer locks ledger then vault, validates journal integrity/references, assi
 
 `Pending/<session>/<checkpoint-id>.state.json` independently records ledger, page and index outcomes. CLI `flush` returns each checkpoint's `turn_id`, ledger/Podium/library/index acknowledgements and question-removal status. Completed receipts remain for retries; they do **not** prove the latest turn was captured. Partial failures exit `1`, keep pending work, and expose errors. No broad rollback or automatic deletion.
 
-Locks fail fast and are never stolen. On stale-lock or corrupt/torn-journal errors, stop competing writers, preserve evidence, verify ownership/process termination, and obtain approval for targeted reconciliation. Never truncate history or broadly remove lock/config directories. Applied replacements are marked `superseded`; use receipts rather than inferring application from append success.
+Locks fail fast and are never automatically stolen. A killed writer can leave a lock behind; backoff cannot release it. Diagnose without replaying writes:
+
+```sh
+node /absolute/bundle/scripts/memory.mjs lock-status --settings /absolute/settings.json ledger
+```
+
+Scopes are `ledger`, `vault`, or `session:<session-id>`. Status is `unlocked`, `live`, `abandoned` (confirmed dead PID on this host), or `unknown`. A reused/live PID is never assumed stale. After explicit approval, recover only the exact observed owner:
+
+```sh
+node /absolute/bundle/scripts/memory.mjs unlock --settings /absolute/settings.json ledger EXPECTED_PID EXPECTED_STARTED_TIMESTAMP
+```
+
+`unlock` rechecks host/process, expected PID/start timestamp and directory contents under an exclusive recovery gate. Writers check that gate before and after acquisition; live, foreign, missing/invalid-owner and changed locks remain untouched. Only the abandoned lock's owner file and empty directory are removed; pending checkpoints, pages and journal are not changed. Inspect receipts/current page revisions before retrying the original prepared operation. A crash during recovery can itself leave `.writer-recovery.lock`; preserve it and obtain targeted manual reconciliation rather than deleting it recursively.
+
+On corrupt/torn-journal errors, stop competing writers, preserve evidence and obtain approval for targeted reconciliation. Never truncate history or broadly remove lock/config directories. Applied replacements are marked `superseded`; use receipts rather than inferring application from append success.
 
 SQLite/FTS is derived. A flush rebuilds once after all its unindexed checkpoints, then acknowledges each index outcome; repeated completed flushes skip rebuilds. Queries rebuild transactionally when journal file signatures change. Search covers topic names/aliases/repos/references and event text/sources, not whole-library contents. The footer's open-question count uses this same index; current-index queries don't parse monthly logs, while writes/rebuilds validate them. Rebuild failures preserve ledger truth and remain explicit, never stale success.
 

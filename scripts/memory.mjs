@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {loadSettings, requireValue, withLock} from './storage.mjs';
+import {loadSettings, recoverWriterLock, requireValue, scopedPath, withLock, writerLockStatus} from './storage.mjs';
 import {flush, lookup, rebuild, recover, refreshBrief, search} from './ledger.mjs';
 import {currentTurn, finishTurn, prepareTurn, startTurn} from './turns.mjs';
 
@@ -88,10 +88,18 @@ try {
     local = args[settingsPosition + 1];
     args.splice(settingsPosition, 2);
   }
-  requireValue(['prepare', 'flush', 'hook', 'current', 'search', 'lookup', 'recover', 'brief', 'rebuild'].includes(command), 'Commands: prepare, flush, hook, current, search, lookup, recover, brief, rebuild');
+  requireValue(['prepare', 'flush', 'hook', 'current', 'search', 'lookup', 'recover', 'brief', 'rebuild', 'lock-status', 'unlock'].includes(command), 'Commands: prepare, flush, hook, current, search, lookup, recover, brief, rebuild, lock-status, unlock');
   const context = loadSettings(path.join(root, 'settings.json'), local);
   let result;
-  if (command === 'prepare') {
+  if (command === 'lock-status' || command === 'unlock') {
+    requireValue(args.length === (command === 'unlock' ? 3 : 1), 'Use lock-status SCOPE or unlock SCOPE EXPECTED_PID EXPECTED_STARTED');
+    const scope = args[0];
+    requireValue(['ledger', 'vault'].includes(scope) || /^session:[a-zA-Z0-9][\w-]{0,127}$/.test(scope), 'Invalid lock scope');
+    const directory = scope === 'ledger' ? context.ledger : scope === 'vault' ? context.vault
+      : scopedPath(context.ledger, `Turns/${scope.slice(8)}`);
+    result = command === 'lock-status' ? writerLockStatus(directory)
+      : recoverWriterLock(directory, {pid: Number(args[1]), started: args[2]});
+  } else if (command === 'prepare') {
     requireValue(args.length === 0, 'prepare accepts JSON on stdin only');
     result = prepareTurn(context, stdinJson());
   } else if (command === 'hook') {
