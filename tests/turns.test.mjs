@@ -40,7 +40,8 @@ test('prompt hook injects current-turn commands without persisting prompt or tra
   assert.match(output.additionalContext, /Keep pass, partial and not-run distinct/);
   assert.match(output.additionalContext, /Do not ask permission for routine coupled corrections backed by verified evidence/);
   assert.match(output.additionalContext, /only PRs in the work currently in progress, not every open PR/);
-  assert.match(output.additionalContext, /questions with their ledger event IDs/);
+  assert.match(output.additionalContext, /questions with their four-character short_ref/);
+  assert.match(output.additionalContext, /full event IDs for resolves/);
   assert.match(output.additionalContext, /read back the affected Podium sections/);
   assert.doesNotMatch(JSON.stringify(state) + result.stdout, /synthetic-private/);
   assert.equal(memoryHealth(f, session), 'Memory pending');

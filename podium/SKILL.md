@@ -20,15 +20,15 @@ Podium is the single source of truth for persistent current state: priorities, a
 - Link existing [Xenophon](../xenophon/SKILL.md) tickets by their exact IDs on streams/work items, PRs, blocked questions, waiting items and resume pointers. Use the most specific task, plus its parent when useful; verify the active/archive note exists. Ticket IDs identify intent/ACs, not ledger beads or external issue keys. If no ticket exists, say `untracked`; never invent IDs or infer mappings from similar titles.
 - Only PRs in active work, grouped by stream, then repo: link, purpose, target branch, observed review/CI, dependency, next action/owner, checked time. Being open is not enough to include a PR. Implementation, merge, QA, staging, production differ; unknown is not success.
 - Every question to the user, in chat, question forms or Podium, includes context, concrete options and material tradeoffs, plus a recommendation and why. State unknowns rather than guessing; if factual clarification has no defensible recommendation, explain the information needed and why.
-- Group questions by stream with their ledger question hash, blocked work, beads, checked evidence and gate: one-way (irreversible/costly) or two-way (reversible within stated limits). Only real deadlines; reversibility grants no permission.
+- Group questions by stream with their four-character ledger reference, blocked work, beads, checked evidence and gate: one-way (irreversible/costly) or two-way (reversible within stated limits). Only real deadlines; reversibility grants no permission.
 - Waiting on others: owner/follow-up trigger. Resume: selected stream/task, repo/worktree/branch, last verified step, verification owed, next step. Observe ownership separately; old pages cannot prove live leases.
 - Target 500-1,000 tokens. Show overflow counts/stream links; never silently omit active work. Keep history/rationale in beads.
 - Optional appetite: agreed time/cost budget, end/review trigger, cut-first scope. At the limit, ask to rescope, stop, or re-bet; never extend silently.
 
 ## Answer questions
 
-- Persist a `question` bead; display its assigned event ID as the hash beside every landing/overflow question. Edits retain the ID, not a content hash.
-- Accept `hash + answer`, quoted question/answer, or vault answers read on request. Use CLI `lookup` for exact IDs; otherwise require a unique contextual open-question match. Clarify ambiguity, including answer-only text.
+- Persist a `question` bead; display its assigned `short_ref` (for example `Kd8h`) beside every landing/overflow question. Retrieve existing questions with `lookup` to get their short reference; do not invent one. Edits retain the reference, not a content hash.
+- Accept `reference + answer`, full event ID, quoted question/answer, or vault answers read on request. CLI `lookup` accepts case-sensitive short references or full IDs and returns the canonical `id`; use that ID in decision/page `resolves`. Otherwise require a unique contextual open-question match. Clarify ambiguity, including answer-only text.
 - Check current question/resolution. Identical repeats are no-ops; conflicts require reconciliation, never inferred reversal. Preserve unanswered questions/unprocessed edits.
 - Save/read back a decision bead resolving the question, then remove it from all open Podium lists. Ledger retains history; no Podium resolution archive. Failed decision write keeps it open; failed removal stays pending for retry, even when the repeated answer is a no-op.
 - Reassess blocked work within existing permissions; answering is not completing the resulting work.

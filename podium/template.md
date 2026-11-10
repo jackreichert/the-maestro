@@ -42,7 +42,7 @@ Use vault-relative `[[note/path|Label]]` links for vault notes (`\|` in tables);
 
 ### <Stream ID / name>
 
-- **<Ledger question hash>: <question>** — <one-way / two-way gate and reversibility limits>
+- **<Ledger short_ref, e.g. Kd8h>: <question>** — <one-way / two-way gate and reversibility limits>
   - Context: <why this decision is needed now, evidence and unknowns>
   - Options: <concrete choices and material tradeoffs>
   - Recommendation and why: <preferred choice, rationale and main downside; if none is defensible, explain what information is needed and why>

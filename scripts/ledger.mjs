@@ -5,6 +5,7 @@ import {
   withLock, writeJson, atomicWrite, ensureDirectory, keys,
 } from './storage.mjs';
 import {envelopeHash, identifier, prepareEnvelope, validateEnvelope} from './schema.mjs';
+import {eventReferences} from './references.mjs';
 
 function logFiles(root) {
   const directory = scopedPath(root, 'Events');
@@ -97,21 +98,32 @@ export function prepare(context, input) {
     const relative = `Pending/${payload.session_id}/${payload.id}.json`;
     const existing = readJson(context.ledger, relative);
     if (existing) {
+      for (const event of payload.events) {
+        const saved = existing.events.find(item => item.id === event.id);
+        if (event.short_ref === undefined && saved?.short_ref) event.short_ref = saved.short_ref;
+      }
       requireValue(envelopeHash(existing) === envelopeHash(payload), 'Checkpoint ID reused with different payload');
       return existing;
     }
     const rows = readJournal(context.ledger);
     const committed = rows.find((row) => row.payload.id === payload.id);
     if (committed) requireValue(committed.payload_hash === envelopeHash(payload), 'Committed checkpoint ID collision');
-    else validateReferences(rows, payload);
+    else {
+      validateReferences(rows, payload);
+      const refs = eventReferences(context.ledger, [...rows.flatMap(row => row.payload.events), ...payload.events]);
+      for (const event of payload.events) event.short_ref = refs.get(event.id);
+      validateEnvelope(payload);
+    }
     writeJson(context.ledger, relative, payload);
     return payload;
   });
 }
 
 const containsId = (text, id) => new RegExp(`(?:^|[^a-zA-Z0-9_-])${id}(?=$|[^a-zA-Z0-9_-])`).test(text ?? '');
+const containsQuestion = (text, id, refs) => containsId(text, id)
+  || (refs.has(id) && containsId(text, refs.get(id)));
 
-function patchResult(current, page, questions) {
+function patchResult(current, page, questions, refs) {
   requireValue((current === null ? null : hash(current)) === page.expected_sha256, 'Page revision conflict; preserve edits and reprepare');
   let text = current ?? '';
   for (const {before, after} of page.changes) {
@@ -124,11 +136,12 @@ function patchResult(current, page, questions) {
     }
   }
   for (const id of page.resolves ?? []) {
-    requireValue(containsId(current, id) && !containsId(text, id), 'Resolved question must be removed from patched page');
+    requireValue(containsQuestion(current, id, refs) && !containsQuestion(text, id, refs),
+      'Resolved question must be removed from patched page');
   }
   if (page.surface === 'podium') {
     for (const id of questions) {
-      requireValue(!containsId(current, id) || containsId(text, id) || page.resolves?.includes(id),
+      requireValue(!containsQuestion(current, id, refs) || containsQuestion(text, id, refs) || page.resolves?.includes(id),
         'Removing a question requires explicit resolution references');
     }
   }
@@ -136,6 +149,7 @@ function patchResult(current, page, questions) {
 }
 
 function applyPages(context, payload, state, saveState, fault, questions, rows) {
+  const refs = eventReferences(context.ledger, rows.flatMap(row => row.payload.events));
   for (const page of payload.pages) {
     if (state.pages[page.id]?.status === 'superseded') continue;
     try {
@@ -143,7 +157,7 @@ function applyPages(context, payload, state, saveState, fault, questions, rows) 
         const current = readText(context.vault, page.path);
         const saved = state.pages[page.id];
         if (!saved?.result_sha256 || current === null || hash(current) !== saved.result_sha256) {
-          const result = patchResult(current, page, questions);
+          const result = patchResult(current, page, questions, refs);
           state.pages[page.id] = {surface: page.surface, status: 'pending', result_sha256: hash(result)};
           saveState();
           fault('before-page', page);
@@ -289,6 +303,7 @@ export function flush(context, session, {fault = () => {}} = {}) {
       }
     }
     if (completed.some(({payload}) => payload.pages.some((page) => page.resolves?.length))) {
+      const refs = eventReferences(context.ledger, rows.flatMap(row => row.payload.events));
       let text;
       let error;
       try { text = podiumText(context); } catch (failure) { error = failure.code ?? failure.message; }
@@ -296,7 +311,8 @@ export function flush(context, session, {fault = () => {}} = {}) {
         const resolving = [...new Set(payload.pages.flatMap((page) => page.resolves ?? []))];
         if (!resolving.length) continue;
         const previous = canonical(state);
-        state.question_removals = Object.fromEntries(resolving.map((id) => [id, error || containsId(text, id) ? 'failed' : 'applied']));
+        state.question_removals = Object.fromEntries(resolving.map((id) => [id,
+          error || containsQuestion(text, id, refs) ? 'failed' : 'applied']));
         if (error) state.question_error = error;
         else delete state.question_error;
         if (canonical(state) !== previous) writeJson(context.ledger, statePath, state);
@@ -322,6 +338,7 @@ function openDatabase(context) {
 }
 
 export function rebuild(context, rows = readJournal(context.ledger)) {
+  const refs = eventReferences(context.ledger, rows.flatMap(row => row.payload.events));
   const db = openDatabase(context);
   try {
     db.exec(`BEGIN IMMEDIATE;
@@ -339,7 +356,7 @@ export function rebuild(context, rows = readJournal(context.ledger)) {
     }
     for (const row of rows) {
       for (const event of row.payload.events) {
-        const entry = {...event, seq: row.seq, timestamp: row.payload.timestamp, session_id: row.payload.session_id, turn_id: row.payload.turn_id};
+        const entry = {...event, short_ref: refs.get(event.id), seq: row.seq, timestamp: row.payload.timestamp, session_id: row.payload.session_id, turn_id: row.payload.turn_id};
         db.prepare('INSERT INTO events VALUES (?, ?, ?, ?)').run(event.id, event.topic_id, row.seq, JSON.stringify(entry));
         db.prepare('INSERT INTO search VALUES (?, ?, ?)').run(event.id, event.topic_id,
           [event.summary, event.details ?? '', ...event.sources].join(' '));
@@ -347,6 +364,7 @@ export function rebuild(context, rows = readJournal(context.ledger)) {
     }
     db.prepare('INSERT OR REPLACE INTO metadata VALUES (?, ?)').run('fingerprint', fingerprint(context));
     db.prepare('INSERT OR REPLACE INTO metadata VALUES (?, ?)').run('seq', String(rows.length));
+    db.prepare('INSERT OR REPLACE INTO metadata VALUES (?, ?)').run('short_references', '1');
     db.exec('COMMIT');
   } catch (error) {
     if (db.isTransaction) db.exec('ROLLBACK');
@@ -375,7 +393,9 @@ function currentDatabase(context) {
   try {
     const hasMetadata = db.prepare("SELECT name FROM sqlite_master WHERE name = 'metadata'").get();
     const saved = hasMetadata ? db.prepare("SELECT value FROM metadata WHERE key = 'fingerprint'").get()?.value : null;
-    if (saved !== fingerprint(context)) {
+    const references = hasMetadata ? db.prepare("SELECT value FROM metadata WHERE key = 'short_references'").get()?.value : null;
+    if (references) eventReferences(context.ledger, []);
+    if (saved !== fingerprint(context) || references !== '1') {
       db.close();
       db = null;
       rebuild(context);
@@ -409,7 +429,9 @@ export function search(context, term) {
     const db = currentDatabase(context);
     try {
       const phrase = `"${term.replaceAll('"', '""')}"`;
-      return db.prepare('SELECT id, topic_id, snippet(search, 2, \'<\', \'>\', \'...\', 24) AS excerpt FROM search WHERE search MATCH ? LIMIT 20').all(phrase);
+      const refs = eventReferences(context.ledger, []);
+      return db.prepare('SELECT id, topic_id, snippet(search, 2, \'<\', \'>\', \'...\', 24) AS excerpt FROM search WHERE search MATCH ? LIMIT 20')
+        .all(phrase).map(row => refs.has(row.id) ? {...row, short_ref: refs.get(row.id)} : row);
     } finally { db.close(); }
   });
 }
@@ -419,12 +441,13 @@ export function lookup(context, id) {
   return withLock(context.ledger, () => {
     const db = currentDatabase(context);
     try {
-      const record = db.prepare('SELECT json FROM events WHERE id = ?').get(id);
-      requireValue(record, 'Unknown event ID');
-      const event = JSON.parse(record.json);
+      const record = db.prepare("SELECT json FROM events WHERE id = ? OR json_extract(json, '$.short_ref') = ?").all(id, id);
+      requireValue(record.length <= 1, 'Ambiguous event reference; use its full ID and reconcile reservations');
+      requireValue(record.length, 'Unknown event ID');
+      const event = JSON.parse(record[0].json);
       const related = db.prepare('SELECT json FROM events WHERE topic_id = ? ORDER BY seq, rowid').all(event.topic_id)
         .map((row) => JSON.parse(row.json))
-        .filter((other) => ['resolves', 'supersedes', 'replaces'].some((key) => other[key]?.includes(id)));
+        .filter((other) => ['resolves', 'supersedes', 'replaces'].some((key) => other[key]?.includes(event.id)));
       return {event, related};
     } finally { db.close(); }
   });
@@ -447,7 +470,7 @@ function topicData(context, id) {
 export function refreshBrief(context, id) {
   return withLock(context.ledger, () => {
     const data = topicData(context, id);
-    const lines = data.events.map((event) => `- [${event.kind}] ${event.id}: ${event.summary}${event.details ? `\n  ${event.details}` : ''}\n  Sources: ${event.sources.join(', ') || 'none'}${['resolves', 'supersedes', 'replaces'].map((key) => event[key]?.length ? `; ${key}: ${event[key].join(', ')}` : '').join('')}`);
+    const lines = data.events.map((event) => `- [${event.kind}] ${event.short_ref} (${event.id}): ${event.summary}${event.details ? `\n  ${event.details}` : ''}\n  Sources: ${event.sources.join(', ') || 'none'}${['resolves', 'supersedes', 'replaces'].map((key) => event[key]?.length ? `; ${key}: ${event[key].join(', ')}` : '').join('')}`);
     const text = `---\ntopic_id: ${id}\nupdated: ${new Date().toISOString()}\ncovered_through_seq: ${data.seq}\n---\n\n# ${data.topic.name}\n\n## Evidence through sequence ${data.seq}\n\n${lines.join('\n') || 'No events.'}\n\nAll topic events through the watermark are listed, not synthesized. Relationships are explicit; unresolved contradictions remain. Read Podium for current coordination.\n`;
     const metadata = {topic_id: id, covered_through_seq: data.seq, brief_sha256: hash(text)};
     writeJson(context.ledger, `Topics/${id}/brief-state.json`, metadata);
