@@ -43,6 +43,8 @@ test('prompt hook injects current-turn commands without persisting prompt or tra
   assert.match(output.additionalContext, /questions with their four-character short_ref/);
   assert.match(output.additionalContext, /full event IDs for resolves/);
   assert.match(output.additionalContext, /read back the affected Podium sections/);
+  assert.match(output.additionalContext, /Check every receipt, including errors and ledger\/page\/index outcomes/);
+  assert.match(output.additionalContext, /Keep successful checkpoints silent in chat; the footer is enough/);
   assert.doesNotMatch(JSON.stringify(state) + result.stdout, /synthetic-private/);
   assert.equal(memoryHealth(f, session), 'Memory pending');
   assert.equal(readJournal(f.ledger).length, 0);
@@ -65,6 +67,7 @@ test('missing checkpoint gets exactly one persisted automatic repair attempt', (
   assert.match(reason, /no-change/);
   assert.match(reason, /permissions/);
   assert.match(reason, /receipts/);
+  assert.match(reason, /Keep successful checkpoints silent in chat; the footer is enough/);
   assert.doesNotMatch(reason, /For every user question|Podium is the single source/);
   assert.equal(first.stderr, '', 'Missing capture should use the repair decision, not a second error channel');
   assert.equal(currentTurn(f, session).repair_requested, true);
@@ -95,8 +98,8 @@ test('repair checkpoint binds to current turn and repeated Stop does not duplica
   for (const event of ['Stop', 'PreCompact', 'Stop']) {
     const result = run(f, event, {stop_hook_active: true});
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /saved; 1 current-turn receipts; 0 incomplete/);
-    assert.doesNotMatch(result.stdout, /"decision"/);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
   }
   assert.equal(readJournal(f.ledger).length, 1);
   assert.match(memoryHealth(f, session), /^Muninn [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}$/);

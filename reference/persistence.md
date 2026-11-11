@@ -74,6 +74,8 @@ The writer locks ledger then vault, validates journal integrity/references, assi
 
 `Pending/<session>/<checkpoint-id>.state.json` independently records ledger, page and index outcomes. CLI `flush` returns each checkpoint's `turn_id`, ledger/Podium/library/index acknowledgements and question-removal status. Completed receipts remain for retries; they do **not** prove the latest turn was captured. Partial failures exit `1`, keep pending work, and expose errors. No broad rollback or automatic deletion.
 
+Check `errors` and every surface/index outcome before treating a save as verified. Successful checkpoints need no chat announcement, sequence/ID or saved-content recap; the footer supplies status. Unless asked for detail, report only unresolved failures or unverified saves in one short sentence with the blocker or next action. Tracked, verified-success hooks emit no output; CLI `prepare`/`flush` receipts, failure diagnostics and the bounded repair request remain available.
+
 Locks fail fast and are never automatically stolen. A killed writer can leave a lock behind; backoff cannot release it. Diagnose without replaying writes:
 
 ```sh
