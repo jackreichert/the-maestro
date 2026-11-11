@@ -21,6 +21,9 @@ function checkpointInstructions(state, repair = false) {
   const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
   const cli = `${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))}`;
   const settings = `--settings ${quote(local)}`;
+  const reporting = 'Check every receipt, including errors and ledger/page/index outcomes. ' +
+    'Keep successful checkpoints silent in chat; the footer is enough. ' +
+    'Unless asked for detail, report only unresolved checkpoint failures or unverified saves, in one short sentence with the blocker or next action; no routine IDs, sequences or saved-content recaps. ';
   if (repair) {
     return `Save THIS turn's missing or failed checkpoint within existing permissions. ` +
       `Run ${cli} prepare ${settings} with JSON on stdin ` +
@@ -29,7 +32,7 @@ function checkpointInstructions(state, repair = false) {
       `Schema and conflict recovery: ${quote(path.join(root, 'reference/persistence.md'))}. ` +
       `Then run ${cli} flush ${settings} ${quote(state.session_id)} and verify current-turn receipts and affected pages. ` +
       'Reuse prepared payloads on retry; reconcile conflicts without overwriting newer edits or stealing locks. ' +
-      'Never read transcripts or store personal data or secrets.';
+      reporting + 'Never read transcripts or store personal data or secrets.';
   }
   return `Maestro memory: session_id=${state.session_id}, turn_id=${state.turn_id}. ` +
     'Podium is the single source of truth for persistent current state; context notes, plans and handoffs link there instead of maintaining competing status files. ' +
@@ -50,7 +53,7 @@ function checkpointInstructions(state, repair = false) {
     `Then run ${cli} flush ${settings} ${quote(state.session_id)} and verify each receipt before finishing. ` +
     'For changed coordination, read back the affected Podium sections to verify PRs and questions; a saved ledger receipt does not prove board freshness. ' +
     'Do this automatically; routine memory updates need no user reminder. ' +
-    'Never read transcripts or store raw prompts, personal data or secrets.';
+    reporting + 'Never read transcripts or store raw prompts, personal data or secrets.';
 }
 
 function hook(input, context) {
@@ -71,9 +74,9 @@ function hook(input, context) {
   if (block) {
     console.log(JSON.stringify({decision: 'block', reason: `${notice} ${failure ? `${failure} ` : ''}${checkpointInstructions(state, true)} ` +
       'One automatic repair attempt only; unresolved gaps remain visible without looping.'}));
-  } else {
+  } else if (failure || incomplete || !state || state.status !== 'saved') {
     console.log(`${notice} Only prepared deltas are covered; complete turn capture is NOT verified.`);
-    if (failure || incomplete || !state || state.status !== 'saved') process.exitCode = 1;
+    process.exitCode = 1;
   }
   if (failure) console.error(`Memory flush failed: ${failure}`);
   if (!block && (!state || state.status !== 'saved')) {

@@ -38,9 +38,8 @@ test('prepare, Stop and PreCompact persist three surfaces; repeated calls do not
   for (const event of ['Stop', 'PreCompact', 'Stop']) {
     const run = cli(f, 'hook', [], {hook_event_name: event, session_id: 'session-1', stop_hook_active: true});
     assert.equal(run.status, 0, run.stderr);
-    assert.match(run.stdout, /Only prepared deltas/);
-    assert.ok(run.stdout.length < 10000);
-    assert.doesNotMatch(run.stdout, /additionalContext|"decision"/);
+    assert.equal(run.stdout, '');
+    assert.equal(run.stderr, '');
     const receipt = JSON.parse(cli(f, 'flush', ['session-1']).stdout).checkpoints[0];
     assert.equal(receipt.turn_id, turn.turn_id);
     assert.equal(receipt.ledger, 'applied');
