@@ -45,6 +45,9 @@ test('prompt hook injects current-turn commands without persisting prompt or tra
   assert.match(output.additionalContext, /read back the affected Podium sections/);
   assert.match(output.additionalContext, /Check every receipt, including errors and ledger\/page\/index outcomes/);
   assert.match(output.additionalContext, /Keep successful checkpoints silent in chat; the footer is enough/);
+  assert.doesNotMatch(output.additionalContext, /"topics":\[\],"events":\[\],"pages":\[\]/);
+  assert.match(output.additionalContext, /No code changes does not mean no memory changes/);
+  assert.match(output.additionalContext, /Compare the saved events\/pages with the actual turn/);
   assert.doesNotMatch(JSON.stringify(state) + result.stdout, /synthetic-private/);
   assert.equal(memoryHealth(f, session), 'Memory pending');
   assert.equal(readJournal(f.ledger).length, 0);
@@ -64,7 +67,10 @@ test('missing checkpoint gets exactly one persisted automatic repair attempt', (
   assert.ok(reason.includes(state.turn_id) && reason.includes(session));
   assert.match(reason, /prepare/);
   assert.match(reason, /flush/);
-  assert.match(reason, /no-change/);
+  assert.match(reason, /Metadata-only is valid only when nothing relevant remains unsaved/);
+  assert.doesNotMatch(reason, /"topics":\[\],"events":\[\],"pages":\[\]/);
+  assert.match(reason, /No code changes does not mean no memory changes/);
+  assert.match(reason, /Podium pages and include revision-checked patches/);
   assert.match(reason, /permissions/);
   assert.match(reason, /receipts/);
   assert.match(reason, /Keep successful checkpoints silent in chat; the footer is enough/);

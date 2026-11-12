@@ -25,11 +25,12 @@ Commands, actual results, tested revision, unrun checks and remaining gates.
 Risk level/why, affected surfaces, worst credible failure/detection, compatibility or irreversible steps; reversal/flag and deploy order where relevant.
 ```
 
-- Write compactly in the author's voice. Add screenshots, trimmed synthetic evidence or diagrams only when useful. Let GitHub show file/line/commit counts; avoid stale tallies, file-by-file narration, pasted logs and boilerplate claims.
+- PR bodies, comments and replies use the author's voice: "I", not "we"; preserve quotes and claim only work done. Add visuals or trimmed synthetic evidence only when useful. Leave counts to GitHub; avoid stale tallies, file-by-file narration, pasted logs and boilerplate.
 - No private vault/bead IDs, local paths, sensitive data or AI attribution. Inspect the final title/body before publication and read back the draft afterward.
 
 ## Publication
 
+- Keep commits coherent and passing: Conventional Commits, imperative subjects under about 72 characters, non-obvious rationale in the body. Put preparatory refactors first, tests with behavior, mechanical changes separately labeled "no behaviour change". Separate necessary blocking fixes first and explain them in the PR; ticket unrelated findings. Prefer roughly a screen of substantive change, not arbitrary splits; propose slicing tangled history only within Git permissions.
 - Draft PRs only, with authorized publication. Confirm repository, base/head and existing PRs before creating one; don't duplicate an existing draft. Prefer `gh` for GitHub operations; creating a PR never grants merge/promotion permission.
 - Follow [PR preparation](../pr-preparation/SKILL.md) before publishing or claiming readiness; unresolved feedback or conflicts block merge readiness.
 

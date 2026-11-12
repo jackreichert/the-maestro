@@ -24,11 +24,12 @@ function checkpointInstructions(state, repair = false) {
   const reporting = 'Check every receipt, including errors and ledger/page/index outcomes. ' +
     'Keep successful checkpoints silent in chat; the footer is enough. ' +
     'Unless asked for detail, report only unresolved checkpoint failures or unverified saves, in one short sentence with the blocker or next action; no routine IDs, sequences or saved-content recaps. ';
+  const capture = 'Before prepare, check for unsaved findings, decisions/reasons, permissions, results, blockers, pending choices and next actions; save those as events. ' +
+    'No code changes does not mean no memory changes. Metadata-only is valid only when nothing relevant remains unsaved. ';
   if (repair) {
     return `Save THIS turn's missing or failed checkpoint within existing permissions. ` +
-      `Run ${cli} prepare ${settings} with JSON on stdin ` +
-      `{"session_id":"${state.session_id}","turn_id":"${state.turn_id}","topics":[],"events":[],"pages":[]}. ` +
-      'Include safe outcomes/decisions and relevant Podium/Library patches; empty arrays are only for genuinely no-change turns. ' +
+      `Run ${cli} prepare ${settings} with JSON on stdin using session_id=${state.session_id}, turn_id=${state.turn_id}. ` +
+      capture + 'For changed coordination, read current Podium pages and include revision-checked patches; include Library patches only for verified reusable knowledge. ' +
       `Schema and conflict recovery: ${quote(path.join(root, 'reference/persistence.md'))}. ` +
       `Then run ${cli} flush ${settings} ${quote(state.session_id)} and verify current-turn receipts and affected pages. ` +
       'Reuse prepared payloads on retry; reconcile conflicts without overwriting newer edits or stealing locks. ' +
@@ -39,11 +40,9 @@ function checkpointInstructions(state, repair = false) {
     'Ledger stores history and rationale, Library reusable knowledge, and checkpoint records technical receipts. ' +
     'For every user question in chat, question forms or Podium, include context, concrete options and material tradeoffs, plus a recommendation and why. ' +
     'State unknowns; for factual clarification with no defensible recommendation, explain the information needed and why. ' +
-    `Before finishing, prepare a safe checkpoint for THIS turn using ${cli} prepare ${settings} with JSON on stdin ` +
-    `{"session_id":"${state.session_id}","turn_id":"${state.turn_id}","topics":[],"events":[],"pages":[]}, ` +
-    'using relevant safe decisions, outcomes, rationale, evidence and next actions. ' +
+    `Before finishing, prepare a safe checkpoint for THIS turn using ${cli} prepare ${settings} with JSON on stdin and the session_id/turn_id above. ` +
+    capture +
     `When needed, read ${quote(path.join(root, 'reference/persistence.md'))} for the schema and patch rules; reuse existing topics via search. ` +
-    'Empty arrays are only for genuinely no-change turns. ' +
     'For changes to active PRs, blockers, next actions or open questions, read Podium/README.md and the relevant stream page, ' +
     'then include revision-checked Podium patches in pages; ledger events alone do not update Podium. ' +
     'Refresh edited-page updated dates and affected landing/stream summaries, status, blockers and next actions together; preserve rank and unrelated edits. Keep pass, partial and not-run distinct. Do not ask permission for routine coupled corrections backed by verified evidence. ' +
@@ -51,7 +50,7 @@ function checkpointInstructions(state, repair = false) {
     'Show questions with their four-character short_ref from prepare/lookup; use lookup to recover full event IDs for resolves, and record the resolving decision before removing them. ' +
     'Preserve user priorities, unrelated edits and newer updates from other sessions. Include relevant verified reusable library patches. ' +
     `Then run ${cli} flush ${settings} ${quote(state.session_id)} and verify each receipt before finishing. ` +
-    'For changed coordination, read back the affected Podium sections to verify PRs and questions; a saved ledger receipt does not prove board freshness. ' +
+    'For changed coordination, read back the affected Podium sections to verify PRs and questions; a saved ledger receipt does not prove board freshness. Compare the saved events/pages with the actual turn, not just receipt status. ' +
     'Do this automatically; routine memory updates need no user reminder. ' +
     reporting + 'Never read transcripts or store raw prompts, personal data or secrets.';
 }

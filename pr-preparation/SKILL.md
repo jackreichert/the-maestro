@@ -21,7 +21,7 @@ Prepare draft PRs and reconcile open ones; never merge or mark ready for review.
 - Verify author type through platform identity, not display name; treat uncertain authors as human.
 - **Non-human feedback:** check the owning code and intended behavior; fix valid findings with focused checks or reject with evidence. Replies and thread resolution are authorized for all verified non-human authors without another prompt. Git publication needs separate permission; ask before scope changes or ambiguous product decisions.
 - **Human feedback:** show the original comment/link, assessment and proposed action; obtain user approval before fixing, rejecting or replying. Continue independent non-human feedback while waiting. Resolve human threads only if that commenter's latest effective review is a non-dismissed approval of the current PR head. This does not waive user approval of the disposition.
-- Before resolving, post the disposition with validation/commit evidence: the fix must be verified on the published head, or the rejection explained with evidence. Reviewer approval alone does not address feedback.
+- Before resolving, post evidence of a fix verified on the published head or explain the rejection. Comments/replies use the author's voice: "I", not "we"; preserve quotes and claim only work done. Approval alone does not address feedback.
 - PR conversation comments and review summaries cannot always be resolved through a thread API: reply/record the disposition and retain their links. Do not delete comments or dismiss reviews to clear a gate. Informational comments need acknowledgement/disposition, not an invented code fix.
 
 ## 3. Fix conflicts and publish safely
