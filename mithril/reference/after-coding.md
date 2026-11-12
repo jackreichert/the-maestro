@@ -2,13 +2,13 @@
 
 Builder self-review after implementation and before publishing or updating every PR, or earlier for blocking smells; no extra agent required. Use with [core](../SKILL.md).
 
-1. Read changed files/diff against ACs; recheck necessity, reuse, callers/defaults, matching safeguards.
+1. Read changed files/diff against ACs; recheck necessity, reuse, callers/defaults, matching safeguards. Trace important decisions, transformations, side effects and failure paths: can a reviewer follow why each step exists without mentally decoding clever shorthand? Prefer named intermediate values, conditions or explicit steps when clearer, even at the cost of an extra line. Simplify the code first; use a brief comment only for non-obvious rationale or constraints.
 2. Check whether the solution and tests can be simplified without reducing scope, intended behavior, safeguards or coverage. Simplify concrete costs, not clear idioms or line counts. Remove or consolidate redundant tests only when retained tests demonstrably preserve their assertions and distinct failure cases; a passing suite or unchanged line coverage alone is not proof. No code/test-count target or forced refactor. Use optional prompts below only for deeper inspection.
 3. Keep changed comments brief without losing rationale, contracts, warnings, or constraints. Correct stale claims; remove narration and commented-out code.
 4. Follow [validation discipline](../SKILL.md#verification-discipline): rerun affected checks; test behavior, not implementation/prompt wording. Compare efficiency on the same workload; report results/skips and preserved behavior. Metrics block only at written thresholds.
 5. Report every AC → check → result/evidence, unmet/unverified items, remaining findings, and simplifications made (including retained coverage for removed tests) or that no safe simplification was found. Done requires all ACs passing or user-approved changes.
 
-Independent reviewers return findings, locations, consequences, suggested moves—not manuals. Builder verifies/fixes/reruns checks within Maestro's bounded loop.
+Independent reviewers apply the same clarity check and return findings, locations, consequences, suggested moves—not manuals. Flag logic whose compression obscures intent or behavior, not merely unfamiliar syntax or personal style. Builder verifies/fixes/reruns checks within Maestro's bounded loop.
 
 After two fixes fail the same check, state/revalidate their shared premise against reproduction, contracts, state ownership before retrying. Fix causes, not concealing guards. No review-cap reset or scope expansion.
 
