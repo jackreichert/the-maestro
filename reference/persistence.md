@@ -78,19 +78,19 @@ The writer locks ledger then vault, validates journal integrity/references, assi
 
 Check `errors` and every surface/index outcome before treating a save as verified. Successful checkpoints need no chat announcement, sequence/ID or saved-content recap; the footer supplies status. Unless asked for detail, report only unresolved failures or unverified saves in one short sentence with the blocker or next action. Tracked, verified-success hooks emit no output; CLI `prepare`/`flush` receipts, failure diagnostics and the bounded repair request remain available.
 
-Locks fail fast and are never automatically stolen. A killed writer can leave a lock behind; backoff cannot release it. Diagnose without replaying writes:
+Locks fail fast; writers and hooks never remove them automatically. A killed writer can leave a lock behind; backoff cannot release it. When a lock blocks routine persistence, the agent may recover a confirmed abandoned local lock without fresh approval. First inspect without replaying writes:
 
 ```sh
 node /absolute/bundle/scripts/memory.mjs lock-status --settings /absolute/settings.json ledger
 ```
 
-Scopes are `ledger`, `vault`, or `session:<session-id>`. Status is `unlocked`, `live`, `abandoned` (confirmed dead PID on this host), or `unknown`. A reused/live PID is never assumed stale. After explicit approval, recover only the exact observed owner:
+Scopes are `ledger`, `vault`, or `session:<session-id>`. Status is `unlocked`, `live`, `abandoned` (confirmed dead PID on this host), or `unknown`. Recover only an `abandoned` lock using the exact observed owner; age alone never qualifies, and a reused/live PID is not stale:
 
 ```sh
 node /absolute/bundle/scripts/memory.mjs unlock --settings /absolute/settings.json ledger EXPECTED_PID EXPECTED_STARTED_TIMESTAMP
 ```
 
-`unlock` rechecks host/process, expected PID/start timestamp and directory contents under an exclusive recovery gate. Writers check that gate before and after acquisition; live, foreign, missing/invalid-owner and changed locks remain untouched. Only the abandoned lock's owner file and empty directory are removed; pending checkpoints, pages and journal are not changed. Inspect receipts/current page revisions before retrying the original prepared operation. A crash during recovery can itself leave `.writer-recovery.lock`; preserve it and obtain targeted manual reconciliation rather than deleting it recursively.
+`unlock` rechecks host/process, expected PID/start timestamp and directory contents under an exclusive recovery gate. Writers check that gate before and after acquisition; live, foreign, missing/invalid-owner and changed locks remain untouched. Only the abandoned lock's owner file and empty directory are removed; pending checkpoints, pages and journal are not changed. Verify `recovered` and `lock-status`, then inspect receipts/current page revisions before retrying the original prepared operation. If ownership changes or recovery fails, stop and request targeted reconciliation; never loop or remove locks manually. A crash during recovery can itself leave `.writer-recovery.lock`; preserve it for reconciliation.
 
 On corrupt/torn-journal errors, stop competing writers, preserve evidence and obtain approval for targeted reconciliation. Never truncate history or broadly remove lock/config directories. Applied replacements are marked `superseded`; use receipts rather than inferring application from append success.
 
@@ -112,6 +112,6 @@ Turn metadata lives in `Turns/<session>/current.json`; starting a new turn archi
 
 Claude may label that intentional blocking decision a "Stop hook error". `missing; 0 current-turn receipts; 0 incomplete` means no checkpoint for this turn was acknowledged, not that a disk write failed. The first repair notice contains only turn-scoped prepare/flush commands and a schema/recovery link, not the full prompt instructions or a duplicate missing-coverage stderr warning. Actual flush errors remain explicit. If repair does not succeed, inspect `current <session>` and flush receipts; use the current turn identity, save verified work, and do not invent capture for an earlier turn or reset its repair flag.
 
-`PreCompact` flushes without requesting continuation. `StopFailure` flushes already-prepared work and records interrupted coverage without blocking; it cannot recreate unprepared work. Claude Code ignores its output and exit status, so use persisted health for recovery. Other hook notices depend on harness visibility. Timeouts/process crashes can prevent a flush and leave a lock requiring manual reconciliation. Podium/library are patched only when relevant; checkpointing does not create or refresh a board automatically.
+`PreCompact` flushes without requesting continuation. `StopFailure` flushes already-prepared work and records interrupted coverage without blocking; it cannot recreate unprepared work. Claude Code ignores its output and exit status, so use persisted health for recovery. Other hook notices depend on harness visibility. Timeouts/process crashes can prevent a flush and leave a lock; use the guarded recovery procedure above. Podium/library are patched only when relevant; checkpointing does not create or refresh a board automatically.
 
 Automated tests use synthetic temporary roots and CLI hook subprocesses. Actual Claude Code delivery, interrupted API turns, fresh-agent recovery quality and existing-memory migration still require an authorized isolated harness rehearsal. No zero-loss promise, loops, watchers, scheduled retros, automatic backups, Git mutation or live PR synchronization.

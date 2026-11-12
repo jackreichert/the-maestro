@@ -26,13 +26,17 @@ function checkpointInstructions(state, repair = false) {
     'Unless asked for detail, report only unresolved checkpoint failures or unverified saves, in one short sentence with the blocker or next action; no routine IDs, sequences or saved-content recaps. ';
   const capture = 'Before prepare, check for unsaved findings, decisions/reasons, permissions, results, blockers, pending choices and next actions; save those as events. ' +
     'No code changes does not mean no memory changes. Metadata-only is valid only when nothing relevant remains unsaved. ';
+  const recovery = 'If a writer lock blocks persistence, use lock-status SCOPE, then unlock SCOPE EXPECTED_PID EXPECTED_STARTED for a confirmed abandoned local owner without fresh approval. ' +
+    'Preserve live/unknown/changed locks and recovery gates; stop if recovery fails. Verify recovery, receipts and page revisions before retrying the unchanged payload. ';
   if (repair) {
     return `Save THIS turn's missing or failed checkpoint within existing permissions. ` +
       `Run ${cli} prepare ${settings} with JSON on stdin using session_id=${state.session_id}, turn_id=${state.turn_id}. ` +
       capture + 'For changed coordination, read current Podium pages and include revision-checked patches; include Library patches only for verified reusable knowledge. ' +
       `Schema and conflict recovery: ${quote(path.join(root, 'reference/persistence.md'))}. ` +
       `Then run ${cli} flush ${settings} ${quote(state.session_id)} and verify current-turn receipts and affected pages. ` +
-      'Reuse prepared payloads on retry; reconcile conflicts without overwriting newer edits or stealing locks. ' +
+      'Reuse prepared payloads on retry; reconcile conflicts without overwriting newer edits. ' +
+      'Recover confirmed abandoned local locks without fresh approval via that procedure. ' +
+      'Preserve live/unknown/changed locks and recovery gates; stop if recovery fails. ' +
       reporting + 'Never read transcripts or store personal data or secrets.';
   }
   return `Maestro memory: session_id=${state.session_id}, turn_id=${state.turn_id}. ` +
@@ -52,7 +56,7 @@ function checkpointInstructions(state, repair = false) {
     `Then run ${cli} flush ${settings} ${quote(state.session_id)} and verify each receipt before finishing. ` +
     'For changed coordination, read back the affected Podium sections to verify PRs and questions; a saved ledger receipt does not prove board freshness. Compare the saved events/pages with the actual turn, not just receipt status. ' +
     'Do this automatically; routine memory updates need no user reminder. ' +
-    reporting + 'Never read transcripts or store raw prompts, personal data or secrets.';
+    recovery + reporting + 'Never read transcripts or store raw prompts, personal data or secrets.';
 }
 
 function hook(input, context) {

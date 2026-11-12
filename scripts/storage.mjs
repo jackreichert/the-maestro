@@ -125,7 +125,7 @@ export function withLock(root, action, name = '.writer.lock') {
   } catch (error) {
     if (error.code === 'EEXIST') {
       const state = name === '.writer.lock' ? writerLockStatus(root).status : 'recovery in progress';
-      throw new Error(`Writer lock held (${state}); inspect with lock-status; abandoned owners require approved explicit unlock`);
+      throw new Error(`Writer lock held (${state}); inspect with lock-status; confirmed abandoned local locks allow guarded unlock without fresh approval`);
     }
     throw error;
   }
@@ -160,7 +160,7 @@ export function recoverWriterLock(root, expected) {
     const {status, owner} = writerLockStatus(root);
     requireValue(status === 'abandoned', 'Recovery requires a confirmed dead local owner; live/unknown locks are preserved');
     requireValue(owner.pid === expected.pid && owner.started === expected.started,
-      'Lock owner changed; inspect again before authorizing recovery');
+      'Lock owner changed; preserve it and reconcile before recovery');
     const lock = scopedPath(root, '.writer.lock');
     const entries = fs.readdirSync(lock);
     requireValue(entries.length === 1 && entries[0] === 'owner.json', 'Unexpected lock contents; manual reconciliation required');
