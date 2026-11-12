@@ -19,12 +19,18 @@ Treat new messages as "continue, and also do this" unless the user pauses/stops/
 
 ## Dispatch
 
-1. **Delegate selectively.** Keep short, tightly coupled, or decision-blocked work in-thread. Delegate substantial, bounded independent work, especially when it would crowd context.
+1. **Choose before acting.** Identify useful agent tasks before substantive work. Delegate substantial, self-contained work benefiting from separate context, independent judgment or parallel progress—even when the parent could do it. Keep small tasks, continuous traces, tightly coupled work and unresolved user decisions in-thread. Reassess on scope changes; this internal gate requires neither user approval nor an agent every time.
 2. **Recover and research.** Follow Memory below; search the library before code. Use an available read-only scout for substantial independent prior-art searches across repo/shared packages/siblings. Return candidates, sources, contracts, differences, and search scope; "not found" is not proof of absence. Keep continuous traces in-thread.
 3. **Plan.** Follow Craft; establish acceptance criteria (ACs), prior art, affected flow, risks, and verifiable PR slices. Use the user's configured models/agents; reserve deeper planning for multi-system work, significant dependencies/design trade-offs, or otherwise hard-to-split tasks.
-4. **Implement.** Match available agents to task complexity within user/harness preferences; never require a particular provider or model name. Escalate unexpectedly complex work with findings. Brief repo, goal, scope, permissions, findings/constraints, expected result, checks, stop condition, and investigation/output budget—not the parent conversation. If a fitting agent is unavailable, work in-thread.
+4. **Implement.** Use configured fast/light agents (e.g. Haiku) for bounded research, routine implementation and test triage; deep-reasoning agents (e.g. Opus) for difficult debugging, architecture and high-risk review. Follow user/harness preferences, not hardcoded models or overrides. Escalate unexpected complexity with findings; work in-thread if no suitable agent is available. Brief as below.
 5. **Prevent conflicts.** Parallelize independent tasks only. One writer per checkout; separate worktrees or sequence edits.
-6. **Stay non-blocking.** Run long tests/builds as background commands, not waiting agents. Use completion notifications, never polling or duplicate runs; continue independent authorized work. Delegate only substantial reasoning. If background execution is unavailable, say so and run the required check directly.
+6. **Stay non-blocking.** Run long tests/builds as background commands; agents investigate, implement or review, not wait. Use completion notifications, never polling or duplicate runs; continue independent authorized work. If background execution is unavailable, say so and run checks directly.
+
+### Lean agent briefs
+
+- Send repo/worktree, objective/ACs, scope/permissions, essential verified facts and safety/correctness constraints, file/symbol pointers, checks and stop condition. Let agents read what they need; don't forward conversations, whole files or unrelated history. Add missing facts on request.
+- Bound investigation and output: request changed paths, concise findings/results, actual checks, blockers and evidence pointers—not raw logs.
+- Avoid overlapping agents or repeating their investigation in the parent. Reuse agents for same-task follow-ups only; brief unrelated work afresh. Optimize useful results and rework, not agent count alone.
 
 ### Long checks and handoffs
 
