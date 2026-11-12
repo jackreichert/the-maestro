@@ -48,6 +48,8 @@ test('prompt hook injects current-turn commands without persisting prompt or tra
   assert.doesNotMatch(output.additionalContext, /"topics":\[\],"events":\[\],"pages":\[\]/);
   assert.match(output.additionalContext, /No code changes does not mean no memory changes/);
   assert.match(output.additionalContext, /Compare the saved events\/pages with the actual turn/);
+  assert.match(output.additionalContext, /lock-status SCOPE, then unlock SCOPE EXPECTED_PID EXPECTED_STARTED for a confirmed abandoned local owner without fresh approval/);
+  assert.match(output.additionalContext, /Preserve live\/unknown\/changed locks and recovery gates; stop if recovery fails/);
   assert.doesNotMatch(JSON.stringify(state) + result.stdout, /synthetic-private/);
   assert.equal(memoryHealth(f, session), 'Memory pending');
   assert.equal(readJournal(f.ledger).length, 0);
@@ -71,6 +73,8 @@ test('missing checkpoint gets exactly one persisted automatic repair attempt', (
   assert.doesNotMatch(reason, /"topics":\[\],"events":\[\],"pages":\[\]/);
   assert.match(reason, /No code changes does not mean no memory changes/);
   assert.match(reason, /Podium pages and include revision-checked patches/);
+  assert.match(reason, /confirmed abandoned local locks without fresh approval/);
+  assert.match(reason, /Preserve live\/unknown\/changed locks and recovery gates; stop if recovery fails/);
   assert.match(reason, /permissions/);
   assert.match(reason, /receipts/);
   assert.match(reason, /Keep successful checkpoints silent in chat; the footer is enough/);
