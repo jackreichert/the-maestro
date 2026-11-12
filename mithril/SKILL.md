@@ -17,6 +17,7 @@ Guidance, not automated enforcement. Keep core across phases; reread after conte
 ## While coding
 
 - **Scope.** Each line serves the request/coupled fix. Match style; remove newly unused code, report unrelated debt. No defenses for states verified contracts exclude.
+- **Conventions.** Follow repo tools/style; otherwise PEP 8 for Python and Airbnb for JS/TS. Prefer idempotency, practical type hints and short public docstrings where consistent. Constitution rules are optional: follow those loaded, but don't load them as a prerequisite or block/report their absence.
 - **Efficiency/fidelity.** Remove unnecessary code, computation, I/O, dependencies and prose without losing behavior, correctness, error visibility, meaning or maintainability. Verify claimed gains; fewer lines alone are not an improvement.
 - **Clarity over cleverness.** Make important logic readable in place: name intermediate values and conditions, and use explicit branches or steps when they make decisions, transformations or side effects easier to follow. An extra line is better than clever shorthand that hides intent, evaluation order or failure behavior. Keep familiar, clear idioms; don't add needless helpers or verbosity.
 - **Comments.** Keep comments brief; explain non-obvious rationale, contracts, warnings, or constraints, not what the code already says. Don't add comments by default.
@@ -24,7 +25,7 @@ Guidance, not automated enforcement. Keep core across phases; reread after conte
 - **SOLID.** SRP: one change reason. OCP: extend real variation, preserve policy. LSP: preserve substitute contracts. ISP: focused client interfaces. DIP: policy uses stable boundaries, not concrete I/O. Prefer composition/injection; no needless interfaces or dependency cycles.
 - **DRY.** Rules changing together have one owner; derive lists from registries. Similar text isn't necessarily duplicate knowledge. Avoid flag-heavy helpers merging unrelated cases. Thin adapters translate domain answers, never recompute rules.
 - **Intent/contracts.** Precise names/units/constants; guards, named conditions, top-down flow. Separate queries/mutations. Preserve APIs/defaults/side effects/errors. Validate boundaries; distinguish absent/empty/malformed. Never swallow/disguise failure.
-- **Security.** Server-side authorization/ownership/tenant checks; trusted identity scopes queries. Deny uncertainty. Parameterize queries, context-escape output, constrain paths/URLs, avoid unsafe deserialization. Established auth/crypto only; no secrets/personal data in source/logs/errors/fixtures/telemetry. Check changed dependency vulnerabilities.
+- **Security.** Server-side authorization/ownership/tenant checks; trusted identity scopes queries. Deny uncertainty. Parameterize queries, context-escape output, constrain paths/URLs, avoid unsafe deserialization. Established auth/crypto only; use Argon2id/bcrypt for passwords and secret managers/environment variables for secrets. No secrets/personal data in source/logs/errors/fixtures/telemetry. Pin dependencies and check changed dependency vulnerabilities.
 
 ## Load by phase
 
@@ -36,5 +37,6 @@ Guidance, not automated enforcement. Keep core across phases; reread after conte
 
 - Test behavior slices with unit tests catching plausible wrong implementations. Observe expected behavioral failure before production edits—not setup/import failure—then add enough code to pass. Acceptance tests complement unit tests. Characterize uncovered behavior before refactoring; keep tests green and structural cleanup separate from behavior changes. Report exceptions/gaps.
 - Start narrow; combine related selectors. Broaden for repo policy, affected behavior or evidence, not each reviewer/fix. Reuse results only for unchanged code, dependencies, configuration and relevant environment; rerun affected checks after changes.
+- Disclose missing tests and ask whether to add them. Report failures/unrun checks; never claim an unrun check passed. Continue past unrelated failures unless blocking, unsafe or invalidating checks; ask whether incidental breakage needs a todo rather than silently fixing/ignoring it.
 - Keep tested files stable; concurrent edits need an authorized isolated checkout/worktree. Isolate shared databases, ports, containers and other external state or sequence conflicting runs. Bind results to the tested snapshot, including dirty changes, not completion-time HEAD.
 - Follow [Maestro's long-check workflow](../SKILL.md#long-checks-and-handoffs); required validation still gates completion/publication.
