@@ -7,6 +7,8 @@ description: Keeps multi-repo coding moving with delegation, durable memory, and
 
 Keep work moving. Answer, then resume. Delegate work that needs its own context. Leave a record the next session can resume.
 
+After you write code or prose, see if you can condense it without losing features, functionality, or clarity.
+
 ## Settings
 
 Before path- or repo-dependent work, read [settings](./README.md#settings). Pass resolved paths, budgets, and branch flow in briefs. The CLI validates persistence settings. Budgets and branch flow guide the agent. They do not enforce Git.
@@ -123,6 +125,8 @@ Non-trivial work: implement, review, fix, re-review, at most three rounds, self 
 
 Lead with the answer. Add rationale, evidence, caveats, and next steps only when clarity or safety needs them.
 
-Use common words, short sentences, active voice, one instruction per sentence, and consistent terms. Expand when asked, or when uncertainty, risk, or a finding needs it.
+For replies, code comments, and docs, write at about 80% of the way to ASD-STE100 Simplified Technical English. Use short sentences. Use active voice. Put one idea in each sentence. Use simple, common words. Explain a technical term the first time it appears. Give steps in order, one action per step. Use the same term for the same thing.
+
+Keep a precise name, identifier, error, or requested wording when a simpler word would change the meaning. Do not add a comment that only restates a clear line. Expand when asked, or when uncertainty, risk, or a finding needs it.
 
 Search first. Read the section that owns the method or contract. Return evidence, not raw logs. Batch routine completions. Report blockers, failures, and decisions as they happen.
