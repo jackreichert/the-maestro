@@ -1,77 +1,75 @@
-# Maestro 2.0
+# Maestro
 
-Modular agent workflows for a multi-repo workspace, with a dependency-free Node 24 persistence CLI, SQLite/FTS topic index, Claude Code status line, and Stop/PreCompact entry point. No plugin manifest or automatic installer. An [opt-in session event loop](./reference/events.md) handles selected PRs, reminders and command completion; actual harness delivery requires a separately approved installation and rehearsal.
+Maestro is a set of skills for a coding agent that works across repositories. It says what to pick up next, how to split a pull request, and when to hand work to another agent.
+
+It also keeps a written memory outside the chat: decisions, what is in progress, and knowledge worth reusing. A new session reads that instead of replaying the old conversation. Optional hooks save the memory at the end of each turn and again just before the harness compacts the chat. The conversation can then stay short, which costs less, and the next session still knows where you left off.
+
+You add this folder to a harness that loads skills. There is no account and no installer. Memory is Markdown plus a small Node CLI. The hooks are optional. The install steps supplied today are for Claude Code. You can also turn on [alerts](./reference/events.md) for selected pull requests, reminders, and finished commands.
 
 ## Skills
 
 | Skill | Responsibility |
 |---|---|
 | [Maestro](./SKILL.md) | Dispatch, continuity, branch flow, PR budgets |
-| [PR preparation](./pr-preparation/SKILL.md) | PR writing, feedback disposition, human-review gates, conflicts and readiness |
+| [PR preparation](./pr-preparation/SKILL.md) | PR writing, feedback, human-review gates, conflicts, readiness |
 | [Planning](./planning/SKILL.md) | Project shaping, delivery plans, technical designs |
-| [Mithril](./mithril/SKILL.md) | Coding discipline and phase-specific checks |
+| [Mithril](./mithril/SKILL.md) | Coding checks by phase |
 | [Xenophon](./xenophon/SKILL.md) | Local tickets and approved Jira publication |
-| [Podium](./podium/SKILL.md) | Priorities, status, PRs, hash-linked questions |
-| [Ledger](./ledger/SKILL.md) | Durable outcomes, decisions, topic recovery |
-| [Library](./library/SKILL.md) | Verified repo onboarding and reusable knowledge |
-| [Retro](./retro/SKILL.md) | On-demand review with selected improvement plugins |
+| [Podium](./podium/SKILL.md) | Priorities, status, pull requests, questions |
+| [Ledger](./ledger/SKILL.md) | Decisions, outcomes, topic recovery |
+| [Library](./library/SKILL.md) | Verified repo knowledge |
+| [Retro](./retro/SKILL.md) | On-demand review. No schedule |
 
 ## Muninn
 
-**Muninn** is Maestro's combined memory system:
+**Muninn** is Ledger, Library, and Podium. The name covers those three. It is not a fourth store. Commands, settings, and paths stay the same.
 
 - **[Ledger](./ledger/SKILL.md):** what happened and why.
 - **[Library](./library/SKILL.md):** reusable, verified knowledge.
 - **[Podium](./podium/SKILL.md):** what matters now and what happens next.
 
-Muninn is the umbrella name, not a fourth store or a separate workflow. Component names, commands, settings and storage paths stay unchanged.
+Podium is the live board: priorities, active pull requests, open questions, blockers, next actions, and where to resume. Plans and handoffs link there. They do not keep a second status. Questions include context, options, a recommendation, and why. If no recommendation is sound, say which fact is missing and why it matters.
 
-Podium is the single source of truth for persistent current state: priorities, active PRs, open questions, blockers, next actions and resume pointers. Context notes, plans and handoffs link there rather than duplicate status; checkpoint records are technical receipts. User questions in chat, forms or Podium include context, options with tradeoffs, and a recommendation with why. State unknowns; when factual clarification has no defensible recommendation, explain the information needed and why.
+With the hooks on, the agent writes the turn's decisions and status before the chat is compacted or the session ends. The next session starts from Podium, then opens Ledger or Library only for the task it picked. Without the hooks, the same files still work. The agent writes them when the skill says to. Register the hooks in [SETUP](./SETUP.md). How a save is stored, retried, and checked is in [persistence](./reference/persistence.md).
 
 ## Setup
 
-This is a configurable workflow bundle, not a zero-configuration app. No author-specific account, vault, service or permission is required or included.
+This bundle does not include an account, a vault, or any permission. Pick models, paths, and branch flow yourself.
 
 | Capability | Requirements |
 |---|---|
-| Workflow skills | A harness that supports skills or explicit Markdown loading; use its own discovery/agent conventions |
-| Muninn CLI | Node 24+ with `node:sqlite`; existing, separate writable ledger/vault directories and local settings. A vault is a Markdown directory, not an Obsidian service requirement |
-| Automatic turn tracking and footer | Optional Claude Code integration; approve registration and rehearse in that harness. No equivalent is supplied for Copilot or other harnesses |
-| Session events | Optional native Claude Code on macOS/Linux with `asyncRewake`; private local state root, separately approved hooks/ack permission and bounded idle coverage |
-| GitHub PR operations/footer count | Optional GitHub CLI (`gh`), authenticated to the installing user's account with access to the relevant repositories |
-| Jira publication | Optional user-provided Jira tooling/access; local tickets need no Jira account |
+| Workflow skills | A harness that loads skills, or explicit Markdown reads |
+| Muninn CLI | Node 24+ with `node:sqlite`, plus existing separate ledger and vault directories. A vault is a Markdown directory |
+| Turn tracking, compaction hooks, footer | Optional. Approve registration and rehearse in the target harness. Claude Code is the integration supplied today |
+| Session events | Optional native Claude Code on macOS/Linux with `asyncRewake`. Private local state, a separate approval, and bounded idle coverage |
+| GitHub counts and pull-request commands | Optional `gh`, authenticated as the installing user |
+| Jira publication | Optional. Local tickets need no Jira account |
 
-No package installation is needed for the CLI. Select your own models, branch flow, paths and permissions. Tool/hook availability and terminal link rendering vary by harness/platform; the test suite is not certification of every environment.
+The CLI has no package install. Give an installation agent [SETUP.md](./SETUP.md). It confirms scope, registers the bundle, and can add the optional hooks. It does not migrate old memory.
 
-Give an installation agent [SETUP.md](./SETUP.md). It confirms scope/permissions, registers the whole bundle, configures optional hooks, and checks discovery. It does not migrate old memory. See [persistence commands](./reference/persistence.md) for preparation, retries, recovery, and limits.
+The root skill is discoverable. Child skills set `disable-model-invocation: true`. Maestro reads them when the work needs them. Linking the bundle does not make each child a slash command.
 
-Root Maestro supports discovery; child skills currently have `disable-model-invocation: true`. Maestro explicitly reads them as needed. Linking the bundle does not expose each nested skill as an independent slash command; plugin packaging is separate future work.
-
-The optional [Claude Code status line](./SETUP.md#4-optional-claude-code-status-line) shows the authenticated user's total open PR count across GitHub, session cost, context use, unresolved ledger questions, checkpoint health and a Podium link. Podium lists only active work, not every open PR. The line updates when assistant messages arrive without modifying reply text.
-
-The prompt/repair hook instructs the agent to patch changed Podium state with revision checks and read it back after flushing. Ledger-only saves do not update the board or prove it current. This is agent-driven coordination, not automatic GitHub synchronization.
+The optional [status line](./SETUP.md#4-optional-claude-code-status-line) shows open pull-request count, session cost, context use, unresolved questions, checkpoint health, and a Podium link. It does not change reply text. Podium lists active work, not every open pull request.
 
 ## Settings
 
-[settings.json](./settings.json) contains public defaults. Local overrides live at `~/.config/the-maestro/settings.json`, outside the repo. Never store secrets, credentials, personal data, current priorities, or permissions in settings.
+[settings.json](./settings.json) holds public defaults. Local overrides live at `~/.config/the-maestro/settings.json`, outside the repo. Never store secrets, personal data, current priorities, or permissions there.
 
-Existing installations using another config location must keep passing its absolute path with `--settings` until an approved migration. Changing the package/skill name does not move local configuration, registrations or storage.
+An existing install that uses another path must keep passing that absolute path with `--settings` until a migration is approved. Renaming the skill does not move config or storage.
 
-Agents and the CLI merge defaults with local overrides recursively, preserving explicit `null`. An absent local file means defaults; unreadable/invalid files or unknown keys fail explicitly. CLI `--settings /absolute/file.json` selects a different override. Every persistence command requires existing, separate ledger/vault roots; `container_root` may remain unset. Budgets/branch flows guide agents, not automatic Git enforcement. Settings never authorize actions.
+The CLI merges defaults with local overrides and keeps an explicit `null`. A missing local file means defaults. An unreadable file, invalid JSON, or an unknown key fails. `--settings /absolute/file.json` selects another override. Persistence commands need existing, separate ledger and vault roots. `container_root` may stay unset. Budgets and branch flow guide the agent. They do not enforce Git, and they never authorize an action.
 
-| Field | Meaning / validation |
+| Field | Meaning |
 |---|---|
-| `schema_version` | Integer `1`; reject unsupported versions |
-| `paths` | Exact keys in defaults; absolute directory paths or `null`. Resolve `~` before saving; ask for required unset paths. Check existence/access before use; don't create unasked |
-| `pr_budget` | Positive integer limits; default hard cap is 1,000 changed code lines. Aim for 500. More than 1,000 in a PR requires explicit per-PR user approval; settings cannot raise the cap. Mechanical separation still applies |
-| `repos` | Exact `owner/repo` keys; each value may contain only `branch_flow`, `environments`, `max_code_files` |
-| `repos.*.branch_flow` | `maintained-staging` or `repo-specific`; verify actual maintenance and repo instructions before using. Missing means inspect/ask |
-| `repos.*.environments` | Environment-name → branch-name strings. Labels, not proof of deployment |
-| `repos.*.max_code_files` | Optional positive integer file-tier override; never raises the 1,000-line hard limit |
+| `schema_version` | Integer `1`. Reject other versions |
+| `paths` | The default keys only. Absolute directories or `null`. Resolve `~` before saving. Ask before creating a path |
+| `pr_budget` | Positive integers. Default hard cap is 1,000 changed code lines. Aim for 500. Above 1,000 needs an explicit per-pull-request approval. Settings cannot raise the cap |
+| `repos` | Exact `owner/repo` keys. Values may contain only `branch_flow`, `environments`, and `max_code_files` |
+| `repos.*.branch_flow` | `maintained-staging` or `repo-specific`. Confirm the repo's real flow. Missing means inspect or ask |
+| `repos.*.environments` | Environment name to branch name. Labels, not proof of a deploy |
+| `repos.*.max_code_files` | Optional file-tier override. It does not raise the 1,000-line cap |
 
-The `maintained-staging` flow is an opt-in preset, not a universal deployment policy. Confirm its branch and environment mapping with the user/repo before applying it. Otherwise use `repo-specific` and follow repo guidance; do not guess.
-
-Example local overrides (placeholder repo only):
+`maintained-staging` is opt-in. Confirm the branch map with the user or the repo. Otherwise use `repo-specific` and follow that repo. Do not guess.
 
 ```json
 {
@@ -89,10 +87,10 @@ Example local overrides (placeholder repo only):
 }
 ```
 
-Podium owns changing priorities; ledger owns scoped decisions/permissions; local settings own installation paths and repo overrides. No settings file replaces those records.
+Podium owns current priorities. Ledger owns decisions and grants. Settings own paths and repo overrides.
 
-## Verification and limits
+## Verification
 
-Run `npm test` with Node 24; no dependency installation is needed. Synthetic tests cover deduplication, partial failures, conflicts, locks/concurrent writers, question removal, index/brief recovery, input guards and hook subprocesses. Installation additionally requires fresh-session discovery, actual hook delivery and recovery checks in the target harness.
+Run `npm test` on Node 24. No packages to install. Tests cover conflicts, locks, recovery, and hook subprocesses. They do not prove live hook delivery. Rehearse that in the target harness before using a live vault.
 
-Retros run on demand. Optional Claude Code hooks track each prompt, inject automatic checkpoint instructions, verify current-turn receipts at Stop, and request at most one repair when missing/failed. StopFailure flushes prepared work and marks interruption. Hooks never scrape conversations, synthesize missing knowledge or guarantee zero loss; Podium/library writes are relevant deltas only. Preserve old memory until the replacement passes an isolated harness rehearsal; never run competing writers/instruction sets in one session.
+Retros run only when asked. Keep the previous memory until a replacement has passed an isolated rehearsal. Do not run two writers or two instruction sets in one session.

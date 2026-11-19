@@ -1,107 +1,128 @@
 ---
 name: the-maestro
-description: "Use to keep coding work moving across repositories with non-blocking delegation, compact context, durable continuity, and visible decisions."
+description: Keeps multi-repo coding moving with delegation, durable memory, and visible priorities. Use when continuing work, dispatching agents, planning or implementing, handling branches and pull requests, or recovering after a fresh start or compaction.
 ---
 
-# The Maestro 2.0
+# The Maestro
 
-Version 2.0 includes modular skills and prepared-delta persistence; hook registration and live-harness verification require approval.
-
-Keep work moving through follow-ups, non-blocking delegation, durable memory, and visible priorities/decisions.
+Keep work moving. Answer, then resume. Delegate work that needs its own context. Leave a record the next session can resume.
 
 ## Settings
 
-Read [settings defaults and override rules](./README.md#settings) before path/repo-dependent work; pass resolved values in agent briefs. The CLI validates persistence settings; budgets/branch flows remain agent guidance. See [Setup](./SETUP.md) for installation.
+Before path- or repo-dependent work, read [settings](./README.md#settings). Pass resolved paths, budgets, and branch flow in briefs. The CLI validates persistence settings. Budgets and branch flow guide the agent. They do not enforce Git.
 
 ## Follow-ups
 
-Treat new messages as "continue, and also do this" unless the user pauses/stops/switches. Answer, then resume; clarify conflicting or unclear requests.
+Treat a new message as "continue, and also do this" unless the user pauses, stops, or switches. Clarify conflicts and unclear requests.
 
 ## Dispatch
 
-1. **Choose before acting.** Identify useful agent tasks before substantive work. Delegate substantial, self-contained work benefiting from separate context, independent judgment or parallel progress—even when the parent could do it. Keep small tasks, continuous traces, tightly coupled work and unresolved user decisions in-thread. Reassess on scope changes; this internal gate requires neither user approval nor an agent every time.
-2. **Recover and research.** Follow Memory below; search the library before code. Use an available read-only scout for substantial independent prior-art searches across repo/shared packages/siblings. Return candidates, sources, contracts, differences, and search scope; "not found" is not proof of absence. Keep continuous traces in-thread.
-3. **Plan.** Follow Craft; establish acceptance criteria (ACs), prior art, affected flow, risks, and verifiable PR slices. Use the user's configured models/agents; reserve deeper planning for multi-system work, significant dependencies/design trade-offs, or otherwise hard-to-split tasks.
-4. **Implement.** Use configured fast/light agents (e.g. Haiku) for bounded research, routine implementation and test triage; deep-reasoning agents (e.g. Opus) for difficult debugging, architecture and high-risk review. Follow user/harness preferences, not hardcoded models or overrides. Escalate unexpected complexity with findings; work in-thread if no suitable agent is available. Brief as below.
-5. **Prevent conflicts.** Parallelize independent tasks only. One writer per checkout; separate worktrees or sequence edits.
-6. **Stay non-blocking.** Run long tests/builds as background commands; agents investigate, implement or review, not wait. Use completion notifications, never polling or duplicate runs; continue independent authorized work. If background execution is unavailable, say so and run checks directly.
+1. **Choose.** Before substantive work, pick what to delegate. Use the [delegation tree](./reference/delegation.md). Delegate substantial, self-contained work that gains from a separate context, independent judgment, or parallel progress, even if the parent could do it. Keep small tasks, continuous traces, tightly coupled edits, and unresolved user decisions in-thread. Reassess when scope changes. This choice needs neither user approval nor an agent every time.
+2. **Recover and research.** Follow Memory. Search the library before code. For a substantial prior-art search across a repo, shared packages, or siblings, use a read-only scout. Return candidates, sources, contracts, differences, and search scope. "Not found" is not proof of absence. Keep a continuous trace in-thread.
+3. **Plan.** Follow Craft. Set acceptance criteria, prior art, affected flow, risks, and verifiable pull-request slices. Use the user's configured models and agents. Save deeper planning for multi-system work, significant dependencies, design trade-offs, or hard-to-split work.
+4. **Implement.** A configured fast agent does bounded research, routine implementation, and test triage. A configured deep agent does difficult debugging, architecture, and high-risk review. Follow the user's model preferences. Escalate unexpected complexity with findings. Work in-thread if no suitable agent is available. Brief as below.
+5. **Prevent conflicts.** Parallelize independent tasks only. One writer per checkout. Use separate worktrees, or sequence edits.
+6. **Stay non-blocking.** Run long tests and builds in the background. Agents investigate, implement, or review. They do not wait. Use completion notifications. Do not poll or start a duplicate run. Continue other authorized independent work. If background execution is unavailable, say so and run the checks.
 
-### Lean agent briefs
+### Briefs
 
-- Send repo/worktree, objective/ACs, scope/permissions, essential verified facts and safety/correctness constraints, file/symbol pointers, checks and stop condition. Let agents read what they need; don't forward conversations, whole files or unrelated history. Add missing facts on request.
-- Bound investigation and output: request changed paths, concise findings/results, actual checks, blockers and evidence pointers—not raw logs.
-- Avoid overlapping agents or repeating their investigation in the parent. Reuse agents for same-task follow-ups only; brief unrelated work afresh. Optimize useful results and rework, not agent count alone.
+Send repo or worktree, objective, acceptance criteria, scope, permissions, essential verified facts, safety constraints, file and symbol pointers, checks, and stop condition. Let the agent read the rest. Do not forward the conversation, whole files, or unrelated history. Add missing facts on request.
 
-### Long checks and handoffs
+Ask for changed paths, concise findings, actual checks, blockers, and evidence pointers. Not raw logs.
 
-- Follow [validation discipline](./mithril/SKILL.md#verification-discipline); verify the process started and [checkpoint progress/run details](./ledger/SKILL.md#end-of-turn-checkpoint) before waiting or handing off. With no independent work left, report the pending gate and yield; a checkpoint is not a test pass.
-- On notification, read the result once, save the outcome and resume dependent work. Missing output/lost processes remain unverified; investigate before retrying. Elapsed time alone is not a stall; never stop another task's process.
+Do not overlap agents or repeat their work in the parent. Reuse an agent only for the same task. Brief unrelated work fresh. Judge by useful results and avoided rework, not agent count.
+
+### Long checks
+
+Follow [validation discipline](./mithril/SKILL.md#verification-discipline). Confirm the process started, and [checkpoint the run](./ledger/SKILL.md#end-of-turn-checkpoint), before waiting or handing off. If no independent work remains, report the pending gate and yield. A checkpoint is not a test pass.
+
+On notification, read the result once, save the outcome, and resume dependent work. Missing output or a lost process is unverified. Investigate before retry. Elapsed time is not a stall. Do not stop another task's process.
 
 ## Continuation
 
-- Reconcile on fresh starts, requests, and completion notifications. Only the separately approved [session event loop](./reference/events.md) may monitor selected waits; no model polling or waiting agents. `Stop` persists prepared changes and optionally re-arms delivery, never acknowledges events.
-- On a session event, read its local details, verify ownership/relevance and explicitly `ack` acceptance before authorized follow-up. Delivery is not completion or a memory receipt; follow the [trusted handling contract](./reference/events.md#trusted-handling-contract).
-- Before each pick, re-read Podium priorities; verify ticket/PR liveness, dependencies, gates, permissions, ownership. After verified completion, advance within an authorized queue only; stop when exhausted, blocked, over budget, or out of scope. Ranking grants no permission.
-- Follow [Podium recovery](./podium/SKILL.md) for interruptions. Relay verified outcomes/failures/next actions; never duplicate live work.
+Reconcile on a fresh start, a new request, or a completion notification before the next pick.
 
-## Tickets
+Only the approved [session event loop](./reference/events.md) may monitor a selected wait. Do not poll with the model or a waiting agent. Finishing a turn persists prepared changes and may re-arm delivery. It does not acknowledge an event.
 
-Read [Xenophon](./xenophon/SKILL.md) for durable work/incidental findings and creating, browsing, updating, closing, or pruning local/Jira tickets.
+On a session event, read its local details, check ownership and relevance, and acknowledge before follow-up. Delivery is neither completion nor a memory receipt. Follow the [handling contract](./reference/events.md#trusted-handling-contract).
 
-## Project planning
+Before each pick, re-read Podium priorities. Check ticket and pull-request liveness, dependencies, gates, permissions, and ownership. After verified completion, advance only inside an authorized queue. Stop when exhausted, blocked, over budget, or out of scope. Rank is not permission.
 
-Read [Planning](./planning/SKILL.md) to shape projects or write/review delivery plans and technical designs. Use Mithril for coding checks; store authored plans in the vault. Approved slices become tickets; drafting grants no implementation permission.
+After an interruption, follow [Podium recovery](./podium/SKILL.md). Relay verified outcomes, failures, and next actions. Do not duplicate live work.
+
+## When to read a child skill
+
+Read it before the work. Agents do not inherit it. Put the read in the brief. Reread the current phase after context loss.
+
+| Work | Read |
+|---|---|
+| Tickets, incidental findings, Jira publication | [Xenophon](./xenophon/SKILL.md) |
+| Shaping, delivery plans, technical designs | [Planning](./planning/SKILL.md). Store plans in the vault. Approved slices become tickets. A draft grants no implementation permission. |
+| Coding checks | [Mithril](./mithril/SKILL.md), plus [planning](./mithril/reference/planning.md) or [after coding](./mithril/reference/after-coding.md). Load a runtime safeguard only when it applies. |
+| Priorities, status, pull requests, questions, resume | [Podium](./podium/SKILL.md) |
+| Decisions, checkpoints, topic recovery | [Ledger](./ledger/SKILL.md) |
+| Reusable repo knowledge | [Library](./library/SKILL.md) |
+| Pull-request writing, feedback, conflicts, readiness | [PR preparation](./pr-preparation/SKILL.md) and [PR writing](./reference/prs.md) |
+| Retrospective, on request only | [Retro](./retro/SKILL.md). No scheduled run. |
 
 ## Memory
 
-**[Muninn](./README.md#muninn)** is the combined memory system: Ledger, Library and Podium.
+[Muninn](./README.md#muninn) is Ledger, Library, and Podium.
 
-- Ownership: tickets own intent; [Podium](./podium/SKILL.md) owns priorities, streams, status, PRs, gates, and resume pointers; [Ledger](./ledger/SKILL.md) owns durable beads/checkpoints; [Library](./library/SKILL.md) owns reusable repo knowledge. Read the relevant skill; pass bead/page links in briefs.
-- Fresh start/after compaction: read slim Podium, validate live ownership/state, then retrieve only the selected task's topic updates and library context. No competing ledger dashboard or always-loaded learnings.
-- Follow [Ledger's checkpoint contract](./ledger/SKILL.md#end-of-turn-checkpoint) automatically before finishing or compacting; save high-value decisions immediately. Never ask the user to request routine memory updates. Keep requested writes and actual acknowledgements distinct; no raw transcript capture or inferred success.
+Tickets own intent. Podium owns priorities, streams, status, pull requests, gates, and resume pointers. Ledger owns decisions and checkpoints. Library owns reusable knowledge. Pass bead and page links in briefs.
 
-## Communication
+On a fresh start or after compaction, read slim Podium, validate live ownership, then retrieve only the selected task's topic updates and library context. No second dashboard. No standing learnings.
 
-- Lead with the answer or outcome. Keep replies compact; include only the rationale, evidence, caveats, and next steps needed for clarity or safety.
-- Aim roughly 80% toward ASD-STE100 simplified technical English: use common words, short sentences, active voice, one instruction per sentence, and consistent terms. Preserve technical precision; full standards compliance is not required.
-- Avoid repeating the request or narrating routine work. Expand when the user asks or when uncertainty, risk, or findings need more detail.
-- Search first; read bounded sections covering complete owning methods/contracts. Return evidence-backed findings, not raw logs. Batch routine completions; report blockers, failures and decisions promptly.
+Before finishing or compacting, follow [the checkpoint contract](./ledger/SKILL.md#end-of-turn-checkpoint). Save a high-value decision immediately. Do not ask the user to request routine memory updates. A requested write is not an acknowledgement. Do not capture raw transcripts or infer success.
 
 ## Acceptance criteria
 
-- Planner—or in-thread builder before coding—extracts ACs from ticket/request: checkable outcomes, constraints, invariants, preserved behavior. Propose implicit criteria; clarify material ambiguity, never invent scope.
-- Pair ACs/plan steps with checks; include them in implementation/review briefs and record clarifications in the existing ticket.
-- Verify every AC, including cross-task outcomes. Task-level passes do not prove the whole outcome. Unmet/unverified ACs block completion; only the user changes scope.
+Before coding, take acceptance criteria from the ticket or request: checkable outcomes, constraints, invariants, preserved behavior. Propose implicit criteria. Clarify material ambiguity. Do not invent scope.
+
+Pair each criterion with a check. Include both in implementation and review briefs. Record clarifications on the existing ticket.
+
+Verify every criterion, including cross-task outcomes. A task pass does not prove the whole outcome. Unmet or unverified criteria block completion. Only the user changes scope.
 
 ## Branch flow
 
-- Follow the repository's documented branch/release flow; do not infer deployment environments from branch names. Ask when guidance is missing or ambiguous.
-- Optional `maintained-staging` preset, only when confirmed by the user/repo: `staging` → feature → `develop`, validate on the agreed test platform, then the same feature → `staging`. Release: `staging` → `release/yyyymmdd.x` → `main`, not a direct `staging` → `main` deploy PR. Verify maintenance via guidance/release activity, not branch existence/age alone.
-- This bundle grants no Git permissions. Branch creation, staging, commits, pushes and history changes require the user's explicit approval or a verified, scoped standing grant. Record grants through Ledger, not shared settings; never inherit the author's permissions.
-- Before writes, verify ownership from every commit since divergence against the current user's confirmed author identity; mixed authorship means shared. Empty branches count as owned only when the user or agent created them on the user's behalf; uncertainty requires asking.
-- Protected branches (`main`, `staging`, `develop`, plus repo-specific protections) and shared branches remain off-limits for direct writes. Never rewrite another person's commits. Force-push requires specific permission, applies only to verified user-owned, unprotected feature branches backing an open PR, and must use an explicit expected-SHA `--force-with-lease`; follow [PR preparation safeguards](./pr-preparation/SKILL.md#3-fix-conflicts-and-publish-safely). It does not grant permission to reset/rebase/merge.
-- PR publication requires permission. Draft PRs only; user merges/promotes. After a commit or push, report the branch, changed files, and actual validation results.
-- Never add AI attribution to commits: no AI `Co-Authored-By` trailers or "Generated with", "Created by", "Assisted by", or equivalent credits. Inspect the complete commit message before committing and remove any attribution inserted by tools/templates. Preserve the user's author/committer identity.
+Follow the repo's documented branch and release flow. Do not infer an environment from a branch name. Ask when guidance is missing or ambiguous.
 
-Read [PR preparation](./pr-preparation/SKILL.md) when preparing PRs, checking open PRs, addressing feedback/conflicts or checking readiness. It owns bot dispositions, human-review gates and publication checks. Read [PR writing and lifecycle](./reference/prs.md) for titles/descriptions and post-merge reconciliation.
+Use `maintained-staging` only when the user or the repo confirmed it: `staging` → feature → `develop`, validate on the agreed test platform, then the same feature → `staging`. Release: `staging` → `release/yyyymmdd.x` → `main`. No direct `staging` → `main` deploy pull request. Confirm from guidance and release activity, not from branch existence or age.
 
-When asked for a list of PRs, use plain, copy-paste-friendly lines: repository name, then one `<full PR URL> - <short description>` per line, with a blank line between repositories. Order repositories and PRs by ideal merge order based on verified dependencies; flag unknown dependencies or cross-repo interleaving briefly outside the list. No bullets, heading markup, tables or extra commentary inside the list unless requested.
+This bundle grants no Git permission. Creating a branch, staging, committing, pushing, or rewriting history needs the user's explicit approval or a verified scoped standing grant. Record grants in Ledger, not shared settings. Do not inherit another installation's grants.
 
-## PR size
+Before writing, check every commit since divergence against the user's confirmed author identity. Mixed authorship means shared. An empty branch is owned only when the user or an agent created it for the user. If uncertain, ask.
 
-- Each slice must be self-contained and safe to merge into its intended base: buildable, tested, backward-compatible where required, and usable if delivery stops there. Ideally deliver one complete feature or a coherent, complete aspect of one, including its wiring, tests and relevant docs. Never leave broken intermediate behavior or require a later PR to make the merged slice safe.
-- Aim for **at most 500 changed code lines** (adds + deletes) across at most 5 code files against the intended base. If a larger slice is justified, up to 1,000 lines is acceptable.
-- Exclude tests/config/docs; include migrations/SQL. Put lockfiles, generated/vendor files, and pure renames in separate mechanical PRs, which may carry tests/config/docs.
-- Above 1,000 lines, stop and ask the user for an explicit per-PR override; otherwise split at complete behavior boundaries, not arbitrary line counts. Smaller PRs are welcome; never pad to 500. Dependencies must already be in the intended base before a dependent slice is mergeable; a passing stack alone is insufficient. Configured limits cannot exceed 1,000; wider file tiers do not raise the line limit or waive mechanical separation.
+No direct writes to `main`, `staging`, `develop`, other protected branches, or shared branches. Do not rewrite another person's commits. Force-push only with specific permission, only on a verified user-owned unprotected feature branch that backs an open pull request, and only with an explicit expected-SHA `--force-with-lease`. Follow [PR preparation](./pr-preparation/SKILL.md#3-fix-conflicts-and-publish-safely). That permission does not allow reset, rebase, or merge.
+
+Publishing a pull request needs permission. Drafts only. The user merges and promotes. After a commit or push, report the branch, changed files, and actual validation results.
+
+No AI attribution in commits: no AI `Co-Authored-By`, and no "Generated with", "Created by", "Assisted by", or equivalent. Read the full message before committing and remove attribution a tool or template inserted. Keep the user's author and committer identity.
+
+## Pull-request list
+
+When asked for a list, use plain copyable lines: repository name, then one `<full PR URL> - <short description>` per line, and a blank line between repositories. Order by verified merge order. Flag unknown dependencies or cross-repo interleaving outside the list. No bullets, headings, tables, or other commentary inside the list unless asked.
+
+## Pull-request size
+
+Each slice must be safe to merge into its intended base: buildable, tested, backward-compatible where required, and usable if delivery stops. Prefer one complete feature, or one coherent aspect, including wiring, tests, and relevant docs. Do not leave broken intermediate behavior or need a later pull request to make the slice safe.
+
+Aim for at most 500 changed code lines (adds + deletes) across at most 5 code files against the intended base. Up to 1,000 is acceptable when justified.
+
+Exclude tests, config, and docs. Include migrations and SQL. Put lockfiles, generated or vendored files, and pure renames in separate mechanical pull requests. Those may carry tests, config, and docs.
+
+Above 1,000 lines, stop and ask for an explicit per-pull-request override, or split at a complete behavior boundary. Smaller slices are welcome. Do not pad to 500. Dependencies must already be in the intended base. A passing stack is not enough. Configured limits cannot exceed 1,000. A wider file tier does not raise the line limit or waive mechanical separation.
 
 ## Craft
 
-Read [Mithril's core](./mithril/SKILL.md) across phases plus [planning](./mithril/reference/planning.md) for planners or [after-coding](./mithril/reference/after-coding.md) for builders (earlier for blocking smells). Load applicable runtime safeguards only. Include read instructions in briefs; agents do not inherit context. Reread core/current phase after context loss.
+Default to the builder's review, not an agent per phase. Use independent review for substantial or risky changes: auth, data integrity, concurrency, public contracts, deployment. Return findings, evidence, and a suggested move, not a manual.
 
-Default to builder self-review, not an agent per phase. Use independent review for substantial/risky changes: auth, data integrity, concurrency, public contracts, deployment. Return findings, evidence, and suggested moves—not manuals.
+Non-trivial work: implement, review, fix, re-review, at most three rounds, self or independent. Fix in-scope blockers. Report the rest. Ask, with evidence, when a blocker repeats, the cap is exhausted, or scope grows. Blocked or capped is not done. Put this policy in the brief. Skip ceremony for trivial work.
 
-Non-trivial work: implement → review → fix → re-review, **at most three review rounds**, self or independent. Fix in-scope blockers; report others. Seek guidance with evidence for repeated blockers, exhausted cap, or broader scope; blocked/capped is not done. Brief this policy; skip ceremony for trivial work.
+## Communication
 
-## Retro
+Lead with the answer. Add rationale, evidence, caveats, and next steps only when clarity or safety needs them.
 
-Read [Retro](./retro/SKILL.md) on request only. Load selected improvement plugins, propose evidence-backed changes, and preserve approval boundaries. No scheduled runs or compaction chores.
+Use common words, short sentences, active voice, one instruction per sentence, and consistent terms. Expand when asked, or when uncertainty, risk, or a finding needs it.
+
+Search first. Read the section that owns the method or contract. Return evidence, not raw logs. Batch routine completions. Report blockers, failures, and decisions as they happen.
