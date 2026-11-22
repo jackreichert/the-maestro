@@ -26,6 +26,19 @@ The index is `Projects/<repo>/Knowledge/README.md`. Link the architecture page f
 
 **Plan.** A plan is a page in that repo's library. Link it from the feature page it changes. State the goal, the decision, and the acceptance criteria. Point at the code. Do not paste code.
 
+```mermaid
+flowchart TD
+  index[Index]
+  architecture[Architecture]
+  feature[Feature]
+  plan[Plan]
+  runbook[Runbook]
+  index --> architecture
+  index --> feature
+  feature --> plan
+  feature --> runbook
+```
+
 Use [the page template](./page-template.md). Omit a section you do not need. Link the canonical README, config, and docs. Do not duplicate commands or policy. Explain the vocabulary, flows, integrations, setup, build, test, sources, conventions, and pitfalls an incoming engineer needs. Put current guidance before history. Link decisions and ledger records. Use `tickets` to attribute a supporting page to the most specific ticket.
 
 ## Scout workflow
@@ -48,6 +61,6 @@ Use [the page template](./page-template.md). Omit a section you do not need. Lin
 
 For `Stop`, follow [Ledger's checkpoint contract](../ledger/SKILL.md) and [persistence commands](../reference/persistence.md): verified patches only, stable IDs, revision checks, serialized writes and separate read-back receipts/retries. Preserve conflicts; never claim proposals applied. Prepare affected links/README tables explicitly; no automatic library indexer. Ledger, Podium, and library are separate writes, not one transaction. Slim `PreCompact` flushes already-prepared continuation/work only; no discovery or whole-library rewrites.
 
-Prefer small Mermaid flow diagrams. UML/Graphify is optional for complex/unfamiliar boundaries; scope safely and verify relationships. Maps support prose, never replace it or regenerate every turn.
+Add a Mermaid diagram when the relationships are the point. Do not add one that only restates a short list. Prefer a small diagram. UML/Graphify is optional for complex/unfamiliar boundaries; scope safely and verify relationships. Maps support prose, never replace it or regenerate every turn.
 
 Acceptance: a newcomer/fresh agent finds the right subsystem, understands behavior, and locates verified build/test guidance without reading the whole repo.
