@@ -13,8 +13,9 @@ On demand only, including weekly reviews. No scheduler, watcher, Stop/PreCompact
 1. Confirm scope/window/plugins; reuse prior results, avoid double-counting. Resolve vault via [settings](../README.md#settings) and repo: `Projects/<repo>/Research/Retros/`; cross-repo reviews use an agreed workspace project.
 2. Compare outcomes with commitments/acceptance criteria; distinguish implemented/reviewed/merged/tested/deployed. Check blocked/carried/retired work and review misses; verify evidence, not confident reports.
 3. Load selected eligible registry modules within scope/budget. Batch collection; deterministic checks before analysis. Missing evidence stays unknown.
-4. Deduplicate lessons: verified knowledge → library; outcomes/rationale → ledger; work → tickets; working rules → proposals. Existing-rule misses need recall/execution investigation before more text.
-5. Report verdict, risks, trends/limits, learning destinations, cleanup/keep reasons, and at most two improvements with owners/revisit triggers. Record dispositions; no retro-review chain.
+4. Deduplicate lessons: verified knowledge → library; outcomes/rationale → ledger; work → tickets; working rules → proposals. A process gap becomes a ticket only after a second retro; one sighting stays a note. Existing-rule misses need recall/execution investigation before more text.
+5. Find work the configured fast model could have done with a playbook and a script. Add both to the library as one verified runbook, `Projects/<repo>/Runbooks/`; link it from the feature page. Do not paste the script into Knowledge. Not one of the two improvements.
+6. Report verdict, risks, trends/limits, learning destinations, cleanup/keep reasons, and at most two improvements with owners/revisit triggers. Record dispositions; no retro-review chain.
 
 ## Plugin lifecycle
 

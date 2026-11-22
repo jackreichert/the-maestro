@@ -1,31 +1,31 @@
 # Maestro
 
-Maestro is a set of skills for a coding agent that works across repositories. It says what to pick up next, how to split a pull request, and when to hand work to another agent.
+Maestro is a set of skills for a coding agent that works across repositories. It says what to pick up next, how to split a pull request, and when to hand work to another agent. The main thread audits complexity before it does the work. It does not use a timer.
 
-It also keeps a written memory outside the chat: decisions, what is in progress, and knowledge worth reusing. A new session reads that instead of replaying the old conversation. Optional hooks save the memory at the end of each turn and again just before the harness compacts the chat. The conversation can then stay short, which costs less, and the next session still knows where you left off.
+It also keeps a written memory outside the chat: decisions, what is in progress, and knowledge worth reusing. A new session reads that instead of replaying the old conversation. Optional hooks save that memory. Cursor and Grok Code start a turn and flush before compaction. Claude Code can also save when a turn ends. The conversation can then stay short, which costs less, and the next session still knows where you left off.
 
-You add this folder to a harness that loads skills. There is no account and no installer. Memory is Markdown plus a small Node CLI. The hooks are optional. The install steps supplied today are for Claude Code. You can also turn on [alerts](./reference/events.md) for selected pull requests, reminders, and finished commands.
+You add this folder to a harness that loads skills. There is no account and no installer. Memory is Markdown plus a small Node CLI. The hooks are optional. You can also turn on [alerts](./reference/events.md) for selected pull requests, reminders, and finished commands.
 
 ## Skills
 
 | Skill | Responsibility |
 |---|---|
-| [Maestro](./SKILL.md) | Dispatch, continuity, branch flow, PR budgets |
+| [Maestro](./SKILL.md) | Dispatch, complexity audit, continuity, branch flow, PR budgets |
 | [PR preparation](./pr-preparation/SKILL.md) | PR writing, feedback, human-review gates, conflicts, readiness |
 | [Planning](./planning/SKILL.md) | Project shaping, delivery plans, technical designs |
 | [Mithril](./mithril/SKILL.md) | Coding checks by phase |
 | [Xenophon](./xenophon/SKILL.md) | Local tickets and approved Jira publication |
 | [Podium](./podium/SKILL.md) | Priorities, status, pull requests, questions |
 | [Ledger](./ledger/SKILL.md) | Decisions, outcomes, topic recovery |
-| [Library](./library/SKILL.md) | Verified repo knowledge |
-| [Retro](./retro/SKILL.md) | On-demand review. No schedule |
+| [Library](./library/SKILL.md) | Architecture, feature, plan, and runbook pages |
+| [Retro](./retro/SKILL.md) | On request. No schedule |
 
 ## Muninn
 
 **Muninn** is Ledger, Library, and Podium. The name covers those three. It is not a fourth store. Commands, settings, and paths stay the same.
 
 - **[Ledger](./ledger/SKILL.md):** what happened and why.
-- **[Library](./library/SKILL.md):** reusable, verified knowledge.
+- **[Library](./library/SKILL.md):** architecture, feature, plan, and runbook pages.
 - **[Podium](./podium/SKILL.md):** what matters now and what happens next.
 
 Podium is the live board: priorities, active pull requests, open questions, blockers, next actions, and where to resume. Plans and handoffs link there. They do not keep a second status. Questions include context, options, a recommendation, and why. If no recommendation is sound, say which fact is missing and why it matters.
@@ -40,7 +40,7 @@ This bundle does not include an account, a vault, or any permission. Pick models
 |---|---|
 | Workflow skills | A harness that loads skills, or explicit Markdown reads |
 | Muninn CLI | Node 24+ with `node:sqlite`, plus existing separate ledger and vault directories. A vault is a Markdown directory |
-| Turn tracking, compaction hooks, footer | Optional. Approve registration and rehearse in the target harness. Claude Code is the integration supplied today |
+| Turn tracking, compaction hooks, footer | Optional. Approve registration and rehearse in the target harness. Claude Code, Cursor, and Grok Code. The footer is Claude Code |
 | Session events | Optional native Claude Code on macOS/Linux with `asyncRewake`. Private local state, a separate approval, and bounded idle coverage |
 | GitHub counts and pull-request commands | Optional `gh`, authenticated as the installing user |
 | Jira publication | Optional. Local tickets need no Jira account |

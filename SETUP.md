@@ -17,11 +17,11 @@ This runbook grants no installation permission. Never read secret files or migra
 - Claude Code workspace: `<container>/.claude/skills/the-maestro`; user: `~/.claude/skills/the-maestro`. Use an approved symlink to the complete repo or copy the bundle, excluding `.git` and prohibited files. Preserve relative links; do not flatten child skills.
 - For existing installations, keep explicit `--settings` paths until migration is approved. Update installed skill links to match the skill name only with approval; check for legacy-name collisions first. Repository naming changes do not migrate registrations or storage.
 - Check current target-harness skill documentation and discovery/symlink support. Keep frontmatter unchanged. This is not a packaged plugin; child skills are explicitly read, not independent slash commands.
-- Outside Claude Code, use the harness's supported skill registration and agent/model preferences. Do not copy Claude hooks, agent type names or terminal assumptions as if they were portable. Manual memory commands remain available; automatic turn coverage is not supplied for other harnesses.
+- Outside Claude Code, use the harness's supported skill registration and agent/model preferences. Do not copy Claude hooks, agent type names or terminal assumptions as if they were portable. Manual memory commands remain available. The optional Cursor and Grok Code sections below start a turn on prompt submit and flush it before compaction. Do not invent a hook for a harness that is not documented.
 
 ## 3. Optional Claude Code hooks
 
-Verify [current hook documentation](https://code.claude.com/docs/en/hooks.md) and installed version first. For other harnesses, register no guessed equivalent.
+Verify [current hook documentation](https://code.claude.com/docs/en/hooks.md) and installed version first. Do not register a guessed hook for a harness that is not documented here. The Cursor and Grok Code sections below are not copies of these Claude hooks.
 
 After explicit approval, **merge** these command hooks into the chosen Claude Code settings: `.claude/settings.json` for workspace or `~/.claude/settings.json` for user scope. Maestro's own settings do not register hooks. Preserve all unrelated hooks/settings.
 
@@ -72,6 +72,65 @@ Start a fresh Claude Code session after registration; tracking begins at the nex
 ### Optional session events
 
 Session monitoring is separate from the four synchronous memory hooks. Only after explicit approval, follow the [event installation and coverage contract](./reference/events.md#installation-and-coverage): private local root, additional asyncRewake listeners, synchronous SessionEnd, narrow explicit-ack permission and isolated live rehearsal. Preserve existing memory hooks. Listener timeouts bound idle coverage; installing this is not permission for autonomous PR/Git changes. No event hooks are installed by this repository.
+
+## Optional Cursor prompt and preCompact
+
+These two events are for Cursor. They are not Claude hooks. Verify [the current hook documentation](https://cursor.com/docs/hooks) before registering.
+
+Cursor loads `~/.cursor/hooks.json` and `<repo>/.cursor/hooks.json`. User hooks do not run on cloud agents. Maestro's own settings do not register this hook. This bundle does not write a live `~/.cursor/hooks.json` or a project `.cursor/hooks.json`.
+
+After explicit approval, merge only `beforeSubmitPrompt` and `preCompact` into the chosen file. Preserve unrelated hooks. Do not add other events.
+
+`beforeSubmitPrompt` starts the turn when `conversation_id` is an identifier, then returns `{"continue": true}`. It does not block the prompt. `preCompact` flushes that same turn. Replace each `/absolute/...` path. Do not execute the placeholders. Quote paths as shown.
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [{
+      "command": "\"/absolute/node\" \"/absolute/bundle/scripts/cursor-hook.mjs\" --settings \"/absolute/settings.json\""
+    }],
+    "preCompact": [{
+      "command": "\"/absolute/node\" \"/absolute/bundle/scripts/cursor-hook.mjs\" --settings \"/absolute/settings.json\""
+    }]
+  }
+}
+```
+
+A manual run proves the command, not live delivery.
+
+## Optional Grok Code prompt and preCompact
+
+These two events are for the Grok Code terminal. They are not Claude hooks and not Cursor hooks. Verify [the current hook documentation](https://docs.x.ai/build/features/hooks) before registering.
+
+Grok Code loads `~/.grok/hooks/*.json` and `<repo>/.grok/hooks/*.json`. A project file does not run until that repo is trusted with `/hooks-trust` or `--trust`. Maestro's own settings do not register this hook. This bundle does not write a live `~/.grok` file or a project `.grok` file.
+
+After explicit approval, merge only `UserPromptSubmit` and `PreCompact` into the chosen hooks file. Preserve unrelated hooks. Do not add other events.
+
+The stdin field `hookEventName` is `user_prompt_submit` for a prompt and `pre_compact` before compaction. The file keys are `UserPromptSubmit` and `PreCompact`. Both read stdin `sessionId`. They do not fall back to `GROK_SESSION_ID`. Omit `matcher` on `PreCompact` so both `manual` and `auto` compaction flush. A matcher on `UserPromptSubmit` does not apply. The documented default timeout is 5 seconds. The placeholder uses 30 so a flush is not killed early. Replace each `/absolute/...` path. Do not execute the placeholders. Quote paths as shown.
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{
+      "hooks": [{
+        "type": "command",
+        "command": "\"/absolute/node\" \"/absolute/bundle/scripts/grok-hook.mjs\" --settings \"/absolute/settings.json\"",
+        "timeout": 30
+      }]
+    }],
+    "PreCompact": [{
+      "hooks": [{
+        "type": "command",
+        "command": "\"/absolute/node\" \"/absolute/bundle/scripts/grok-hook.mjs\" --settings \"/absolute/settings.json\"",
+        "timeout": 30
+      }]
+    }]
+  }
+}
+```
+
+`UserPromptSubmit` is not a blocking event. The script starts the turn and exits 0. It prints nothing, because Grok ignores stdout on this event. `PreCompact` flushes that same turn and also prints nothing. A non-zero exit is recorded and does not stop the prompt or compaction. A manual run proves the command, not live delivery.
 
 ## 4. Optional Claude Code status line
 
