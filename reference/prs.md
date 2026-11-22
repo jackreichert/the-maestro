@@ -9,21 +9,24 @@ Load when writing a PR title/description or reconciling merges. For preparation,
 - Body: use the order below, adapting to repo templates. Keep acceptance criteria distinct from verified results; never imply unrun checks passed. Omit optional details that add no review value.
 
 ```markdown
-<Paragraph 1: what this PR does, for whom and why; relevant issue/spec link.>
+## What this does
 
-<Paragraph 2: what done looks like—checkable outcomes and important preserved behavior for this slice.>
+A few sentences on what this does.
 
-## Reviewer guide
-- Start here: linked entry points, logic, wiring and tests in review order, with brief reasons.
-- Look closely: key decisions, invariants, failure paths and reviewer questions.
-- When relevant: skim-safe generated/mechanical changes, exclusions and linked dependencies. Skim-safe never exempts author review; deferred work must not leave this slice unsafe.
+## What done looks like
 
-## Validation
-Commands, actual results, tested revision, unrun checks and remaining gates.
+What done looks like.
 
-## Risks and rollback
-Risk level/why, affected surfaces, worst credible failure/detection, compatibility or irreversible steps; reversal/flag and deploy order where relevant.
+## How to test
+
+How to test.
+
+## How to review
+
+Important changes, then what needs a closer look.
 ```
+
+- A newcomer fills in [the pull request template](../.github/PULL_REQUEST_TEMPLATE.md).
 
 - PR bodies, comments and replies use the author's voice: "I", not "we"; preserve quotes and claim only work done. Add visuals or trimmed synthetic evidence only when useful. Leave counts to GitHub; avoid stale tallies, file-by-file narration, pasted logs and boilerplate.
 - No private vault/bead IDs, local paths, sensitive data or AI attribution. Inspect the final title/body before publication and read back the draft afterward.
